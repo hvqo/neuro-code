@@ -175,7 +175,11 @@ class GitStatusEntry:
 
 @dataclass(frozen=True, slots=True)
 class GitStatusProjection:
-    """Explicit staged, unstaged, untracked, and unmerged status facts."""
+    """Explicit status facts with conflicts counted separately.
+
+    ``staged_count`` and ``unstaged_count`` exclude ``UNMERGED`` entries;
+    conflicts are reported only through ``unmerged_count``.
+    """
 
     entries: tuple[GitStatusEntry, ...]
     staged_count: int
@@ -211,7 +215,12 @@ class GitStatusProjection:
 
 @dataclass(frozen=True, slots=True)
 class GitDiffProjection:
-    """A bounded textual diff plus binary metadata, never a reappliable patch promise."""
+    """A bounded textual diff plus binary metadata, never a reappliable patch promise.
+
+    ``byte_count`` is the UTF-8/surrogateescape byte count of the returned
+    redacted display text.  ``TRUNCATED`` also records when the bounded Git
+    source exceeded the display-section limit, even if redaction shortened it.
+    """
 
     text: str
     byte_count: int

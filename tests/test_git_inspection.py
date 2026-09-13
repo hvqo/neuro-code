@@ -25,6 +25,7 @@ from neuro_code.application.ports.sandbox import LocalWorkspaceAccessMode
 from neuro_code.application.ports.tools import ToolContext
 from neuro_code.application.ports.worktree import WorktreeError, WorktreeFailureKind
 from neuro_code.domain.tools import ToolResult
+from neuro_code.domain.worktree import WorktreeRepositoryIdentity
 from neuro_code.infrastructure.git.inspection import (
     LocalGitInspectionAdapter,
     parse_git_status_porcelain,
@@ -161,6 +162,54 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.completeness.value, "complete")
             self.assertEqual(result.status.entries, ())
 
+    async def test_submodule_worktree_is_not_recursed_but_gitlink_metadata_is_reported(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            root = Path(directory)
+            submodule_source = root / "submodule-source"
+            submodule_source.mkdir()
+            _git(submodule_source, "init", "-q")
+            _git(submodule_source, "config", "user.email", "neuro-code-tests@example.invalid")
+            _git(submodule_source, "config", "user.name", "Neuro Code Tests")
+            (submodule_source / "tracked.txt").write_text("submodule\n", encoding="utf-8")
+            _git(submodule_source, "add", "tracked.txt")
+            _git(submodule_source, "commit", "-qm", "initial")
+
+            repository = _new_repository(root)
+            _git(
+                repository,
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                str(submodule_source),
+                "nested",
+            )
+            _git(repository, "commit", "-qm", "add submodule")
+
+            internal_path = repository / "nested" / "submodule-internal-untracked.txt"
+            internal_path.write_text("must-not-be-inspected\n", encoding="utf-8")
+            adapter = LocalGitInspectionAdapter(LocalGitWorktreeAdapter())
+            dirty_submodule = await adapter.inspect(repository)
+
+            self.assertEqual(dirty_submodule.status.entries, ())
+            self.assertNotIn(
+                "submodule-internal-untracked.txt", json.dumps(dirty_submodule.to_dict())
+            )
+
+            _git(repository / "nested", "commit", "--allow-empty", "-qm", "advance submodule")
+            changed_gitlink = await adapter.inspect(repository)
+
+            self.assertEqual(
+                [(entry.path, entry.submodule) for entry in changed_gitlink.status.entries],
+                [("nested", True)],
+            )
+            self.assertNotIn(
+                "submodule-internal-untracked.txt", json.dumps(changed_gitlink.to_dict())
+            )
+
     async def test_worktree_failures_map_to_typed_fail_closed_inspection_errors(self) -> None:
         failing = AsyncMock()
         failing.git_version.return_value = (2, 40, 0)
@@ -247,11 +296,93 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
 
             await adapter.run_read_only_git(
                 request_root,
-                ("status", "--porcelain=v2", "--branch", "-z", "--ignore-submodules=none"),
+                ("status", "--porcelain=v2", "--branch", "-z", "--ignore-submodules=dirty"),
             )
             request = sandbox.request
             assert request is not None
             self.assertIn("status.recurseSubmodules=no", request.arguments)
+
+    async def test_final_identity_recheck_accepts_an_unchanged_repository(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            repository = _new_repository(Path(directory))
+            head = _git(repository, "rev-parse", "HEAD")
+            identity = WorktreeRepositoryIdentity(
+                common_dir=repository / ".git",
+                source_worktree=repository,
+                git_dir=repository / ".git",
+                head_sha=head,
+            )
+            status = b"# branch.oid " + head.encode() + b"\0# branch.head main\0"
+            fake_git = AsyncMock()
+            fake_git.git_version.return_value = (2, 40, 0)
+            fake_git.repository_identity.side_effect = (identity, identity)
+            fake_git.run_read_only_git.return_value = (status, b"", 0)
+
+            result = await LocalGitInspectionAdapter(
+                cast(LocalGitWorktreeAdapter, fake_git)
+            ).inspect(repository)
+
+            self.assertEqual(result.repository.head_sha, head)
+            self.assertEqual(fake_git.repository_identity.await_count, 2)
+
+    async def test_final_identity_recheck_rejects_head_or_repository_changes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            repository = _new_repository(Path(directory))
+            head = _git(repository, "rev-parse", "HEAD")
+            initial = WorktreeRepositoryIdentity(
+                common_dir=repository / ".git",
+                source_worktree=repository,
+                git_dir=repository / ".git",
+                head_sha=head,
+            )
+            status = b"# branch.oid " + head.encode() + b"\0# branch.head main\0"
+            changed_identities = (
+                (
+                    "head",
+                    WorktreeRepositoryIdentity(
+                        common_dir=repository / ".git",
+                        source_worktree=repository,
+                        git_dir=repository / ".git",
+                        head_sha="b" * 40,
+                    ),
+                ),
+                (
+                    "repository",
+                    WorktreeRepositoryIdentity(
+                        common_dir=Path(directory) / "other-repository" / ".git",
+                        source_worktree=repository,
+                        git_dir=repository / ".git",
+                        head_sha=head,
+                    ),
+                ),
+                (
+                    "source worktree",
+                    WorktreeRepositoryIdentity(
+                        common_dir=repository / ".git",
+                        source_worktree=Path(directory) / "other-worktree",
+                        git_dir=repository / ".git",
+                        head_sha=head,
+                    ),
+                ),
+            )
+
+            for label, final in changed_identities:
+                with self.subTest(identity=label):
+                    fake_git = AsyncMock()
+                    fake_git.git_version.return_value = (2, 40, 0)
+                    fake_git.repository_identity.side_effect = (initial, final)
+                    fake_git.run_read_only_git.return_value = (status, b"", 0)
+
+                    with self.assertRaises(GitInspectionError) as raised:
+                        await LocalGitInspectionAdapter(
+                            cast(LocalGitWorktreeAdapter, fake_git)
+                        ).inspect(repository)
+
+                    self.assertEqual(
+                        raised.exception.kind,
+                        GitInspectionFailureKind.IDENTITY_MISMATCH,
+                    )
+                    self.assertEqual(fake_git.repository_identity.await_count, 2)
 
 
 class GitInspectionProtocolTests(unittest.TestCase):
@@ -281,8 +412,8 @@ class GitInspectionProtocolTests(unittest.TestCase):
 
         status = parse_git_status_porcelain(output)
 
-        self.assertEqual(status.staged_count, 2)
-        self.assertEqual(status.unstaged_count, 3)
+        self.assertEqual(status.staged_count, 1)
+        self.assertEqual(status.unstaged_count, 2)
         self.assertEqual(status.untracked_count, 1)
         self.assertEqual(status.unmerged_count, 1)
         self.assertEqual(status.entries[1].kind.value, "renamed")
@@ -310,6 +441,25 @@ class GitInspectionProtocolTests(unittest.TestCase):
 
         self.assertEqual(projection.completeness.value, "truncated")
         self.assertEqual(projection.byte_count, MAX_GIT_INSPECTION_DIFF_SECTION_BYTES)
+
+    def test_diff_redacts_a_secret_that_crosses_the_section_boundary(self) -> None:
+        secret = "BOUNDARY_SECRET_SENTINEL"
+        prefix = "x" * (
+            MAX_GIT_INSPECTION_DIFF_SECTION_BYTES - len("api_key=") - len(secret) + len(secret) // 2
+        )
+        raw = f"api_key={prefix}{secret}\n".encode()
+
+        projection = project_git_diff(raw, redaction_values=())
+
+        self.assertGreater(len(raw), MAX_GIT_INSPECTION_DIFF_SECTION_BYTES)
+        self.assertEqual(projection.completeness.value, "truncated")
+        self.assertIn("[REDACTED]", projection.text)
+        self.assertNotIn(secret, projection.text)
+        self.assertNotIn("BOUNDARY_SECRET", projection.text)
+        self.assertEqual(
+            projection.byte_count,
+            len(projection.text.encode("utf-8", "surrogateescape")),
+        )
 
     def test_binary_projection_keeps_metadata_and_discards_binary_patch_payload(self) -> None:
         projection = project_git_diff(

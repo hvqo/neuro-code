@@ -33,6 +33,15 @@ Path、status record、diff bytes、error 和 rendered output 均有界并脱敏
 提供 metadata，不提供 patch 内容。Truncation 和 incomplete projection 使用明确的
 类型化状态；malformed 或未知 protocol record fail closed。
 
+Status 使用 `--ignore-submodules=dirty` 以及固定的
+`status.recurseSubmodules=no` 设置。这会报告可安全表示的 superproject gitlink
+变更，同时忽略 submodule working tree 的 dirty 状态、untracked content 和递归的
+submodule path。Unmerged entry 只计入 `unmerged_count`，不会计入 staged 或 unstaged
+计数。`GitDiffProjection.byte_count` 是返回的脱敏 display text 按
+UTF-8/surrogateescape 编码后的字节数。Runner 的全局 output bound 会先被 decode，
+移除 binary-patch payload，再对完整的有界文本脱敏，最后应用每段 display bound；因此
+credential 即使跨越该段边界也不会绕过脱敏。
+
 只读检查路径不修改 workspace、index、ref、config、history、checkpoint、session、
 verification generation 或 B1 state。不创建 database row 或 durable recovery state。
 Adapter 在返回结果前重新检查 repository identity 与 status HEAD；如果身份不一致，

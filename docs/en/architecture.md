@@ -3429,8 +3429,10 @@ The projection reports repository identity, HEAD, branch or detached state,
 upstream counters, and bounded status metadata. Staged changes are the fixed
 `HEAD -> index` diff and unstaged changes are the fixed `index -> working tree`
 diff. Rename/copy, unmerged, untracked, binary, and submodule records are
-represented as metadata; untracked contents are not read automatically. A
-strict NUL-delimited porcelain-v2 parser rejects malformed or unknown records.
+represented as metadata; submodule working-tree contents are not recursively
+inspected, and untracked contents are not read automatically. An unmerged
+entry is counted separately from staged and unstaged entries. A strict
+NUL-delimited porcelain-v2 parser rejects malformed or unknown records.
 
 All commands use the existing hardened local Git runner with optional locks
 disabled, hooks and fsmonitor disabled, system/global configuration disabled,

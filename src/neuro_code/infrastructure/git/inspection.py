@@ -46,7 +46,7 @@ _STATUS_ARGS = (
     "--branch",
     "-z",
     "--untracked-files=all",
-    "--ignore-submodules=none",
+    "--ignore-submodules=dirty",
 )
 _STAGED_DIFF_ARGS = (
     "diff",
@@ -266,9 +266,15 @@ def _parse_git_status_porcelain(output: bytes) -> tuple[_GitStatusMetadata, GitS
     branch = None if detached else branch_head
     if not detached and not branch:
         raise _protocol_error("Git status branch name is empty")
-    staged_count = sum(entry.index_status != "?" and entry.index_status != "." for entry in entries)
+    staged_count = sum(
+        entry.kind is not GitChangeKind.UNMERGED
+        and entry.index_status != "?"
+        and entry.index_status != "."
+        for entry in entries
+    )
     unstaged_count = sum(
-        entry.kind is not GitChangeKind.UNTRACKED and entry.worktree_status not in {".", "?"}
+        entry.kind not in {GitChangeKind.UNMERGED, GitChangeKind.UNTRACKED}
+        and entry.worktree_status not in {".", "?"}
         for entry in entries
     )
     untracked_count = sum(entry.kind is GitChangeKind.UNTRACKED for entry in entries)
@@ -336,23 +342,27 @@ def _without_binary_patch(text: str) -> str:
 
 
 def project_git_diff(raw: bytes, *, redaction_values: tuple[str, ...]) -> GitDiffProjection:
-    """Project text and binary metadata without ever requesting binary patches."""
+    """Redact a globally bounded diff before applying the display-section bound."""
 
-    clipped = raw[:MAX_GIT_INSPECTION_DIFF_SECTION_BYTES]
-    text = os.fsdecode(clipped)
-    safe_text = redact_sensitive_text(text, explicit_values=redaction_values)
-    safe_text = _without_binary_patch(safe_text)
+    text = os.fsdecode(raw)
+    safe_text = _without_binary_patch(text)
+    safe_text = redact_sensitive_text(safe_text, explicit_values=redaction_values)
+    binary_paths = _binary_paths(safe_text)
+    safe_bytes = safe_text.encode("utf-8", "surrogateescape")
+    clipped = safe_bytes[:MAX_GIT_INSPECTION_DIFF_SECTION_BYTES]
+    display_text = os.fsdecode(clipped)
     completeness = (
         GitInspectionCompleteness.TRUNCATED
         if len(raw) > MAX_GIT_INSPECTION_DIFF_SECTION_BYTES
+        or len(safe_bytes) > MAX_GIT_INSPECTION_DIFF_SECTION_BYTES
         else GitInspectionCompleteness.COMPLETE
     )
     return GitDiffProjection(
-        text=safe_text,
+        text=display_text,
         byte_count=len(clipped),
         completeness=completeness,
-        binary_paths=_binary_paths(safe_text),
-        redacted=safe_text != text,
+        binary_paths=binary_paths,
+        redacted=display_text != text,
     )
 
 
@@ -444,6 +454,16 @@ class LocalGitInspectionAdapter(GitInspectionPort):
                 unstaged_diff = project_git_diff(
                     unstaged_output,
                     redaction_values=self._redaction_values,
+                )
+            final_identity = await self._git.repository_identity(workspace, read_only=True)
+            if (
+                final_identity.repository_id != identity.repository_id
+                or final_identity.source_worktree != identity.source_worktree
+                or final_identity.head_sha != identity.head_sha
+            ):
+                raise WorktreeError(
+                    "Git repository identity changed during read-only inspection",
+                    kind=WorktreeFailureKind.IDENTITY_MISMATCH,
                 )
             return GitInspectionResult(
                 repository=repository,

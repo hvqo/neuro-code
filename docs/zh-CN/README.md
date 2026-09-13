@@ -2,7 +2,7 @@
 
 [English](../../README.md) · **简体中文**
 
-[![CI](https://github.com/amber1686855908-hash/neuro-code/actions/workflows/ci.yml/badge.svg)](https://github.com/amber1686855908-hash/neuro-code/actions/workflows/ci.yml)
+[![CI](https://github.com/hvqo/neuro-code/actions/workflows/ci.yml/badge.svg)](https://github.com/hvqo/neuro-code/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB.svg)](../../pyproject.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-2F5D50.svg)](../../LICENSE)
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#项目状态)
@@ -27,7 +27,7 @@ Neuro Code 是一个 Python 原生的终端 Coding Agent。它通过模型驱动
 Neuro Code 目前处于 pre-alpha 阶段，当前应从源码 checkout 运行。需要 Python 3.12 或更高版本；本流程使用 [`uv`](https://docs.astral.sh/uv/)。
 
 ```bash
-git clone https://github.com/amber1686855908-hash/neuro-code.git
+git clone https://github.com/hvqo/neuro-code.git
 cd neuro-code
 uv sync --extra dev
 uv run neuro

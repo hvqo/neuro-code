@@ -1899,7 +1899,8 @@ Projection 报告 repository identity、HEAD、branch 或 detached 状态、upst
 有界 status metadata。Staged change 使用固定的 `HEAD -> index` diff，unstaged change
 使用固定的 `index -> working tree` diff。Rename/copy、unmerged、untracked、binary
 和 submodule 只作为 metadata；不会自动读取 untracked content。严格的 NUL-delimited
-porcelain-v2 parser 会拒绝 malformed 或未知 record。
+porcelain-v2 parser 会拒绝 malformed 或未知 record；submodule working tree 不会被递归
+检查，unmerged entry 单独计数，不会重复计入 staged 或 unstaged。
 
 所有命令复用既有加固的 local Git runner：关闭 optional locks、hooks 和 fsmonitor，禁用
 system/global configuration，隔离 network，支持 cancellation cleanup、bounded timeout、

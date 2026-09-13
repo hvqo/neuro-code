@@ -40,6 +40,17 @@ metadata rather than patch contents. Truncation and incomplete projections
 are explicit typed states, and malformed or unknown protocol records fail
 closed.
 
+Status uses `--ignore-submodules=dirty` together with a fixed
+`status.recurseSubmodules=no` setting. This reports safely representable
+superproject gitlink changes while ignoring submodule working-tree dirtiness,
+untracked contents, and recursive submodule paths. An unmerged entry is
+counted only in `unmerged_count`, not in the staged or unstaged counters.
+`GitDiffProjection.byte_count` is the UTF-8/surrogateescape byte count of the
+returned redacted display text. The runner's global output bound is decoded,
+binary-patch payloads are removed, and the full bounded text is redacted before
+the per-section display bound is applied, so a credential cannot straddle that
+section boundary unredacted.
+
 The read-only inspection path has no workspace, index, ref, config, history,
 checkpoint, session, verification-generation, or B1 state mutation. It does
 not create database rows or durable recovery state. The adapter rechecks the
