@@ -18,6 +18,7 @@ from neuro_code.application.acp.contracts import AcpSessionMetadata
 from neuro_code.application.acp.service import AcpApplicationService
 from neuro_code.application.permissions.broker import SessionApprovalBroker
 from neuro_code.application.ports.configuration import AppConfig, override_provider
+from neuro_code.application.ports.git_inspection import GitInspectionApplication
 from neuro_code.application.ports.storage import SessionStore
 from neuro_code.application.providers.contracts import ProviderOption
 from neuro_code.application.runtime.agent import AgentRunResult, EventSink
@@ -35,6 +36,7 @@ from neuro_code.bootstrap.acp import (
     _CompositionAcpBindingFactory,
 )
 from neuro_code.bootstrap.composition import ApplicationComposition
+from neuro_code.bootstrap.composition_services import build_git_inspection_service
 from neuro_code.bootstrap.configuration import load_config
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
@@ -71,6 +73,11 @@ class BootstrapCliServices:
 
     def load_config(self, cwd: Path | None) -> AppConfig:
         return load_config(cwd)
+
+    def create_git_inspection_service(self, config: AppConfig) -> GitInspectionApplication:
+        """Build the same application Git inspection service used by bindings."""
+
+        return build_git_inspection_service(config)
 
     def discover_instructions(self, cwd: Path) -> InstructionDiscoveryResult:
         return ApplicationComposition.default_instruction_discovery().discover(cwd)

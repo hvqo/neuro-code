@@ -16,6 +16,7 @@ from neuro_code.application.checkpoints import (
     TurnWorkspaceCheckpointCoordinator,
     WorkspaceCheckpointApplicationService,
 )
+from neuro_code.application.git_inspection import GitInspectionService
 from neuro_code.application.ports.agent_swarm import AgentSwarmStore
 from neuro_code.application.ports.background_tasks import BackgroundTaskManager
 from neuro_code.application.ports.configuration import AppConfig
@@ -50,6 +51,7 @@ from neuro_code.application.workflows.session_task_execution import (
 )
 from neuro_code.application.worktrees import WorktreeApplicationService
 from neuro_code.bootstrap.composition_contracts import CompositionRootMixin
+from neuro_code.infrastructure.git.inspection import LocalGitInspectionAdapter
 from neuro_code.infrastructure.git.worktree import LocalGitWorktreeAdapter
 from neuro_code.infrastructure.persistence.checkpoint_artifacts import LocalCheckpointArtifactStore
 from neuro_code.infrastructure.persistence.managed_worktrees import SqliteManagedWorktreeStore
@@ -60,6 +62,18 @@ from neuro_code.infrastructure.persistence.workspace_checkpoints import (
 from neuro_code.infrastructure.workspace.checkpoints import LocalWorkspaceStateAdapter
 from neuro_code.infrastructure.workspace.projection import LocalParentWorkspaceProjectionReader
 from neuro_code.shared.errors import ConfigurationError
+
+
+def build_git_inspection_service(config: AppConfig) -> GitInspectionService:
+    """Build one explicit read-only Git inspection capability for ``config``."""
+
+    git = LocalGitWorktreeAdapter(hooks_directory=config.state_dir / "git-hooks")
+    return GitInspectionService(
+        LocalGitInspectionAdapter(
+            git,
+            redaction_values=config.redaction_values(os.environ),
+        )
+    )
 
 
 class CompositionServicesMixin(CompositionRootMixin):
@@ -85,6 +99,21 @@ class CompositionServicesMixin(CompositionRootMixin):
             store=SqliteManagedWorktreeStore(self.config.state_dir / "worktrees.db"),
             managed_root=self.config.state_dir / "worktrees",
         )
+
+    def create_git_inspection_service(
+        self: CompositionRootMixin,
+        *,
+        config: AppConfig | None = None,
+    ) -> GitInspectionService:
+        """Create the explicit read-only Git inspection application capability.
+
+        The inspection adapter reuses the existing argv-safe Git runner but
+        requests a read-only workspace mount.  It has no persistence or
+        checkpoint ownership and is intentionally not a generic Git command
+        service.
+        """
+
+        return build_git_inspection_service(config or self.config)
 
     def create_workspace_checkpoint_service(
         self: CompositionRootMixin,

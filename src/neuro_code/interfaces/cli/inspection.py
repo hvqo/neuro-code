@@ -10,12 +10,18 @@ CLI contract; concrete configuration loading remains outside the interface.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from neuro_code import __version__
+from neuro_code.application.ports.git_inspection import (
+    GitInspectionError,
+    GitInspectionResult,
+    GitInspectionView,
+)
 from neuro_code.interfaces.cli.contracts import CliServices
 from neuro_code.shared.errors import ConfigurationError
 
@@ -133,8 +139,76 @@ def _skill_lines(cwd: Path, services: CliServices) -> list[str]:
     return lines
 
 
+def _plain_git_inspection(result: GitInspectionResult) -> str:
+    """Render the typed Git projection without inventing a second status model."""
+
+    # Keep the interface presentation local; the application result remains
+    # the shared source for the tool and JSON projection.
+    repository = result.repository
+    status = result.status
+    lines = [
+        f"repository: {repository.root}",
+        f"repository_id: {repository.repository_id}",
+        f"HEAD: {repository.head_sha}",
+        f"branch: {repository.branch or '(detached)'}",
+        f"detached: {str(repository.detached).lower()}",
+        f"upstream: {repository.upstream or '(none)'}",
+        f"ahead: {repository.ahead if repository.ahead is not None else '(unknown)'}",
+        f"behind: {repository.behind if repository.behind is not None else '(unknown)'}",
+        f"status_completeness: {status.completeness.value}",
+        f"staged: {status.staged_count}",
+        f"unstaged: {status.unstaged_count}",
+        f"untracked: {status.untracked_count}",
+        f"conflicts: {status.unmerged_count}",
+        "status_entries:",
+    ]
+    if status.entries:
+        for entry in status.entries:
+            suffix = f" (from {entry.original_path})" if entry.original_path else ""
+            submodule = " submodule" if entry.submodule else ""
+            lines.append(f"  - [{entry.xy}] {entry.kind.value}{submodule}: {entry.path}{suffix}")
+    else:
+        lines.append("  - (none)")
+    for name, diff in (("staged", result.staged_diff), ("unstaged", result.unstaged_diff)):
+        if diff is None:
+            continue
+        lines.extend(
+            (
+                f"{name}_diff_completeness: {diff.completeness.value}",
+                f"{name}_diff_bytes: {diff.byte_count}",
+                f"{name}_diff_redacted: {str(diff.redacted).lower()}",
+                f"{name}_binary_paths:",
+            )
+        )
+        lines.extend(f"  - {path}" for path in diff.binary_paths)
+        if not diff.binary_paths:
+            lines.append("  - (none)")
+        lines.append(f"{name}_diff:")
+        lines.append(diff.text if diff.text else "  (none)")
+    lines.append(f"completeness: {result.completeness.value}")
+    lines.append(f"redacted: {str(result.redacted).lower()}")
+    return "\n".join(lines)
+
+
 def run_inspect_command(args: argparse.Namespace, services: CliServices) -> int:
     config = services.load_config(args.cwd)
+    if getattr(args, "inspect_kind", None) == "git":
+        try:
+            git_result = asyncio.run(
+                services.create_git_inspection_service(config).inspect(
+                    config.cwd,
+                    GitInspectionView(args.view),
+                )
+            )
+        except (GitInspectionError, ValueError) as error:
+            raise ConfigurationError(f"git inspection failed: {error}") from error
+        if args.json:
+            print(json.dumps(git_result.to_dict(), ensure_ascii=True, indent=2))
+        else:
+            print(_plain_git_inspection(git_result))
+        return 0
+    if getattr(args, "view", GitInspectionView.ALL.value) != GitInspectionView.ALL.value:
+        raise ConfigurationError("--view is only valid for inspect git")
     if args.json:
         inspect_payload: dict[str, object] = config.redacted_dict(os.environ)
         result = services.discover_instructions(config.cwd)

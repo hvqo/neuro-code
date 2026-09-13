@@ -19,6 +19,7 @@ from collections.abc import Collection, Iterable
 
 from neuro_code.application.ports.client_filesystem import ClientFileSystem
 from neuro_code.application.ports.client_terminal import ClientTerminal
+from neuro_code.application.ports.git_inspection import GitInspectionApplication
 from neuro_code.application.ports.lsp import LanguageServerService
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
 from neuro_code.application.ports.tools import Tool
@@ -91,6 +92,7 @@ def default_tool_registry(
     interactive_terminals: InteractiveTerminalManager | None = None,
     user_interaction: UserInteractionPort | None = None,
     lsp_service: LanguageServerService | None = None,
+    git_inspection: GitInspectionApplication | None = None,
 ) -> ToolRegistry:
     from neuro_code.infrastructure.tools.background_tasks import (
         KillTaskTool,
@@ -119,6 +121,7 @@ def default_tool_registry(
         GrepManyTool,
         GrepTool,
     )
+    from neuro_code.infrastructure.tools.git_inspection import GitInspectTool
     from neuro_code.infrastructure.tools.interaction import AskUserTool
     from neuro_code.infrastructure.tools.lsp import LspTool
     from neuro_code.infrastructure.tools.plans import UpdatePlanTool
@@ -143,6 +146,8 @@ def default_tool_registry(
             GrepManyTool(),
             WorkspaceDiffTool(),
         ]
+        if git_inspection is not None:
+            tools.append(GitInspectTool(git_inspection))
     if sandbox_profile.workspace_writable and client_file_system is None:
         tools.append(SearchReplaceTool())
         tools.append(ApplyPatchTool())

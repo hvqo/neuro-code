@@ -8,11 +8,12 @@ _SECRET_KEY = (
     r"secret|password|passwd|authorization|private[_-]?key)"
 )
 _QUOTED_SECRET_ASSIGNMENT = re.compile(
-    rf"(?i)(?P<prefix>[\"']?{_SECRET_KEY}[\"']?\s*[:=]\s*)"
+    rf"(?i)(?<![a-z0-9._-])(?P<prefix>[\"']?{_SECRET_KEY}[\"']?\s*[:=]\s*)"
     r"(?P<quote>[\"'])(?P<value>[^\r\n]*?)(?P=quote)"
 )
 _UNQUOTED_SECRET_ASSIGNMENT = re.compile(
-    rf"(?i)(?P<prefix>[\"']?{_SECRET_KEY}[\"']?\s*[:=]\s*)(?P<value>[^\s,;\"']+)"
+    rf"(?i)(?<![a-z0-9._-])(?P<prefix>[\"']?{_SECRET_KEY}[\"']?\s*[:=]\s*)"
+    r"(?P<value>[^\s,;\"']+)"
 )
 _BEARER_CREDENTIAL = re.compile(r"(?i)(\bbearer\s+)[a-z0-9._~+/=-]{8,}")
 _URL_PASSWORD = re.compile(r"(?i)(https?://[^/\s:@]+:)[^@\s/]+(@)")

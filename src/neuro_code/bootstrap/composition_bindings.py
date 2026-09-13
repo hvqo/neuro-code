@@ -38,6 +38,7 @@ from neuro_code.application.ports.background_tasks import (
 from neuro_code.application.ports.client_filesystem import ClientFileSystem
 from neuro_code.application.ports.client_terminal import ClientTerminal
 from neuro_code.application.ports.configuration import AppConfig
+from neuro_code.application.ports.git_inspection import GitInspectionApplication
 from neuro_code.application.ports.model import (
     CapabilityStatus,
     ModelCapability,
@@ -355,6 +356,17 @@ class CompositionBindingMixin(CompositionRootMixin):
             if max_steps is None
             else ExecutionBudgetPolicy.from_max_steps(max_steps)
         )
+        git_inspection: GitInspectionApplication | None = None
+        if (
+            client_file_system is None
+            and capabilities is None
+            and parent_context_relay is None
+            and dag_result_relay is None
+            and normal_requirements_enabled
+            and effective_reasoning_effort is not ReasoningEffort.ULTRACODE
+            and (allowed_tool_names is None or "git_inspect" in allowed_tool_names)
+        ):
+            git_inspection = self.create_git_inspection_service(config=selected_config)
 
         approval_service = ToolApprovalService(approver) if approver is not None else None
         persisted_rules: tuple[PermissionRule, ...] = ()
@@ -405,6 +417,7 @@ class CompositionBindingMixin(CompositionRootMixin):
             client_terminal=client_terminal,
             interactive_terminals=interactive_terminals,
             user_interaction=user_interaction,
+            git_inspection=git_inspection,
         )
         for tool in additional_tools:
             if allowed_tool_names is not None and tool.definition.name not in allowed_tool_names:
@@ -563,6 +576,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                     interactive_terminals=interactive_terminals,
                     user_interaction=user_interaction,
                     lsp_service=lsp_service,
+                    git_inspection=git_inspection,
                 )
                 if fetch_path is WebFetchExecutionPath.LOCAL and (
                     allowed_tool_names is None or "web_fetch" in allowed_tool_names

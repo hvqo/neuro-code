@@ -1,0 +1,429 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import subprocess
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock
+
+from neuro_code.application.git_inspection import GitInspectionService
+from neuro_code.application.ports.git_inspection import (
+    MAX_GIT_INSPECTION_DIFF_SECTION_BYTES,
+    GitInspectionApplication,
+    GitInspectionError,
+    GitInspectionFailureKind,
+    GitInspectionView,
+)
+from neuro_code.application.ports.sandbox import LocalWorkspaceAccessMode
+from neuro_code.application.ports.tools import ToolContext
+from neuro_code.application.ports.worktree import WorktreeError, WorktreeFailureKind
+from neuro_code.domain.tools import ToolResult
+from neuro_code.infrastructure.git.inspection import (
+    LocalGitInspectionAdapter,
+    parse_git_status_porcelain,
+    project_git_diff,
+)
+from neuro_code.infrastructure.git.worktree import LocalGitWorktreeAdapter
+from neuro_code.infrastructure.tools.git_inspection import GitInspectTool
+from neuro_code.infrastructure.tools.registry import default_tool_registry
+from neuro_code.interfaces.cli.inspection import run_inspect_command
+from neuro_code.interfaces.cli.parser import build_parser
+from neuro_code.shared.errors import ConfigurationError
+
+
+def _git(repository: Path, *arguments: str, check: bool = True) -> str:
+    result = subprocess.run(
+        ["git", *arguments],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if check and result.returncode != 0:
+        raise AssertionError(result.stderr)
+    return result.stdout.strip()
+
+
+def _new_repository(root: Path) -> Path:
+    repository = root / "repo"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.email", "neuro-code-tests@example.invalid")
+    _git(repository, "config", "user.name", "Neuro Code Tests")
+    (repository / "tracked.txt").write_text("committed\n", encoding="utf-8")
+    _git(repository, "add", "tracked.txt")
+    _git(repository, "commit", "-qm", "initial")
+    return repository
+
+
+def _run(coroutine: object) -> object:
+    return asyncio.run(coroutine)  # type: ignore[arg-type]
+
+
+class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_clean_repository_reports_identity_and_complete_status(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            repository = _new_repository(Path(directory))
+            result = await LocalGitInspectionAdapter(LocalGitWorktreeAdapter()).inspect(repository)
+
+            self.assertEqual(result.repository.root, repository.resolve())
+            self.assertEqual(result.repository.head_sha, _git(repository, "rev-parse", "HEAD"))
+            self.assertIsNotNone(result.repository.branch)
+            self.assertFalse(result.repository.detached)
+            self.assertEqual(result.status.entries, ())
+            self.assertEqual(result.completeness.value, "complete")
+            self.assertTrue(result.staged_diff is not None)
+            self.assertTrue(result.unstaged_diff is not None)
+            assert result.staged_diff is not None
+            assert result.unstaged_diff is not None
+            self.assertEqual(result.staged_diff.text, "")
+            self.assertEqual(result.unstaged_diff.text, "")
+
+    async def test_staged_and_unstaged_diffs_remain_distinct_and_untracked_content_is_hidden(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            repository = _new_repository(Path(directory))
+            target = repository / "tracked.txt"
+            target.write_text("staged\n", encoding="utf-8")
+            _git(repository, "add", "tracked.txt")
+            target.write_text("unstaged\n", encoding="utf-8")
+            (repository / "untracked.txt").write_text(
+                "UNTRACKED_SECRET_SENTINEL\n", encoding="utf-8"
+            )
+
+            result = await LocalGitInspectionAdapter(LocalGitWorktreeAdapter()).inspect(repository)
+
+            self.assertEqual(result.status.staged_count, 1)
+            self.assertEqual(result.status.unstaged_count, 1)
+            self.assertEqual(result.status.untracked_count, 1)
+            self.assertEqual(
+                [(entry.path, entry.xy) for entry in result.status.entries],
+                [("tracked.txt", "MM"), ("untracked.txt", "??")],
+            )
+            assert result.staged_diff is not None
+            assert result.unstaged_diff is not None
+            self.assertIn("+staged", result.staged_diff.text)
+            self.assertIn("+unstaged", result.unstaged_diff.text)
+            self.assertNotIn("UNTRACKED_SECRET_SENTINEL", result.staged_diff.text)
+            self.assertNotIn("UNTRACKED_SECRET_SENTINEL", result.unstaged_diff.text)
+
+    async def test_detached_and_binary_repository_state_is_typed_without_binary_patch_bytes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            repository = _new_repository(Path(directory))
+            binary = repository / "payload.bin"
+            binary.write_bytes(b"\x00\x01\x02\x00binary")
+            _git(repository, "add", "payload.bin")
+            _git(repository, "checkout", "--detach", "-q")
+
+            result = await LocalGitInspectionAdapter(LocalGitWorktreeAdapter()).inspect(repository)
+
+            self.assertTrue(result.repository.detached)
+            self.assertIsNone(result.repository.branch)
+            assert result.staged_diff is not None
+            self.assertIn("payload.bin", result.staged_diff.binary_paths)
+            self.assertNotIn("GIT binary patch", result.staged_diff.text)
+
+    async def test_inspection_does_not_change_index_head_or_status(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            repository = _new_repository(Path(directory))
+            (repository / "change.txt").write_text("change\n", encoding="utf-8")
+            before_head = _git(repository, "rev-parse", "HEAD")
+            before_status = _git(repository, "status", "--porcelain=v2", "-z")
+            index = repository / _git(repository, "rev-parse", "--git-path", "index")
+            before_index = index.read_bytes()
+
+            await LocalGitInspectionAdapter(LocalGitWorktreeAdapter()).inspect(repository)
+
+            self.assertEqual(_git(repository, "rev-parse", "HEAD"), before_head)
+            self.assertEqual(_git(repository, "status", "--porcelain=v2", "-z"), before_status)
+            self.assertEqual(index.read_bytes(), before_index)
+
+    async def test_local_git_configuration_cannot_enable_inspection_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            repository = _new_repository(Path(directory))
+            _git(repository, "config", "core.hooksPath", str(repository / "attacker-hooks"))
+            _git(repository, "config", "core.fsmonitor", "true")
+            _git(repository, "config", "status.recurseSubmodules", "yes")
+            _git(repository, "config", "diff.external", "/definitely/not-a-diff-command")
+
+            result = await LocalGitInspectionAdapter(LocalGitWorktreeAdapter()).inspect(repository)
+
+            self.assertEqual(result.completeness.value, "complete")
+            self.assertEqual(result.status.entries, ())
+
+    async def test_worktree_failures_map_to_typed_fail_closed_inspection_errors(self) -> None:
+        failing = AsyncMock()
+        failing.git_version.return_value = (2, 40, 0)
+        failing.repository_identity.side_effect = WorktreeError(
+            "timeout", kind=WorktreeFailureKind.TIMEOUT
+        )
+        adapter = LocalGitInspectionAdapter(cast(LocalGitWorktreeAdapter, failing))
+
+        with self.assertRaises(GitInspectionError) as raised:
+            await adapter.inspect(Path.cwd())
+        self.assertEqual(raised.exception.kind, GitInspectionFailureKind.TIMEOUT)
+
+    async def test_unsupported_git_is_a_typed_fail_closed_inspection_error(self) -> None:
+        failing = AsyncMock()
+        failing.git_version.side_effect = WorktreeError(
+            "installed Git is too old", kind=WorktreeFailureKind.NOT_AVAILABLE
+        )
+        adapter = LocalGitInspectionAdapter(cast(LocalGitWorktreeAdapter, failing))
+
+        with self.assertRaises(GitInspectionError) as raised:
+            await adapter.inspect(Path.cwd())
+        self.assertEqual(raised.exception.kind, GitInspectionFailureKind.NOT_AVAILABLE)
+
+    async def test_cancellation_is_a_typed_fail_closed_inspection_error(self) -> None:
+        failing = AsyncMock()
+        failing.git_version.return_value = (2, 40, 0)
+        failing.repository_identity.side_effect = WorktreeError(
+            "cancelled", kind=WorktreeFailureKind.CANCELLED
+        )
+        adapter = LocalGitInspectionAdapter(cast(LocalGitWorktreeAdapter, failing))
+
+        with self.assertRaises(GitInspectionError) as raised:
+            await adapter.inspect(Path.cwd())
+        self.assertEqual(raised.exception.kind, GitInspectionFailureKind.CANCELLED)
+
+    async def test_non_repository_is_a_typed_fail_closed_inspection_error(self) -> None:
+        with (
+            tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory,
+            self.assertRaises(GitInspectionError) as raised,
+        ):
+            await LocalGitInspectionAdapter(LocalGitWorktreeAdapter()).inspect(Path(directory))
+        self.assertEqual(raised.exception.kind, GitInspectionFailureKind.NOT_REPOSITORY)
+
+    async def test_read_only_runner_requests_read_only_workspace_and_disables_global_config(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            request_root = Path(directory)
+
+            class Output:
+                async def read(self, _size: int = -1, /) -> bytes:
+                    return b""
+
+            class Process:
+                stdout = Output()
+                stderr = Output()
+
+                async def wait(self) -> int:
+                    return 0
+
+                async def terminate(self, *, grace_seconds: float | None = None) -> None:
+                    del grace_seconds
+
+            class Sandbox:
+                request = None
+
+                async def spawn(self, request: object) -> Process:
+                    self.request = request
+                    return Process()
+
+            sandbox = Sandbox()
+            adapter = LocalGitWorktreeAdapter(local_process_sandbox=cast(object, sandbox))
+            await adapter.run_read_only_git(request_root, ("--version",))
+
+            request = sandbox.request
+            assert request is not None
+            self.assertEqual(
+                request.filesystem_policy.workspace_roots[0].mode,
+                LocalWorkspaceAccessMode.READ_ONLY,
+            )
+            self.assertEqual(request.environment_policy.variables["GIT_OPTIONAL_LOCKS"], "0")
+            self.assertEqual(request.environment_policy.variables["GIT_CONFIG_NOSYSTEM"], "1")
+            self.assertEqual(request.environment_policy.variables["GIT_CONFIG_GLOBAL"], os.devnull)
+
+            await adapter.run_read_only_git(
+                request_root,
+                ("status", "--porcelain=v2", "--branch", "-z", "--ignore-submodules=none"),
+            )
+            request = sandbox.request
+            assert request is not None
+            self.assertIn("status.recurseSubmodules=no", request.arguments)
+
+
+class GitInspectionProtocolTests(unittest.TestCase):
+    def test_porcelain_v2_parser_handles_branch_rename_conflict_and_untracked_records(self) -> None:
+        sha = b"a" * 40
+        output = b"\0".join(
+            (
+                b"# branch.oid " + sha,
+                b"# branch.head main",
+                b"# branch.upstream origin/main",
+                b"# branch.ab +2 -1",
+                b"1 .M N... 100644 100644 100644 " + sha + b" " + sha + b" path with spaces.txt",
+                b"2 R. N... 100644 100644 100644 " + sha + b" " + sha + b" R100 renamed.txt",
+                b"old name.txt",
+                b"u UU N... 100644 100644 100644 100644 "
+                + sha
+                + b" "
+                + sha
+                + b" "
+                + sha
+                + b" conflict.txt",
+                b"1 .M SC.. 160000 160000 160000 " + sha + b" " + sha + b" nested-module",
+                b"? new.txt",
+                b"",
+            )
+        )
+
+        status = parse_git_status_porcelain(output)
+
+        self.assertEqual(status.staged_count, 2)
+        self.assertEqual(status.unstaged_count, 3)
+        self.assertEqual(status.untracked_count, 1)
+        self.assertEqual(status.unmerged_count, 1)
+        self.assertEqual(status.entries[1].kind.value, "renamed")
+        self.assertEqual(status.entries[1].original_path, "old name.txt")
+        self.assertEqual(status.entries[2].kind.value, "unmerged")
+        self.assertTrue(status.entries[3].submodule)
+
+    def test_malformed_porcelain_and_excess_entries_fail_closed(self) -> None:
+        with self.assertRaises(WorktreeError) as malformed:
+            parse_git_status_porcelain(b"# branch.oid invalid\0")
+        self.assertEqual(malformed.exception.kind, WorktreeFailureKind.PROTOCOL)
+
+        sha = b"b" * 40
+        header = b"# branch.oid " + sha + b"\0# branch.head main\0"
+        ordinary = b"1 .M N... 100644 100644 100644 " + sha + b" " + sha + b" file\0"
+        with self.assertRaises(WorktreeError) as excessive:
+            parse_git_status_porcelain(header + ordinary * 513)
+        self.assertEqual(excessive.exception.kind, WorktreeFailureKind.OUTPUT_LIMIT)
+
+    def test_diff_bounds_are_explicitly_truncated_and_never_complete(self) -> None:
+        projection = project_git_diff(
+            b"x" * (MAX_GIT_INSPECTION_DIFF_SECTION_BYTES + 1),
+            redaction_values=(),
+        )
+
+        self.assertEqual(projection.completeness.value, "truncated")
+        self.assertEqual(projection.byte_count, MAX_GIT_INSPECTION_DIFF_SECTION_BYTES)
+
+    def test_binary_projection_keeps_metadata_and_discards_binary_patch_payload(self) -> None:
+        projection = project_git_diff(
+            b"\n".join(
+                (
+                    b"diff --git a/deleted.bin b/deleted.bin",
+                    b"deleted file mode 100644",
+                    b"Binary files a/deleted.bin and /dev/null differ",
+                    b"GIT binary patch",
+                    b"literal 99",
+                    b"not-public-binary-payload",
+                )
+            ),
+            redaction_values=(),
+        )
+
+        self.assertEqual(projection.binary_paths, ("deleted.bin",))
+        self.assertIn("Binary files a/deleted.bin and /dev/null differ", projection.text)
+        self.assertNotIn("GIT binary patch", projection.text)
+        self.assertNotIn("not-public-binary-payload", projection.text)
+        self.assertTrue(projection.redacted)
+
+
+class GitInspectionBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_application_service_rejects_relative_workspace_and_tool_has_no_path_argument(
+        self,
+    ) -> None:
+        service = AsyncMock()
+        application = GitInspectionService(cast(GitInspectionApplication, service))
+        with self.assertRaises(GitInspectionError) as raised:
+            await application.inspect(Path("relative"))
+        self.assertEqual(raised.exception.kind, GitInspectionFailureKind.PATH_UNSAFE)
+
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            root = _new_repository(Path(directory))
+            real_adapter = LocalGitInspectionAdapter(LocalGitWorktreeAdapter())
+            result = await real_adapter.inspect(root, GitInspectionView.STATUS)
+            service.inspect = AsyncMock(return_value=result)
+            tool = GitInspectTool(cast(GitInspectionApplication, service))
+            tool_result = await tool.execute({}, ToolContext(root))
+
+            self.assertFalse(tool.side_effecting)
+            self.assertIsInstance(tool_result, ToolResult)
+            service.inspect.assert_awaited_once_with(root, GitInspectionView.ALL)
+            self.assertNotIn("path", tool.definition.input_schema["properties"])
+
+    async def test_tool_registry_exposes_git_inspection_only_for_a_local_normal_capability(
+        self,
+    ) -> None:
+        service = cast(GitInspectionApplication, AsyncMock())
+        self.assertNotIn("git_inspect", default_tool_registry().names())
+        self.assertIn("git_inspect", default_tool_registry(git_inspection=service).names())
+        self.assertNotIn(
+            "git_inspect",
+            default_tool_registry(
+                git_inspection=service,
+                client_file_system=SimpleNamespace(supports_read=False, supports_write=False),
+            ).names(),
+        )
+        self.assertIn(
+            "git_inspect",
+            default_tool_registry(
+                git_inspection=service, allowed_tool_names=("git_inspect",)
+            ).names(),
+        )
+
+
+class GitInspectionCliTests(unittest.TestCase):
+    def test_git_view_is_not_silently_ignored_by_configuration_inspect(self) -> None:
+        with self.assertRaisesRegex(ConfigurationError, "only valid for inspect git"):
+            run_inspect_command(
+                SimpleNamespace(inspect_kind=None, view="status", json=False, cwd=Path.cwd()),
+                cast(
+                    object,
+                    SimpleNamespace(load_config=lambda _cwd: SimpleNamespace(cwd=Path.cwd())),
+                ),
+            )
+
+    def test_inspect_git_parser_and_cli_use_the_typed_application_projection(self) -> None:
+        parsed = build_parser().parse_args(["inspect", "git", "--view", "status", "--json"])
+        self.assertEqual(parsed.inspect_kind, "git")
+        self.assertEqual(parsed.view, "status")
+        self.assertTrue(parsed.json)
+        self.assertIsNone(build_parser().parse_args(["inspect"]).inspect_kind)
+
+        class Services:
+            def load_config(self, cwd: Path | None) -> SimpleNamespace:
+                assert cwd is not None
+                return SimpleNamespace(cwd=cwd)
+
+            def create_git_inspection_service(
+                self,
+                _config: object,
+            ) -> GitInspectionApplication:
+                return self.service
+
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            root = _new_repository(Path(directory))
+            service = GitInspectionService(LocalGitInspectionAdapter(LocalGitWorktreeAdapter()))
+            services = Services()
+            services.service = service
+            args = SimpleNamespace(
+                inspect_kind="git",
+                view="status",
+                json=True,
+                cwd=root,
+            )
+            stream = StringIO()
+            with redirect_stdout(stream):
+                self.assertEqual(run_inspect_command(args, cast(object, services)), 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["view"], "status")
+            self.assertEqual(payload["status"]["entries"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -151,6 +151,7 @@ async def _run_git(
     accepted_returncodes: frozenset[int] = frozenset(),
     timeout_seconds: float = MAX_GIT_COMMAND_TIMEOUT_SECONDS,
     failure_kind: WorktreeFailureKind = WorktreeFailureKind.COMMAND_FAILED,
+    workspace_access_mode: LocalWorkspaceAccessMode = LocalWorkspaceAccessMode.READ_WRITE,
 ) -> _GitCommandResult:
     if not cwd.is_absolute() or not await run_blocking(cwd.is_dir):
         raise WorktreeError(
@@ -158,6 +159,8 @@ async def _run_git(
         )
     if not 0 < timeout_seconds <= MAX_GIT_COMMAND_TIMEOUT_SECONDS:
         raise ValueError("Git command timeout is outside the bounded range")
+    if not isinstance(workspace_access_mode, LocalWorkspaceAccessMode):
+        raise TypeError("Git workspace access mode must be canonical")
     try:
         hooks_directory = await run_blocking(_prepare_hooks_directory, hooks_directory)
     except (OSError, RuntimeError) as error:
@@ -172,6 +175,9 @@ async def _run_git(
         "LANG": "C",
         "PATH": os.environ.get("PATH") or os.defpath,
     }
+    if workspace_access_mode is LocalWorkspaceAccessMode.READ_ONLY:
+        environment["GIT_CONFIG_NOSYSTEM"] = "1"
+        environment["GIT_CONFIG_GLOBAL"] = os.devnull
     if os.name == "nt":
         for name in ("SystemRoot", "SystemDrive", "PATHEXT"):
             value = os.environ.get(name)
@@ -187,6 +193,11 @@ async def _run_git(
         f"core.hooksPath={hooks_directory}",
         "-c",
         "core.fsmonitor=false",
+        *(
+            ("-c", "status.recurseSubmodules=no")
+            if workspace_access_mode is LocalWorkspaceAccessMode.READ_ONLY
+            else ()
+        ),
         *args,
     )
     request = SandboxedProcessRequest.exec(
@@ -199,7 +210,7 @@ async def _run_git(
             (
                 LocalWorkspaceAccess(
                     cwd,
-                    LocalWorkspaceAccessMode.READ_WRITE,
+                    workspace_access_mode,
                 ),
                 LocalWorkspaceAccess(
                     hooks_directory,
@@ -448,6 +459,7 @@ class LocalGitWorktreeAdapter:
         accepted_returncodes: frozenset[int] = frozenset(),
         timeout_seconds: float = MAX_GIT_COMMAND_TIMEOUT_SECONDS,
         failure_kind: WorktreeFailureKind = WorktreeFailureKind.COMMAND_FAILED,
+        workspace_access_mode: LocalWorkspaceAccessMode = LocalWorkspaceAccessMode.READ_WRITE,
     ) -> _GitCommandResult:
         return await _run_git(
             self._local_process_sandbox,
@@ -458,28 +470,42 @@ class LocalGitWorktreeAdapter:
             accepted_returncodes=accepted_returncodes,
             timeout_seconds=timeout_seconds,
             failure_kind=failure_kind,
+            workspace_access_mode=workspace_access_mode,
         )
 
-    async def repository_identity(self, path: Path, /) -> WorktreeRepositoryIdentity:
+    async def repository_identity(
+        self,
+        path: Path,
+        /,
+        *,
+        read_only: bool = False,
+    ) -> WorktreeRepositoryIdentity:
+        workspace_access_mode = (
+            LocalWorkspaceAccessMode.READ_ONLY if read_only else LocalWorkspaceAccessMode.READ_WRITE
+        )
         root_result = await self._run_git(
             path,
             ("rev-parse", "--show-toplevel"),
             failure_kind=WorktreeFailureKind.NOT_REPOSITORY,
+            workspace_access_mode=workspace_access_mode,
         )
         git_dir_result = await self._run_git(
             path,
             ("rev-parse", "--git-dir"),
             failure_kind=WorktreeFailureKind.NOT_REPOSITORY,
+            workspace_access_mode=workspace_access_mode,
         )
         common_dir_result = await self._run_git(
             path,
             ("rev-parse", "--git-common-dir"),
             failure_kind=WorktreeFailureKind.NOT_REPOSITORY,
+            workspace_access_mode=workspace_access_mode,
         )
         head_result = await self._run_git(
             path,
             ("rev-parse", "HEAD"),
             failure_kind=WorktreeFailureKind.NOT_REPOSITORY,
+            workspace_access_mode=workspace_access_mode,
         )
         source = _path_from_output(root_result.stdout, base=path, field_name="repository root")
         git_dir = _path_from_output(git_dir_result.stdout, base=source, field_name="Git dir")
@@ -495,6 +521,33 @@ class LocalGitWorktreeAdapter:
             git_dir=git_dir,
             head_sha=head,
         )
+
+    async def run_read_only_git(
+        self,
+        cwd: Path,
+        args: tuple[str, ...],
+        /,
+        *,
+        accepted_returncodes: frozenset[int] = frozenset(),
+        timeout_seconds: float = MAX_GIT_COMMAND_TIMEOUT_SECONDS,
+        failure_kind: WorktreeFailureKind = WorktreeFailureKind.COMMAND_FAILED,
+    ) -> tuple[bytes, bytes, int]:
+        """Run one adapter-owned fixed read-only Git command.
+
+        The method is an infrastructure seam for read-only Git projections;
+        callers still inherit the same argv, hooks, environment, timeout,
+        cancellation, and output bounds as managed worktree operations.
+        """
+
+        result = await self._run_git(
+            cwd,
+            args,
+            accepted_returncodes=accepted_returncodes,
+            timeout_seconds=timeout_seconds,
+            failure_kind=failure_kind,
+            workspace_access_mode=LocalWorkspaceAccessMode.READ_ONLY,
+        )
+        return result.stdout, result.stderr, result.returncode
 
     async def resolve_commit(self, path: Path, revision: str, /) -> str:
         revision = _validate_revision(revision)
@@ -839,8 +892,16 @@ class LocalGitWorktreeAdapter:
             failure_kind=WorktreeFailureKind.COMMAND_FAILED,
         )
 
-    async def git_version(self) -> tuple[int, int, int]:
-        result = await self._run_git(Path.cwd(), ("--version",))
+    async def git_version(self, *, read_only: bool = False) -> tuple[int, int, int]:
+        result = await self._run_git(
+            Path.cwd(),
+            ("--version",),
+            workspace_access_mode=(
+                LocalWorkspaceAccessMode.READ_ONLY
+                if read_only
+                else LocalWorkspaceAccessMode.READ_WRITE
+            ),
+        )
         match = re.search(rb"(\d+)\.(\d+)(?:\.(\d+))?", result.stdout)
         if match is None:
             raise WorktreeError(

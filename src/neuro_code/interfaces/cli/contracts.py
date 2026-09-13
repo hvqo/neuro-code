@@ -13,6 +13,7 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from neuro_code.application.ports.git_inspection import GitInspectionApplication
 from neuro_code.application.ports.storage import SessionStore
 from neuro_code.application.settings import ApplicationSettings
 from neuro_code.application.tools.service import (
@@ -74,6 +75,8 @@ class CliServices(Protocol):
     async def open_application(self, settings: ApplicationSettings) -> Any: ...
 
     def load_config(self, cwd: Path | None) -> AppConfig: ...
+
+    def create_git_inspection_service(self, config: AppConfig) -> GitInspectionApplication: ...
 
     def discover_instructions(self, cwd: Path) -> InstructionDiscoveryResult: ...
 
