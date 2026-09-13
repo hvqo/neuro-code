@@ -199,7 +199,10 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
                 "submodule-internal-untracked.txt", json.dumps(dirty_submodule.to_dict())
             )
 
-            _git(repository / "nested", "commit", "--allow-empty", "-qm", "advance submodule")
+            nested_repository = repository / "nested"
+            _git(nested_repository, "config", "user.email", "neuro-code-tests@example.invalid")
+            _git(nested_repository, "config", "user.name", "Neuro Code Tests")
+            _git(nested_repository, "commit", "--allow-empty", "-qm", "advance submodule")
             changed_gitlink = await adapter.inspect(repository)
 
             self.assertEqual(
