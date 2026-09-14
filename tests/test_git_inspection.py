@@ -64,6 +64,50 @@ def _new_repository(root: Path) -> Path:
     return repository
 
 
+class _FakeOutput:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    async def read(self, _size: int = -1, /) -> bytes:
+        payload, self._payload = self._payload, b""
+        return payload
+
+
+class _FakeProcess:
+    def __init__(self, returncode: int, *, stdout: bytes = b"", stderr: bytes = b"") -> None:
+        self.stdout = _FakeOutput(stdout)
+        self.stderr = _FakeOutput(stderr)
+        self._returncode = returncode
+
+    async def wait(self) -> int:
+        return self._returncode
+
+    async def terminate(self, *, grace_seconds: float | None = None) -> None:
+        del grace_seconds
+
+    async def write_stdin(self, data: bytes) -> None:
+        del data
+
+    async def close_stdin(self) -> None:
+        return None
+
+
+class _FakeGitSandbox:
+    def __init__(self, config_outputs: dict[str, bytes]) -> None:
+        self.config_outputs = config_outputs
+        self.requests: list[SandboxedProcessRequest] = []
+
+    async def spawn(self, request: SandboxedProcessRequest) -> _FakeProcess:
+        self.requests.append(request)
+        probe_prefix = ("config", "--null", "--includes", "--get-all")
+        if request.arguments[-5:-1] == probe_prefix:
+            key = request.arguments[-1]
+            if key in self.config_outputs:
+                return _FakeProcess(returncode=0, stdout=self.config_outputs[key])
+            return _FakeProcess(returncode=1)
+        return _FakeProcess(returncode=0)
+
+
 def _run(coroutine: object) -> object:
     return asyncio.run(coroutine)  # type: ignore[arg-type]
 
@@ -361,6 +405,124 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
             assert request is not None
             self.assertIn("status.recurseSubmodules=no", request.arguments)
             self.assertIn("core.autocrlf=true", request.arguments)
+
+    async def test_safe_line_ending_values_are_normalized_into_adapter_overrides(self) -> None:
+        cases = (
+            ("core.autocrlf", "true", "true"),
+            ("core.autocrlf", "yes", "true"),
+            ("core.autocrlf", "on", "true"),
+            ("core.autocrlf", "1", "true"),
+            ("core.autocrlf", "false", "false"),
+            ("core.autocrlf", "no", "false"),
+            ("core.autocrlf", "off", "false"),
+            ("core.autocrlf", "0", "false"),
+            ("core.autocrlf", "input", "input"),
+            ("core.eol", "lf", "lf"),
+            ("core.eol", "crlf", "crlf"),
+            ("core.eol", "native", "native"),
+        )
+
+        for key, raw_value, expected_value in cases:
+            with self.subTest(key=key, value=raw_value):
+                with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+                    sandbox = _FakeGitSandbox({key: f"{raw_value}\0".encode()})
+                    adapter = LocalGitWorktreeAdapter(local_process_sandbox=cast(object, sandbox))
+
+                    with patch(
+                        "neuro_code.infrastructure.git.worktree.shutil.which",
+                        return_value="/fake/git",
+                    ):
+                        await adapter.run_read_only_git(Path(directory), ("status",))
+
+                    request = sandbox.requests[-1]
+                    override = f"{key}={expected_value}"
+                    self.assertIn(override, request.arguments)
+                    override_index = request.arguments.index(override)
+                    self.assertEqual(request.arguments[override_index - 1], "-c")
+
+    async def test_malformed_or_unsupported_line_ending_values_fail_closed(self) -> None:
+        cases = (
+            ("core.autocrlf", b"maybe\0"),
+            ("core.autocrlf", b"true"),
+            ("core.autocrlf", b"true\x01\0"),
+            ("core.eol", b"windows\0"),
+            ("core.eol", b"lf"),
+        )
+
+        for key, output in cases:
+            with self.subTest(key=key, output=output):
+                with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+                    sandbox = _FakeGitSandbox({key: output})
+                    adapter = LocalGitWorktreeAdapter(local_process_sandbox=cast(object, sandbox))
+
+                    with patch(
+                        "neuro_code.infrastructure.git.worktree.shutil.which",
+                        return_value="/fake/git",
+                    ):
+                        with self.assertRaises(WorktreeError) as raised:
+                            await adapter.run_read_only_git(Path(directory), ("status",))
+
+                    self.assertEqual(
+                        raised.exception.kind,
+                        WorktreeFailureKind.UNSAFE_GIT_CONFIGURATION,
+                    )
+                    self.assertFalse(
+                        any("status" in request.arguments for request in sandbox.requests)
+                    )
+
+    async def test_config_probes_are_allowlisted_and_status_diff_disable_global_config(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            sandbox = _FakeGitSandbox(
+                {
+                    "core.autocrlf": b"yes\0",
+                    "core.eol": b"native\0",
+                }
+            )
+            adapter = LocalGitWorktreeAdapter(local_process_sandbox=cast(object, sandbox))
+
+            with patch(
+                "neuro_code.infrastructure.git.worktree.shutil.which",
+                return_value="/fake/git",
+            ):
+                await adapter.run_read_only_git(Path(directory), ("status", "--porcelain=v2"))
+                status_request = sandbox.requests[-1]
+                await adapter.run_read_only_git(
+                    Path(directory), ("diff", "--cached", "--", "tracked.txt")
+                )
+                diff_request = sandbox.requests[-1]
+
+            probe_prefix = ("config", "--null", "--includes", "--get-all")
+            probe_requests = [
+                request
+                for request in sandbox.requests
+                if request.arguments[-5:-1] == probe_prefix
+            ]
+            self.assertEqual(
+                [request.arguments[-1] for request in probe_requests],
+                ["core.autocrlf", "core.eol", "core.autocrlf", "core.eol"],
+            )
+            for request in probe_requests:
+                self.assertEqual(
+                    request.filesystem_policy.workspace_roots[0].mode,
+                    LocalWorkspaceAccessMode.READ_ONLY,
+                )
+                self.assertNotIn("GIT_CONFIG_NOSYSTEM", request.environment_policy.variables)
+                self.assertNotIn("GIT_CONFIG_GLOBAL", request.environment_policy.variables)
+
+            for request in (status_request, diff_request):
+                self.assertEqual(
+                    request.filesystem_policy.workspace_roots[0].mode,
+                    LocalWorkspaceAccessMode.READ_ONLY,
+                )
+                self.assertEqual(request.environment_policy.variables["GIT_CONFIG_NOSYSTEM"], "1")
+                self.assertEqual(
+                    request.environment_policy.variables["GIT_CONFIG_GLOBAL"],
+                    os.devnull,
+                )
+                self.assertIn("core.autocrlf=true", request.arguments)
+                self.assertIn("core.eol=native", request.arguments)
 
     async def test_final_identity_recheck_accepts_an_unchanged_repository(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
