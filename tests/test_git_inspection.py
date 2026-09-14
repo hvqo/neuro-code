@@ -423,22 +423,24 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
 
         for key, raw_value, expected_value in cases:
-            with self.subTest(key=key, value=raw_value):
-                with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
-                    sandbox = _FakeGitSandbox({key: f"{raw_value}\0".encode()})
-                    adapter = LocalGitWorktreeAdapter(local_process_sandbox=cast(object, sandbox))
+            with (
+                self.subTest(key=key, value=raw_value),
+                tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory,
+            ):
+                sandbox = _FakeGitSandbox({key: f"{raw_value}\0".encode()})
+                adapter = LocalGitWorktreeAdapter(local_process_sandbox=cast(object, sandbox))
 
-                    with patch(
-                        "neuro_code.infrastructure.git.worktree.shutil.which",
-                        return_value="/fake/git",
-                    ):
-                        await adapter.run_read_only_git(Path(directory), ("status",))
+                with patch(
+                    "neuro_code.infrastructure.git.worktree.shutil.which",
+                    return_value="/fake/git",
+                ):
+                    await adapter.run_read_only_git(Path(directory), ("status",))
 
-                    request = sandbox.requests[-1]
-                    override = f"{key}={expected_value}"
-                    self.assertIn(override, request.arguments)
-                    override_index = request.arguments.index(override)
-                    self.assertEqual(request.arguments[override_index - 1], "-c")
+                request = sandbox.requests[-1]
+                override = f"{key}={expected_value}"
+                self.assertIn(override, request.arguments)
+                override_index = request.arguments.index(override)
+                self.assertEqual(request.arguments[override_index - 1], "-c")
 
     async def test_malformed_or_unsupported_line_ending_values_fail_closed(self) -> None:
         cases = (
@@ -450,25 +452,27 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
         )
 
         for key, output in cases:
-            with self.subTest(key=key, output=output):
-                with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
-                    sandbox = _FakeGitSandbox({key: output})
-                    adapter = LocalGitWorktreeAdapter(local_process_sandbox=cast(object, sandbox))
+            with (
+                self.subTest(key=key, output=output),
+                tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory,
+            ):
+                sandbox = _FakeGitSandbox({key: output})
+                adapter = LocalGitWorktreeAdapter(local_process_sandbox=cast(object, sandbox))
 
-                    with patch(
+                with (
+                    patch(
                         "neuro_code.infrastructure.git.worktree.shutil.which",
                         return_value="/fake/git",
-                    ):
-                        with self.assertRaises(WorktreeError) as raised:
-                            await adapter.run_read_only_git(Path(directory), ("status",))
+                    ),
+                    self.assertRaises(WorktreeError) as raised,
+                ):
+                    await adapter.run_read_only_git(Path(directory), ("status",))
 
-                    self.assertEqual(
-                        raised.exception.kind,
-                        WorktreeFailureKind.UNSAFE_GIT_CONFIGURATION,
-                    )
-                    self.assertFalse(
-                        any("status" in request.arguments for request in sandbox.requests)
-                    )
+                self.assertEqual(
+                    raised.exception.kind,
+                    WorktreeFailureKind.UNSAFE_GIT_CONFIGURATION,
+                )
+                self.assertFalse(any("status" in request.arguments for request in sandbox.requests))
 
     async def test_config_probes_are_allowlisted_and_status_diff_disable_global_config(
         self,
@@ -495,9 +499,7 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
 
             probe_prefix = ("config", "--null", "--includes", "--get-all")
             probe_requests = [
-                request
-                for request in sandbox.requests
-                if request.arguments[-5:-1] == probe_prefix
+                request for request in sandbox.requests if request.arguments[-5:-1] == probe_prefix
             ]
             self.assertEqual(
                 [request.arguments[-1] for request in probe_requests],
