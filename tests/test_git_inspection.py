@@ -36,7 +36,7 @@ from neuro_code.infrastructure.tools.git_inspection import GitInspectTool
 from neuro_code.infrastructure.tools.registry import default_tool_registry
 from neuro_code.interfaces.cli.inspection import run_inspect_command
 from neuro_code.interfaces.cli.parser import build_parser
-from neuro_code.shared.errors import ConfigurationError
+from neuro_code.shared.errors import ConfigurationError, ToolError
 
 
 def _git(repository: Path, *arguments: str, check: bool = True) -> str:
@@ -657,6 +657,38 @@ class GitInspectionProtocolTests(unittest.TestCase):
             parse_git_status_porcelain(header + ordinary * 513)
         self.assertEqual(excessive.exception.kind, WorktreeFailureKind.OUTPUT_LIMIT)
 
+    def test_status_protocol_rejects_malformed_boundary_records(self) -> None:
+        sha = b"a" * 40
+        header = b"# branch.oid " + sha + b"\0# branch.head main\0"
+        rename = b"2 .M N... 100644 100644 100644 " + sha + b" " + sha
+        cases = (
+            ("missing header value", b"# branch.oid\0"),
+            ("duplicate branch oid", header + b"# branch.oid " + sha + b"\0"),
+            ("duplicate branch head", header + b"# branch.head other\0"),
+            ("invalid branch head", b"# branch.oid " + sha + b"\0# branch.head \x01\0"),
+            (
+                "duplicate upstream",
+                header + b"# branch.upstream origin/main\0# branch.upstream origin/other\0",
+            ),
+            ("absolute upstream", header + b"# branch.upstream /origin/main\0"),
+            ("malformed ahead and behind", header + b"# branch.ab malformed\0"),
+            ("duplicate ahead and behind", header + b"# branch.ab +1 -2\0# branch.ab +2 -3\0"),
+            ("unknown branch header", header + b"# branch.unknown value\0"),
+            ("malformed ordinary record", header + b"1 malformed\0"),
+            ("missing rename source", header + rename + b" R100 renamed.txt\0"),
+            ("malformed rename score", header + rename + b" X renamed.txt\0old.txt\0"),
+            ("malformed unmerged record", header + b"u malformed\0"),
+            ("malformed untracked record", header + b"?malformed\0"),
+            ("unknown record", header + b"x unknown\0"),
+            ("missing branch identity", b""),
+        )
+
+        for label, output in cases:
+            with self.subTest(record=label):
+                with self.assertRaises(WorktreeError) as raised:
+                    parse_git_status_porcelain(output)
+                self.assertEqual(raised.exception.kind, WorktreeFailureKind.PROTOCOL)
+
     def test_diff_bounds_are_explicitly_truncated_and_never_complete(self) -> None:
         projection = project_git_diff(
             b"x" * (MAX_GIT_INSPECTION_DIFF_SECTION_BYTES + 1),
@@ -706,6 +738,30 @@ class GitInspectionProtocolTests(unittest.TestCase):
         self.assertNotIn("not-public-binary-payload", projection.text)
         self.assertTrue(projection.redacted)
 
+    def test_binary_projection_skips_invalid_duplicates_and_resumes_after_binary_patch(
+        self,
+    ) -> None:
+        projection = project_git_diff(
+            b"\n".join(
+                (
+                    b"Binary files a/../escape.bin and b/visible.bin differ",
+                    b"Binary files a/visible.bin and b/visible.bin differ",
+                    b"diff --git a/one.bin b/one.bin",
+                    b"GIT binary patch",
+                    b"literal 4",
+                    b"SECRET_BINARY_PAYLOAD",
+                    b"diff --git a/two.txt b/two.txt",
+                    b"+visible",
+                )
+            ),
+            redaction_values=(),
+        )
+
+        self.assertEqual(projection.binary_paths, ("visible.bin",))
+        self.assertIn("diff --git a/two.txt b/two.txt", projection.text)
+        self.assertIn("+visible", projection.text)
+        self.assertNotIn("SECRET_BINARY_PAYLOAD", projection.text)
+
 
 class GitInspectionBoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_application_service_rejects_relative_workspace_and_tool_has_no_path_argument(
@@ -729,6 +785,62 @@ class GitInspectionBoundaryTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(tool_result, ToolResult)
             service.inspect.assert_awaited_once_with(root, GitInspectionView.ALL)
             self.assertNotIn("path", tool.definition.input_schema["properties"])
+
+    async def test_service_and_tool_boundaries_fail_closed_for_invalid_inputs_and_outputs(
+        self,
+    ) -> None:
+        service = AsyncMock()
+        application = GitInspectionService(cast(GitInspectionApplication, service))
+
+        with self.assertRaises(GitInspectionError) as invalid_view:
+            await application.inspect(Path.cwd(), cast(GitInspectionView, "invalid"))
+        self.assertEqual(invalid_view.exception.kind, GitInspectionFailureKind.PROTOCOL)
+
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            root = Path(directory)
+            with self.assertRaises(GitInspectionError) as unavailable:
+                await application.inspect(root / "missing", GitInspectionView.STATUS)
+            self.assertEqual(unavailable.exception.kind, GitInspectionFailureKind.PATH_UNSAFE)
+
+            file_path = root / "workspace-file"
+            file_path.write_text("not a directory", encoding="utf-8")
+            with self.assertRaises(GitInspectionError) as not_directory:
+                await application.inspect(file_path, GitInspectionView.STATUS)
+            self.assertEqual(not_directory.exception.kind, GitInspectionFailureKind.PATH_UNSAFE)
+
+        tool_service = AsyncMock()
+        tool = GitInspectTool(cast(GitInspectionApplication, tool_service))
+        context = ToolContext(Path.cwd())
+        for arguments in ({"path": "forbidden"}, {"view": 1}, {"view": "invalid"}):
+            with self.subTest(arguments=arguments), self.assertRaises(ToolError):
+                await tool.execute(arguments, context)
+
+        delegated = await tool.execute(
+            {},
+            ToolContext(Path.cwd(), client_file_system=cast(object, SimpleNamespace())),
+        )
+        self.assertTrue(delegated.is_error)
+        self.assertEqual(delegated.metadata["failure_kind"], "not_available")
+
+        tool_service.inspect = AsyncMock(
+            side_effect=GitInspectionError(
+                "inspection failed", kind=GitInspectionFailureKind.TIMEOUT
+            )
+        )
+        failed = await tool.execute({}, context)
+        self.assertTrue(failed.is_error)
+        self.assertEqual(failed.metadata["failure_kind"], "timeout")
+
+        class LargeResult:
+            completeness = SimpleNamespace(value="complete")
+
+            def to_dict(self) -> dict[str, str]:
+                return {"payload": "x" * 128}
+
+        tool_service.inspect = AsyncMock(return_value=LargeResult())
+        limited = await tool.execute({}, ToolContext(Path.cwd(), output_byte_limit=1))
+        self.assertTrue(limited.is_error)
+        self.assertEqual(limited.metadata["failure_kind"], "output_limit")
 
     async def test_tool_registry_exposes_git_inspection_only_for_a_local_normal_capability(
         self,
