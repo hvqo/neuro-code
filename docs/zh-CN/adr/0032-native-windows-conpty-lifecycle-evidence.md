@@ -67,7 +67,7 @@ POSIX 原生测试也同时得到加固：只有无头测试使用 Textual 自�
   与 Job 列表属性，同时仍与非 PTY Shell 流所有者保持分离。
 - Windows 原生结果需要 Windows runner。Linux 开发环境会执行可移植 API/结构契约，并把
   原生用例报告为平台跳过。PR #6 的
-  [CI 运行 29680149723](https://github.com/amber1686855908-hash/neuro-code/actions/runs/29680149723)
+  [CI 运行 29680149723](https://github.com/hvqo/neuro-code/actions/runs/29680149723)
   已提供成功的 Windows 3.12/3.14 全量测试和原生 ConPTY 终端冒烟证据。
 
 Win32 生命周期遵循 Microsoft 的

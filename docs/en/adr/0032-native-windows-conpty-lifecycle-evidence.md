@@ -87,7 +87,7 @@ byte through the PTY after observing application-mode entry.
 - Native Windows results require a Windows runner. Linux development executes
   the portable API and structure contracts and reports the native tests as
   platform skips. PR #6
-  [CI run 29680149723](https://github.com/amber1686855908-hash/neuro-code/actions/runs/29680149723)
+  [CI run 29680149723](https://github.com/hvqo/neuro-code/actions/runs/29680149723)
   supplied successful Windows 3.12/3.14 full-suite and native ConPTY terminal
   smoke evidence.
 

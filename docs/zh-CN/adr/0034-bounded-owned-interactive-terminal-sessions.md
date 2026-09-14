@@ -66,7 +66,7 @@ Job。
   授权的进程。
 - Linux 测试执行真实 PTY 输入、resize、信号和非零退出；可移植 fake/ctypes 契约覆盖
   Windows 回调、Job 所有权、属性与清理。PR #6 的
-  [CI 运行 29680149723](https://github.com/amber1686855908-hash/neuro-code/actions/runs/29680149723)
+  [CI 运行 29680149723](https://github.com/hvqo/neuro-code/actions/runs/29680149723)
   已提供成功的 Windows 原生全量测试与 ConPTY 冒烟证据。
 - 本切片有意不发布 ACP 方法。ACP stdio/WebSocket framing、会话授权与协议级背压仍是
   下一项 M4 能力。

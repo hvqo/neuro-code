@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         TurnWorkspaceCheckpointCoordinator,
         WorkspaceCheckpointApplicationService,
     )
+    from neuro_code.application.git_inspection import GitInspectionService
     from neuro_code.application.ports.approval import PermissionApprover
     from neuro_code.application.ports.background_tasks import (
         BackgroundTaskManager,
@@ -113,6 +114,12 @@ class CompositionRootMixin:
         ) -> ConversationBinding: ...
 
         def create_worktree_service(self) -> WorktreeApplicationService: ...
+
+        def create_git_inspection_service(
+            self,
+            *,
+            config: AppConfig | None = None,
+        ) -> GitInspectionService: ...
 
         def create_workspace_checkpoint_service(
             self,

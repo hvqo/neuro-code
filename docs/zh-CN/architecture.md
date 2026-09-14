@@ -92,7 +92,8 @@ factory 选择位于 `bootstrap.factories`。公共 `ApplicationComposition` fac
 [ADR 0151](adr/0151-acp-transport-boundary.md) 以及
 [ADR 0153](adr/0153-architecture-completion.md) 以及
 [ADR 0154](adr/0154-normal-agent-verification-acquisition-boundary.md) 以及
-[ADR 0158](adr/0158-turn-workspace-checkpoint-undo.md)。
+[ADR 0158](adr/0158-turn-workspace-checkpoint-undo.md) 以及
+[ADR 0159](adr/0159-read-only-git-change-inspection.md)。
 
 Agent harness 行为现阶段位于 `neuro_code.application.runtime` 的明确 canonical 子模块：
 `background_task_reminders`、`agent`、`conversation` 以及循环、上下文、工具和终结模块。
@@ -181,7 +182,8 @@ CLI、TUI 和 ACP 继续共享同一服务和带类型运行时事件流。
 [ADR 0049](adr/0049-progressive-architecture-boundaries.md)、
 [ADR 0153](adr/0153-architecture-completion.md) 以及
 [ADR 0154](adr/0154-normal-agent-verification-acquisition-boundary.md) 以及
-[ADR 0158](adr/0158-turn-workspace-checkpoint-undo.md)。
+[ADR 0158](adr/0158-turn-workspace-checkpoint-undo.md) 以及
+[ADR 0159](adr/0159-read-only-git-change-inspection.md)。
 
 ## 运行时事件模型
 
@@ -1883,6 +1885,33 @@ Session event `WORKSPACE_UNDO_STATE` 只保存有界的最新 association 以及
 也不会杀死运行中的 terminal/background mutator。Rollback 消费最新 association，校验 exact projection，并
 通过现有 verification tracker 传递一次外部 workspace mutation fact；它不会改写回合历史、创建第二个
 generation owner，也不承诺整个文件系统 undo。详见 [ADR 0158](adr/0158-turn-workspace-checkpoint-undo.md)。
+
+## B2 只读 Git 变更检查
+
+B2 为普通 Agent 及其用户增加一个有界、类型化的只读 Git projection。
+`GitInspectionService` 是 application owner，`LocalGitInspectionAdapter` 是
+固定 Git 执行、porcelain-v2 解析、身份检查和 diff projection 的 infrastructure
+owner。CLI `inspect git` 与 model tool `git_inspect` 共享同一个 application port；
+interface 不执行 Git，也不维护第二套 status model。该 tool 明确无副作用，只在普通
+local binding 中提供；不增加 TUI 或 ACP surface。
+
+Projection 报告 repository identity、HEAD、branch 或 detached 状态、upstream 计数及
+有界 status metadata。Staged change 使用固定的 `HEAD -> index` diff，unstaged change
+使用固定的 `index -> working tree` diff。Rename/copy、unmerged、untracked、binary
+和 submodule 只作为 metadata；不会自动读取 untracked content。严格的 NUL-delimited
+porcelain-v2 parser 会拒绝 malformed 或未知 record；submodule working tree 不会被递归
+检查，unmerged entry 单独计数，不会重复计入 staged 或 unstaged。
+
+所有命令复用既有加固的 local Git runner：关闭 optional locks、hooks 和 fsmonitor，禁用
+system/global configuration，隔离 network，支持 cancellation cleanup、bounded timeout、
+output limit 和 redaction。Diff execution 禁用 external diff、textconv、color 和
+rename processing。Path 与 output 均有界，并显式表示 complete/truncated/incomplete。
+Adapter 在返回前把 repository identity 与 status HEAD 重新核对；不一致时 fail closed。
+
+B2 不修改 workspace、index、refs、config、history、checkpoint、session、verification
+generation 或 B1 state。不增加 schema 或 recovery state，不产生 verification evidence，
+也不提供 commit、branch、worktree、history、checkpoint、rollback、automatic untracked
+content discovery、recursive submodule inspection 或通用 Git GUI 行为。详见 [ADR 0159](adr/0159-read-only-git-change-inspection.md)。
 
 ## 显式串行 Writable Subagent 工作区
 

@@ -119,7 +119,8 @@ infrastructure. See [ADR 0145](adr/0145-acp-prompt-content-boundary.md),
 [ADR 0151](adr/0151-acp-transport-boundary.md),
 [ADR 0153](adr/0153-architecture-completion.md), and
 [ADR 0154](adr/0154-normal-agent-verification-acquisition-boundary.md), and
-[ADR 0158](adr/0158-turn-workspace-checkpoint-undo.md).
+[ADR 0158](adr/0158-turn-workspace-checkpoint-undo.md), and
+[ADR 0159](adr/0159-read-only-git-change-inspection.md).
 
 Agent harness behavior currently lives in the explicit canonical submodules of
 `neuro_code.application.runtime`: `background_task_reminders`, `agent`,
@@ -265,7 +266,8 @@ runtime event stream.
 See [ADR 0049](adr/0049-progressive-architecture-boundaries.md),
 [ADR 0153](adr/0153-architecture-completion.md), and
 [ADR 0154](adr/0154-normal-agent-verification-acquisition-boundary.md), and
-[ADR 0158](adr/0158-turn-workspace-checkpoint-undo.md) for the
+[ADR 0158](adr/0158-turn-workspace-checkpoint-undo.md) and
+[ADR 0159](adr/0159-read-only-git-change-inspection.md) for the
 complete dependency rules, compatibility migration policy, and allowlist
 discipline.
 
@@ -3411,3 +3413,39 @@ association, verifies the exact projection, and hands one external workspace
 mutation fact to the existing verification tracker. It does not rewrite turn
 history, create a second generation owner, or promise whole-filesystem undo.
 See [ADR 0158](adr/0158-turn-workspace-checkpoint-undo.md).
+
+## B2 read-only Git change inspection
+
+B2 adds one bounded, typed read projection for the normal Agent and its user.
+`GitInspectionService` is the application owner and
+`LocalGitInspectionAdapter` is the infrastructure owner of fixed Git
+execution, porcelain-v2 parsing, identity checks, and diff projection. The
+CLI `inspect git` command and the `git_inspect` model tool consume the same
+application port; neither interface executes Git or owns a second status
+model. The tool is explicitly non-side-effecting and is available only on the
+normal local binding. No TUI or ACP surface is added.
+
+The projection reports repository identity, HEAD, branch or detached state,
+upstream counters, and bounded status metadata. Staged changes are the fixed
+`HEAD -> index` diff and unstaged changes are the fixed `index -> working tree`
+diff. Rename/copy, unmerged, untracked, binary, and submodule records are
+represented as metadata; submodule working-tree contents are not recursively
+inspected, and untracked contents are not read automatically. An unmerged
+entry is counted separately from staged and unstaged entries. A strict
+NUL-delimited porcelain-v2 parser rejects malformed or unknown records.
+
+All commands use the existing hardened local Git runner with optional locks
+disabled, hooks and fsmonitor disabled, system/global configuration disabled,
+network isolation, cancellation cleanup, bounded timeout, output limits, and
+redaction. Diff execution disables external diff, textconv, color, and rename
+processing. Paths and output are bounded, and complete/truncated/incomplete
+state is explicit. The adapter rechecks repository identity against the
+status HEAD before returning a result, so an inconsistent snapshot fails
+closed.
+
+B2 does not mutate the workspace, index, refs, config, history, checkpoint,
+session, verification generation, or B1 state. It adds no schema or recovery
+state, does not produce verification evidence, and does not provide commit,
+branch, worktree, history, checkpoint, rollback, automatic untracked-content
+discovery, recursive submodule inspection, or generic Git GUI behavior. See
+[ADR 0159](adr/0159-read-only-git-change-inspection.md).

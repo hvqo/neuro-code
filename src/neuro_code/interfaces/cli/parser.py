@@ -13,6 +13,7 @@ from pathlib import Path
 
 from neuro_code import __version__
 from neuro_code.application.execution_policy import ExecutionProfile
+from neuro_code.application.ports.git_inspection import GitInspectionView
 from neuro_code.application.ports.tools import MAX_TOOL_OUTPUT_ARTIFACT_READ_BYTES
 from neuro_code.application.runtime.supervision import ExecutionControlMode
 from neuro_code.application.sessions.subagent_lifecycle import SubagentRelationshipAction
@@ -167,9 +168,24 @@ def build_parser() -> argparse.ArgumentParser:
     version_parser = subparsers.add_parser("version", help="show version information")
     version_parser.add_argument("--json", action="store_true")
 
-    inspect_parser = subparsers.add_parser("inspect", help="show effective redacted configuration")
+    inspect_parser = subparsers.add_parser(
+        "inspect",
+        help="show effective redacted configuration or bounded Git state",
+    )
+    inspect_parser.add_argument(
+        "inspect_kind",
+        nargs="?",
+        choices=("git",),
+        help="optional read-only inspection capability",
+    )
     inspect_parser.add_argument("--json", action="store_true")
     inspect_parser.add_argument("--cwd", type=Path, help="working directory")
+    inspect_parser.add_argument(
+        "--view",
+        choices=tuple(view.value for view in GitInspectionView),
+        default=GitInspectionView.ALL.value,
+        help="Git projection to show (only valid for inspect git)",
+    )
 
     completions_parser = subparsers.add_parser(
         "completions", help="generate a basic shell completion script"

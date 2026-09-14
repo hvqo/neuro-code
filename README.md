@@ -2,7 +2,7 @@
 
 [English](README.md) · [简体中文](docs/zh-CN/README.md)
 
-[![CI](https://github.com/amber1686855908-hash/neuro-code/actions/workflows/ci.yml/badge.svg)](https://github.com/amber1686855908-hash/neuro-code/actions/workflows/ci.yml)
+[![CI](https://github.com/hvqo/neuro-code/actions/workflows/ci.yml/badge.svg)](https://github.com/hvqo/neuro-code/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB.svg)](pyproject.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-2F5D50.svg)](LICENSE)
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#project-status)
@@ -27,7 +27,7 @@ Named provider profiles and durable sessions make the workflow adaptable across 
 Neuro Code is pre-alpha and is currently run from a source checkout. Python 3.12 or newer is required; this setup uses [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/amber1686855908-hash/neuro-code.git
+git clone https://github.com/hvqo/neuro-code.git
 cd neuro-code
 uv sync --extra dev
 uv run neuro
