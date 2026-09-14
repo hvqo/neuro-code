@@ -12,6 +12,8 @@ workflow, and discovery methods are provided by cohesive mixins.
 
 from __future__ import annotations
 
+import os
+
 from neuro_code.application.ports.background_tasks import BackgroundTaskSupervisor
 from neuro_code.application.ports.configuration import AppConfig
 from neuro_code.application.ports.instructions import InstructionDiscovery
@@ -80,6 +82,7 @@ class ApplicationComposition(
         self._session_service = SessionApplicationService(
             store,
             workspace_matcher=workspaces_match,
+            redaction_values=config.redaction_values(os.environ),
         )
         self._session_summary_queries = SessionSummaryQueryService(store)
         self.background_tasks = background_tasks

@@ -12,11 +12,21 @@ application seam without changing the existing runtime path.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from neuro_code.application.ports.session_history import (
+    ListSessionItemsRequest,
+    ReadSessionItemRequest,
+    SearchSessionItemsRequest,
+    SessionItemPage,
+    SessionItemRead,
+    SessionItemReadKind,
+    SessionItemReference,
+    SessionItemSummary,
+)
 from neuro_code.application.ports.storage import SessionStore
 from neuro_code.application.sessions.catalog import (
     ListSessionsPageRequest,
@@ -244,12 +254,16 @@ class SessionApplicationService:
         store: SessionStore,
         *,
         workspace_matcher: SessionWorkspaceMatcher | None = None,
+        redaction_values: Sequence[str] = (),
     ) -> None:
         self._store = store
         self._lifecycle = SessionLifecycleService(store)
         self._event_queries = SessionEventQueryService(store)
         self._execution_queries = SessionExecutionQueryService(store)
-        self._item_queries = SessionItemQueryService(store)
+        self._item_queries = SessionItemQueryService(
+            store,
+            redaction_values=redaction_values,
+        )
         self._summary_queries = SessionSummaryQueryService(store)
         self._task_queries = SessionTaskQueryService(store)
         self._catalog = SessionCatalogApplicationService(
@@ -355,6 +369,30 @@ class SessionApplicationService:
         """
 
         return await self._item_queries.load_session_items(request)
+
+    async def list_session_items(self, request: ListSessionItemsRequest) -> SessionItemPage:
+        """List bounded safe metadata from one session's durable items.
+
+        从一个会话的持久化会话项中列出有界安全元数据.
+        """
+
+        return await self._item_queries.list_session_items(request)
+
+    async def search_session_items(self, request: SearchSessionItemsRequest) -> SessionItemPage:
+        """Search bounded safe text in one session's durable items.
+
+        在一个会话的持久化会话项中搜索有界安全文本.
+        """
+
+        return await self._item_queries.search_session_items(request)
+
+    async def read_session_item(self, request: ReadSessionItemRequest) -> SessionItemRead:
+        """Read one bounded safe chunk from one addressed durable item.
+
+        读取一个已寻址持久化会话项中的一个有界安全内容块.
+        """
+
+        return await self._item_queries.read_session_item(request)
 
     async def load_session_events(
         self,
@@ -638,6 +676,7 @@ __all__ = [
     "GetSessionTaskRequest",
     "ImportSessionRequest",
     "ListPlanCommentsRequest",
+    "ListSessionItemsRequest",
     "ListSessionTasksRequest",
     "ListSessionsPageRequest",
     "ListSessionsRequest",
@@ -646,10 +685,12 @@ __all__ = [
     "LoadSessionEventsRequest",
     "LoadSessionItemsRequest",
     "LoadSessionPlanRequest",
+    "ReadSessionItemRequest",
     "RenameSessionRequest",
     "ResolveSessionAliasRequest",
     "ResumeSessionRequest",
     "RunTurnRequest",
+    "SearchSessionItemsRequest",
     "SearchSessionsRequest",
     "SessionApplicationService",
     "SessionEventQueryController",
@@ -658,8 +699,13 @@ __all__ = [
     "SessionExecutionQueryService",
     "SessionExport",
     "SessionInspection",
+    "SessionItemPage",
     "SessionItemQueryController",
     "SessionItemQueryService",
+    "SessionItemRead",
+    "SessionItemReadKind",
+    "SessionItemReference",
+    "SessionItemSummary",
     "SessionLifecycleController",
     "SessionLifecycleService",
     "SessionSearchInspection",

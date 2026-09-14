@@ -73,6 +73,7 @@ from neuro_code.application.sessions.binding import (
     ConversationBindingResourceScope,
 )
 from neuro_code.application.sessions.conversation import AgentConversation
+from neuro_code.application.sessions.item_queries import SessionItemQueryService
 from neuro_code.application.sessions.summary import (
     GetSessionSummaryRequest,
 )
@@ -409,6 +410,10 @@ class CompositionBindingMixin(CompositionRootMixin):
         # Validate collisions before opening the binding-owned background scope.
         # Tool construction is pure wiring, so this preserves the existing
         # cleanup guarantee when an additional tool conflicts with a built-in.
+        session_item_query = SessionItemQueryService(
+            self.store,
+            redaction_values=selected_config.redaction_values(os.environ),
+        )
         preview_tools = default_tool_registry(
             selected_config.sandbox_profile,
             enable_background_tasks=enable_background_tasks,
@@ -418,6 +423,7 @@ class CompositionBindingMixin(CompositionRootMixin):
             interactive_terminals=interactive_terminals,
             user_interaction=user_interaction,
             git_inspection=git_inspection,
+            session_item_query=session_item_query,
         )
         for tool in additional_tools:
             if allowed_tool_names is not None and tool.definition.name not in allowed_tool_names:
@@ -577,6 +583,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                     user_interaction=user_interaction,
                     lsp_service=lsp_service,
                     git_inspection=git_inspection,
+                    session_item_query=session_item_query,
                 )
                 if fetch_path is WebFetchExecutionPath.LOCAL and (
                     allowed_tool_names is None or "web_fetch" in allowed_tool_names
