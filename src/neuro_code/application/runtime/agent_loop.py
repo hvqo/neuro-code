@@ -46,6 +46,10 @@ from neuro_code.application.ports.tools import (
     ToolCollection,
     ToolContext,
 )
+from neuro_code.application.ports.working_set import (
+    ReadWorkingSetRequest,
+    WorkingSetController,
+)
 from neuro_code.application.ports.workspace_changes import WorkspaceChangeReport
 from neuro_code.application.runtime.background_task_reminders import (
     BACKGROUND_TASK_COMPLETION_BATCH_LIMIT,
@@ -229,6 +233,7 @@ class AgentLoopRunner:
         "_tool_executor",
         "_tool_scheduler",
         "_tools",
+        "_working_set",
         "_workspace_undo_sealer",
     )
 
@@ -239,6 +244,7 @@ class AgentLoopRunner:
         tools: ToolCollection,
         tool_context: ToolContext,
         session_store: SessionStore | None,
+        working_set: WorkingSetController | None = None,
         system_prompt: str,
         execution_budget: ExecutionBudget,
         context_builder: ContextBuilder,
@@ -258,6 +264,7 @@ class AgentLoopRunner:
         self._tools = tools
         self._tool_context = tool_context
         self._session_store = session_store
+        self._working_set = working_set
         self._system_prompt = system_prompt
         if not isinstance(execution_budget, ExecutionBudget):
             raise TypeError("execution_budget must be an ExecutionBudget")
@@ -767,9 +774,18 @@ class AgentLoopRunner:
             additional_items: Sequence[SessionItem] = (),
         ) -> ModelContext:
             projected = projected_model_context()
+            working_set_message = None
+            if self._working_set is not None and session_id is not None:
+                working_set_snapshot = await self._working_set.read_working_set(
+                    ReadWorkingSetRequest(session_id)
+                )
+                working_set_message = working_set_snapshot.context_message(
+                    self._tool_context.redaction_values
+                )
             model_items = await run_blocking(
                 self._context_builder.build,
                 (*projected.items, *additional_items),
+                working_set_message=working_set_message,
             )
             return ModelContext(
                 model_items,

@@ -12,6 +12,11 @@ from neuro_code.application.ports.session_history import (
     SessionItemReference,
     SessionItemSummary,
 )
+from neuro_code.application.ports.working_set import (
+    ReadWorkingSetRequest,
+    UpdateWorkingSetRequest,
+    WorkingSetSnapshot,
+)
 from neuro_code.application.sessions.catalog import (
     ListSessionsPageRequest,
     ListSessionsRequest,
@@ -106,6 +111,7 @@ from neuro_code.application.sessions.turns import (
     SessionTurnService,
     UltracodeDelegate,
 )
+from neuro_code.application.sessions.working_set import SessionWorkingSetApplicationService
 
 __all__ = [
     "DEFAULT_NORMAL_MUTATION_REQUIREMENT",
@@ -135,6 +141,7 @@ __all__ = [
     "LoadSessionPlanRequest",
     "NormalTurnRequirementsPolicy",
     "ReadSessionItemRequest",
+    "ReadWorkingSetRequest",
     "RenameSessionRequest",
     "ResolveSessionAliasRequest",
     "ResumeSessionRequest",
@@ -168,6 +175,7 @@ __all__ = [
     "SessionTaskQueryService",
     "SessionTurnRunner",
     "SessionTurnService",
+    "SessionWorkingSetApplicationService",
     "SessionWorkspaceMatcher",
     "StartSessionRequest",
     "SubagentRelationshipAction",
@@ -182,4 +190,6 @@ __all__ = [
     "TurnRecoveryInspection",
     "TurnRecoveryService",
     "UltracodeDelegate",
+    "UpdateWorkingSetRequest",
+    "WorkingSetSnapshot",
 ]

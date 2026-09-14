@@ -1494,6 +1494,7 @@ def test_canonical_ports_are_the_only_port_modules() -> None:
         "neuro_code.application.ports.windows_sandbox",
         "neuro_code.application.ports.worktree",
         "neuro_code.application.ports.writable_subagent",
+        "neuro_code.application.ports.working_set",
     }
     assert {
         module for module in modules if module.startswith("neuro_code.application.ports")
@@ -1529,6 +1530,7 @@ def test_canonical_persistence_modules_are_the_only_persistence_implementations(
         "neuro_code.infrastructure.persistence.sqlite_session_subagents",
         "neuro_code.infrastructure.persistence.sqlite_session_turns",
         "neuro_code.infrastructure.persistence.sqlite_session_ultracode",
+        "neuro_code.infrastructure.persistence.sqlite_session_working_set",
         "neuro_code.infrastructure.persistence.ui_preferences",
     }
     assert {
@@ -1645,6 +1647,7 @@ def test_canonical_tool_modules_are_the_only_tool_implementations() -> None:
         "neuro_code.infrastructure.tools.plans",
         "neuro_code.infrastructure.tools.registry",
         "neuro_code.infrastructure.tools.session_history",
+        "neuro_code.infrastructure.tools.session_working_set",
         "neuro_code.infrastructure.tools.skills",
         "neuro_code.infrastructure.tools.workspace_diff",
         "neuro_code.infrastructure.tools.web_fetch",
@@ -1941,6 +1944,7 @@ def test_canonical_session_modules_are_the_only_session_implementations() -> Non
         "neuro_code.application.sessions.turns",
         "neuro_code.application.sessions.conversation",
         "neuro_code.application.sessions.terminal_sessions",
+        "neuro_code.application.sessions.working_set",
     }
     assert {
         module for module in modules if module.startswith("neuro_code.application.sessions")
@@ -2048,6 +2052,9 @@ def test_canonical_session_modules_are_the_only_session_implementations() -> Non
             "_TerminalOutputRing",
         },
         "neuro_code.application.sessions.conversation": {"AgentConversation"},
+        "neuro_code.application.sessions.working_set": {
+            "SessionWorkingSetApplicationService",
+        },
     }
     for module, class_names in expected_classes.items():
         tree = ast.parse(modules[module].read_text(encoding="utf-8"))

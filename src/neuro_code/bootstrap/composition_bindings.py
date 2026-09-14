@@ -78,6 +78,7 @@ from neuro_code.application.sessions.summary import (
     GetSessionSummaryRequest,
 )
 from neuro_code.application.sessions.terminal_sessions import LocalInteractiveTerminalManager
+from neuro_code.application.sessions.working_set import SessionWorkingSetApplicationService
 from neuro_code.application.web_fetch.service import WebFetchService
 from neuro_code.application.web_search.service import WebSearchService
 from neuro_code.application.workflows.subagent_capabilities import SubagentCapabilitySet
@@ -414,6 +415,10 @@ class CompositionBindingMixin(CompositionRootMixin):
             self.store,
             redaction_values=selected_config.redaction_values(os.environ),
         )
+        session_working_set = SessionWorkingSetApplicationService(
+            self.store,
+            redaction_values=selected_config.redaction_values(os.environ),
+        )
         preview_tools = default_tool_registry(
             selected_config.sandbox_profile,
             enable_background_tasks=enable_background_tasks,
@@ -424,6 +429,7 @@ class CompositionBindingMixin(CompositionRootMixin):
             user_interaction=user_interaction,
             git_inspection=git_inspection,
             session_item_query=session_item_query,
+            session_working_set=session_working_set,
         )
         for tool in additional_tools:
             if allowed_tool_names is not None and tool.definition.name not in allowed_tool_names:
@@ -584,6 +590,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                     lsp_service=lsp_service,
                     git_inspection=git_inspection,
                     session_item_query=session_item_query,
+                    session_working_set=session_working_set,
                 )
                 if fetch_path is WebFetchExecutionPath.LOCAL and (
                     allowed_tool_names is None or "web_fetch" in allowed_tool_names
@@ -735,6 +742,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                 ),
                 approver=approval_service,
                 session_store=self.store,
+                working_set=session_working_set,
                 workspace_mutation_tool=ExactWorkspaceMutationTool(),
                 execution_budget=selected_execution_budget,
                 reasoning_effort=effective_reasoning_effort,

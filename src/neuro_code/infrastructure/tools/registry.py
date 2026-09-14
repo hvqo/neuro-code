@@ -25,6 +25,7 @@ from neuro_code.application.ports.session_history import SessionHistoryQueryCont
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
 from neuro_code.application.ports.tools import Tool
 from neuro_code.application.ports.user_interaction import UserInteractionPort
+from neuro_code.application.ports.working_set import WorkingSetController
 from neuro_code.domain.sandbox.models import SandboxProfile
 from neuro_code.domain.tools import ToolDefinition
 from neuro_code.shared.errors import ToolError
@@ -95,6 +96,7 @@ def default_tool_registry(
     lsp_service: LanguageServerService | None = None,
     git_inspection: GitInspectionApplication | None = None,
     session_item_query: SessionHistoryQueryController | None = None,
+    session_working_set: WorkingSetController | None = None,
 ) -> ToolRegistry:
     from neuro_code.infrastructure.tools.background_tasks import (
         KillTaskTool,
@@ -128,6 +130,7 @@ def default_tool_registry(
     from neuro_code.infrastructure.tools.lsp import LspTool
     from neuro_code.infrastructure.tools.plans import UpdatePlanTool
     from neuro_code.infrastructure.tools.session_history import SessionHistoryTool
+    from neuro_code.infrastructure.tools.session_working_set import SessionWorkingSetTool
     from neuro_code.infrastructure.tools.skills import SkillTool
     from neuro_code.infrastructure.tools.workspace_diff import WorkspaceDiffTool
 
@@ -199,6 +202,8 @@ def default_tool_registry(
         tools.extend((TaskOutputTool(), WaitTasksTool(), KillTaskTool()))
     if session_item_query is not None:
         tools.append(SessionHistoryTool(session_item_query))
+    if session_working_set is not None:
+        tools.append(SessionWorkingSetTool(session_working_set))
     if allowed_tool_names is not None:
         allowed = frozenset(allowed_tool_names)
         tools = [tool for tool in tools if tool.definition.name in allowed]
