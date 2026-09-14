@@ -663,6 +663,85 @@ class WorkingSetTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_update_returns_success_ack_when_snapshot_projection_does_not_fit(self) -> None:
+        tool = SessionWorkingSetTool(self.application)
+        entry_text = "working-set-entry-" + ("x" * 120)
+        arguments = {
+            "operation": "update",
+            "expected_revision": 0,
+            "sections": {
+                section.value: (
+                    [{"text": entry_text} for _ in range(4)]
+                    if section is WorkingSetSection.PROGRESS
+                    else []
+                )
+                for section in WORKING_SET_SECTION_ORDER
+            },
+        }
+
+        result = await tool.execute(arguments, self._context(output_byte_limit=256))
+
+        self.assertFalse(result.is_error)
+        payload = json.loads(result.content)
+        self.assertEqual(payload["operation"], "update")
+        self.assertEqual(payload["revision"], 1)
+        self.assertEqual(payload["entry_count"], 4)
+        self.assertEqual(payload["text_bytes"], len(entry_text.encode("utf-8")) * 4)
+        self.assertTrue(payload["durable_write"])
+        self.assertTrue(payload["snapshot_omitted"])
+        self.assertNotIn("sections", payload)
+        self.assertIsNotNone(result.metadata)
+        assert result.metadata is not None
+        self.assertTrue(result.metadata["durable_write"])
+        self.assertTrue(result.metadata["snapshot_omitted"])
+        committed = await self.application.read_working_set(ReadWorkingSetRequest(self.session_id))
+        self.assertEqual(committed.revision, 1)
+        self.assertEqual(committed.entry_count, 4)
+
+    async def test_update_rejects_before_mutation_when_acknowledgement_does_not_fit(self) -> None:
+        tool = SessionWorkingSetTool(self.application)
+        before = await self.application.update_working_set(
+            UpdateWorkingSetRequest(
+                self.session_id,
+                _update(0, goal=(WorkingSetEntry("stable state"),)),
+            )
+        )
+        arguments = {
+            "operation": "update",
+            "expected_revision": 1,
+            "sections": {
+                section.value: (
+                    [{"text": "replacement"}] if section is WorkingSetSection.GOAL else []
+                )
+                for section in WORKING_SET_SECTION_ORDER
+            },
+        }
+
+        with self.assertRaises(ToolError):
+            await tool.execute(arguments, self._context(output_byte_limit=32))
+
+        after = await self.application.read_working_set(ReadWorkingSetRequest(self.session_id))
+        self.assertEqual(after, before)
+
+    async def test_low_limit_read_remains_error_without_mutation(self) -> None:
+        tool = SessionWorkingSetTool(self.application)
+        before = await self.application.update_working_set(
+            UpdateWorkingSetRequest(
+                self.session_id,
+                _update(0, goal=(WorkingSetEntry("read-only state"),)),
+            )
+        )
+
+        result = await tool.execute(
+            {"operation": "read"},
+            self._context(output_byte_limit=16),
+        )
+
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.metadata and result.metadata["failure_kind"], "output_limit")
+        after = await self.application.read_working_set(ReadWorkingSetRequest(self.session_id))
+        self.assertEqual(after, before)
+
     async def test_fork_and_subagent_sessions_start_with_isolated_empty_working_sets(self) -> None:
         parent = await self.application.update_working_set(
             UpdateWorkingSetRequest(

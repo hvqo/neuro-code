@@ -20,6 +20,7 @@ from typing import Any
 from neuro_code.application.ports.tools import ToolContext
 from neuro_code.application.ports.working_set import (
     MAX_WORKING_SET_ENTRIES_PER_SECTION,
+    MAX_WORKING_SET_TOTAL_BYTES,
     WORKING_SET_SECTION_ORDER,
     ReadWorkingSetRequest,
     UpdateWorkingSetRequest,
@@ -34,6 +35,48 @@ from neuro_code.shared.errors import SessionError, ToolError
 class _WorkingSetOperation(StrEnum):
     READ = "read"
     UPDATE = "update"
+
+
+def _update_ack_payload(
+    *,
+    revision: int,
+    entry_count: int,
+    text_bytes: int,
+) -> dict[str, object]:
+    return {
+        "operation": _WorkingSetOperation.UPDATE.value,
+        "revision": revision,
+        "entry_count": entry_count,
+        "text_bytes": text_bytes,
+        "durable_write": True,
+        "snapshot_omitted": True,
+    }
+
+
+def _encoded_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _update_ack_bytes(
+    *,
+    revision: int,
+    entry_count: int,
+    text_bytes: int,
+) -> int:
+    return len(
+        _encoded_json(
+            _update_ack_payload(
+                revision=revision,
+                entry_count=entry_count,
+                text_bytes=text_bytes,
+            )
+        ).encode("utf-8")
+    )
 
 
 class SessionWorkingSetTool:
@@ -121,6 +164,23 @@ class SessionWorkingSetTool:
                     "sections": arguments.get("sections"),
                 }
             )
+            entry_count = sum(len(state.entries) for state in update.sections)
+            # Check the largest acknowledgement possible for this request
+            # before the controller can perform a durable update. The revision
+            # and entry count are request-bounded; text_bytes uses the
+            # snapshot's total bound because configured redaction may expand
+            # text before persistence.
+            if (
+                _update_ack_bytes(
+                    revision=update.expected_revision + 1,
+                    entry_count=entry_count,
+                    text_bytes=MAX_WORKING_SET_TOTAL_BYTES,
+                )
+                > context.output_byte_limit
+            ):
+                raise ToolError(
+                    "output_byte_limit cannot represent a working set update acknowledgement"
+                )
             snapshot = await self._controller.update_working_set(
                 UpdateWorkingSetRequest(session_id, update)
             )
@@ -148,14 +208,11 @@ class SessionWorkingSetTool:
         *,
         durable_write: bool,
     ) -> ToolResult:
-        payload = json.dumps(
+        payload = _encoded_json(
             {
                 "operation": operation.value,
                 "working_set": snapshot.to_model_dict(),
-            },
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
+            }
         )
         metadata = {
             "revision": snapshot.revision,
@@ -165,6 +222,18 @@ class SessionWorkingSetTool:
         }
         if len(payload.encode("utf-8")) <= context.output_byte_limit:
             return ToolResult(payload, metadata=metadata)
+        if operation is _WorkingSetOperation.UPDATE:
+            acknowledgement = _encoded_json(
+                _update_ack_payload(
+                    revision=snapshot.revision,
+                    entry_count=snapshot.entry_count,
+                    text_bytes=snapshot.text_bytes,
+                )
+            )
+            return ToolResult(
+                acknowledgement,
+                metadata={**metadata, "snapshot_omitted": True},
+            )
         message = "working set result exceeds output limit"
         if len(message.encode("utf-8")) > context.output_byte_limit:
             message = message.encode("utf-8")[: context.output_byte_limit].decode("utf-8", "ignore")
