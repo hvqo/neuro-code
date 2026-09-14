@@ -2,6 +2,16 @@
 
 提供会话生命周期操作的应用用例."""
 
+from neuro_code.application.ports.session_history import (
+    ListSessionItemsRequest,
+    ReadSessionItemRequest,
+    SearchSessionItemsRequest,
+    SessionItemPage,
+    SessionItemRead,
+    SessionItemReadKind,
+    SessionItemReference,
+    SessionItemSummary,
+)
 from neuro_code.application.sessions.catalog import (
     ListSessionsPageRequest,
     ListSessionsRequest,
@@ -113,6 +123,7 @@ __all__ = [
     "GetSubagentRelationshipRequest",
     "ImportSessionRequest",
     "ListPlanCommentsRequest",
+    "ListSessionItemsRequest",
     "ListSessionTasksRequest",
     "ListSessionsPageRequest",
     "ListSessionsRequest",
@@ -123,10 +134,12 @@ __all__ = [
     "LoadSessionItemsRequest",
     "LoadSessionPlanRequest",
     "NormalTurnRequirementsPolicy",
+    "ReadSessionItemRequest",
     "RenameSessionRequest",
     "ResolveSessionAliasRequest",
     "ResumeSessionRequest",
     "RunTurnRequest",
+    "SearchSessionItemsRequest",
     "SearchSessionsRequest",
     "SessionApplicationService",
     "SessionCatalogApplicationService",
@@ -136,8 +149,13 @@ __all__ = [
     "SessionExecutionQueryService",
     "SessionExport",
     "SessionInspection",
+    "SessionItemPage",
     "SessionItemQueryController",
     "SessionItemQueryService",
+    "SessionItemRead",
+    "SessionItemReadKind",
+    "SessionItemReference",
+    "SessionItemSummary",
     "SessionLifecycleController",
     "SessionLifecycleService",
     "SessionSearchInspection",

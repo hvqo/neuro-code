@@ -183,6 +183,9 @@ class ToolContext:
         default=None,
         kw_only=True,
     )
+    # Runtime-owned session binding.  It is supplied only to an executing tool
+    # and is intentionally excluded from model-facing tool arguments and repr.
+    session_id: str | None = field(default=None, repr=False, kw_only=True)
 
 
 class Tool(Protocol):

@@ -409,7 +409,11 @@ class ToolExecutor:
             raise ToolError(f"permission denied: {decision.reason}")
         result = await tool.execute(
             arguments,
-            replace(self._tool_context, filesystem_access_plan=filesystem_access_plan),
+            replace(
+                self._tool_context,
+                filesystem_access_plan=filesystem_access_plan,
+                session_id=session_id,
+            ),
         )
         if result.is_error:
             raise ToolError(result.content)
@@ -753,6 +757,7 @@ class ToolExecutor:
                 filesystem_access_plan=filesystem_access_plan,
                 interaction_event_sink=interaction_event_sink,
                 web_search_event_sink=web_search_event_sink,
+                session_id=session_id,
                 terminal_creation_authorization=(
                     _issue_terminal_creation_authorization(call.id, call.arguments)
                     if call.name == "create_terminal"

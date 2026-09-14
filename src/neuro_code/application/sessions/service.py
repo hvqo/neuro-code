@@ -17,6 +17,16 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from neuro_code.application.ports.session_history import (
+    ListSessionItemsRequest,
+    ReadSessionItemRequest,
+    SearchSessionItemsRequest,
+    SessionItemPage,
+    SessionItemRead,
+    SessionItemReadKind,
+    SessionItemReference,
+    SessionItemSummary,
+)
 from neuro_code.application.ports.storage import SessionStore
 from neuro_code.application.sessions.catalog import (
     ListSessionsPageRequest,
@@ -356,6 +366,30 @@ class SessionApplicationService:
 
         return await self._item_queries.load_session_items(request)
 
+    async def list_session_items(self, request: ListSessionItemsRequest) -> SessionItemPage:
+        """List bounded safe metadata from one session's durable items.
+
+        从一个会话的持久化会话项中列出有界安全元数据.
+        """
+
+        return await self._item_queries.list_session_items(request)
+
+    async def search_session_items(self, request: SearchSessionItemsRequest) -> SessionItemPage:
+        """Search bounded safe text in one session's durable items.
+
+        在一个会话的持久化会话项中搜索有界安全文本.
+        """
+
+        return await self._item_queries.search_session_items(request)
+
+    async def read_session_item(self, request: ReadSessionItemRequest) -> SessionItemRead:
+        """Read one bounded safe chunk from one addressed durable item.
+
+        读取一个已寻址持久化会话项中的一个有界安全内容块.
+        """
+
+        return await self._item_queries.read_session_item(request)
+
     async def load_session_events(
         self,
         request: LoadSessionEventsRequest,
@@ -638,6 +672,7 @@ __all__ = [
     "GetSessionTaskRequest",
     "ImportSessionRequest",
     "ListPlanCommentsRequest",
+    "ListSessionItemsRequest",
     "ListSessionTasksRequest",
     "ListSessionsPageRequest",
     "ListSessionsRequest",
@@ -646,10 +681,12 @@ __all__ = [
     "LoadSessionEventsRequest",
     "LoadSessionItemsRequest",
     "LoadSessionPlanRequest",
+    "ReadSessionItemRequest",
     "RenameSessionRequest",
     "ResolveSessionAliasRequest",
     "ResumeSessionRequest",
     "RunTurnRequest",
+    "SearchSessionItemsRequest",
     "SearchSessionsRequest",
     "SessionApplicationService",
     "SessionEventQueryController",
@@ -658,8 +695,13 @@ __all__ = [
     "SessionExecutionQueryService",
     "SessionExport",
     "SessionInspection",
+    "SessionItemPage",
     "SessionItemQueryController",
     "SessionItemQueryService",
+    "SessionItemRead",
+    "SessionItemReadKind",
+    "SessionItemReference",
+    "SessionItemSummary",
     "SessionLifecycleController",
     "SessionLifecycleService",
     "SessionSearchInspection",
