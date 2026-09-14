@@ -11,7 +11,7 @@ from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from neuro_code.application.git_inspection import GitInspectionService
 from neuro_code.application.ports.git_inspection import (
@@ -21,7 +21,7 @@ from neuro_code.application.ports.git_inspection import (
     GitInspectionFailureKind,
     GitInspectionView,
 )
-from neuro_code.application.ports.sandbox import LocalWorkspaceAccessMode
+from neuro_code.application.ports.sandbox import LocalWorkspaceAccessMode, SandboxedProcessRequest
 from neuro_code.application.ports.tools import ToolContext
 from neuro_code.application.ports.worktree import WorktreeError, WorktreeFailureKind
 from neuro_code.domain.tools import ToolResult
@@ -86,6 +86,35 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
             assert result.unstaged_diff is not None
             self.assertEqual(result.staged_diff.text, "")
             self.assertEqual(result.unstaged_diff.text, "")
+
+    @unittest.skipUnless(os.name == "nt", "Windows Git line-ending semantics required")
+    async def test_effective_autocrlf_keeps_crlf_clean_and_detects_content_changes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            root = Path(directory)
+            home = root / "home"
+            home.mkdir()
+            (home / ".gitconfig").write_text(
+                "[core]\n\tautocrlf = true\n\teol = crlf\n",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {"HOME": str(home), "USERPROFILE": str(home)},
+            ):
+                repository = _new_repository(root)
+                target = repository / "tracked.txt"
+                target.write_bytes(b"committed\r\n")
+                adapter = LocalGitInspectionAdapter(LocalGitWorktreeAdapter())
+
+                clean = await adapter.inspect(repository, GitInspectionView.STATUS)
+                self.assertEqual(clean.status.entries, ())
+
+                target.write_bytes(b"changed\r\n")
+                changed = await adapter.inspect(repository, GitInspectionView.STATUS)
+                self.assertEqual(
+                    [(entry.path, entry.xy) for entry in changed.status.entries],
+                    [("tracked.txt", ".M")],
+                )
 
     async def test_staged_and_unstaged_diffs_remain_distinct_and_untracked_content_is_hidden(
         self,
@@ -161,6 +190,21 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(result.completeness.value, "complete")
             self.assertEqual(result.status.entries, ())
+
+    async def test_unsupported_line_ending_configuration_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:
+            repository = _new_repository(Path(directory))
+            _git(repository, "config", "core.eol", "unexpected")
+
+            with self.assertRaises(GitInspectionError) as raised:
+                await LocalGitInspectionAdapter(LocalGitWorktreeAdapter()).inspect(
+                    repository,
+                    GitInspectionView.STATUS,
+                )
+            self.assertEqual(
+                raised.exception.kind,
+                GitInspectionFailureKind.UNSAFE_CONFIGURATION,
+            )
 
     async def test_submodule_worktree_is_not_recursed_but_gitlink_metadata_is_reported(
         self,
@@ -263,15 +307,22 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
             request_root = Path(directory)
 
             class Output:
+                def __init__(self, chunks: tuple[bytes, ...] = ()) -> None:
+                    self._chunks = list(chunks)
+
                 async def read(self, _size: int = -1, /) -> bytes:
+                    if self._chunks:
+                        return self._chunks.pop(0)
                     return b""
 
             class Process:
-                stdout = Output()
-                stderr = Output()
+                def __init__(self, returncode: int, stdout: bytes = b"") -> None:
+                    self.stdout = Output((stdout,) if stdout else ())
+                    self.stderr = Output()
+                    self._returncode = returncode
 
                 async def wait(self) -> int:
-                    return 0
+                    return self._returncode
 
                 async def terminate(self, *, grace_seconds: float | None = None) -> None:
                     del grace_seconds
@@ -281,7 +332,12 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
 
                 async def spawn(self, request: object) -> Process:
                     self.request = request
-                    return Process()
+                    arguments = cast(SandboxedProcessRequest, request).arguments
+                    if arguments[-1:] == ("core.autocrlf",):
+                        return Process(returncode=0, stdout=b"true\0")
+                    if arguments[-1:] == ("core.eol",):
+                        return Process(returncode=1)
+                    return Process(returncode=0)
 
             sandbox = Sandbox()
             adapter = LocalGitWorktreeAdapter(local_process_sandbox=cast(object, sandbox))
@@ -304,6 +360,7 @@ class GitInspectionAdapterTests(unittest.IsolatedAsyncioTestCase):
             request = sandbox.request
             assert request is not None
             self.assertIn("status.recurseSubmodules=no", request.arguments)
+            self.assertIn("core.autocrlf=true", request.arguments)
 
     async def test_final_identity_recheck_accepts_an_unchanged_repository(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neuro-git-inspect-") as directory:

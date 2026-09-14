@@ -55,6 +55,17 @@ from neuro_code.shared.redaction import redact_sensitive_text
 
 _GIT_SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40,64}$")
 _BRANCH_CONTROL = frozenset(chr(value) for value in range(32)) | {chr(127)}
+_SAFE_LINE_ENDING_CONFIG_KEYS = ("core.autocrlf", "core.eol")
+_SAFE_LINE_ENDING_CONFIG_ENVIRONMENT_NAMES = (
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "XDG_CONFIG_HOME",
+)
+_SAFE_AUTOCRLF_TRUE_VALUES = frozenset({"true", "yes", "on", "1"})
+_SAFE_AUTOCRLF_FALSE_VALUES = frozenset({"false", "no", "off", "0"})
+_SAFE_EOL_VALUES = frozenset({"lf", "crlf", "native"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +82,37 @@ def _decode_output(value: bytes) -> str:
 def _bounded_error(value: bytes, fallback: str) -> str:
     rendered = redact_sensitive_text(_decode_output(value) or fallback)
     return rendered[:1_000]
+
+
+def _normalize_safe_line_ending_value(key: str, output: bytes) -> str | None:
+    if not output:
+        return None
+    values = output.split(b"\0")
+    if values[-1] != b"" or len(values) == 1:
+        raise WorktreeError(
+            f"Git {key} configuration output is malformed",
+            kind=WorktreeFailureKind.UNSAFE_GIT_CONFIGURATION,
+        )
+    raw_value = values[-2]
+    rendered = os.fsdecode(raw_value).strip().casefold()
+    if not rendered or any(ord(character) < 32 or ord(character) == 127 for character in rendered):
+        raise WorktreeError(
+            f"Git {key} configuration value is unsafe",
+            kind=WorktreeFailureKind.UNSAFE_GIT_CONFIGURATION,
+        )
+    if key == "core.autocrlf":
+        if rendered in _SAFE_AUTOCRLF_TRUE_VALUES:
+            return "true"
+        if rendered in _SAFE_AUTOCRLF_FALSE_VALUES:
+            return "false"
+        if rendered == "input":
+            return rendered
+    elif key == "core.eol" and rendered in _SAFE_EOL_VALUES:
+        return rendered
+    raise WorktreeError(
+        f"Git {key} configuration value is unsupported",
+        kind=WorktreeFailureKind.UNSAFE_GIT_CONFIGURATION,
+    )
 
 
 def _prepare_hooks_directory(path: Path) -> Path:
@@ -152,6 +194,8 @@ async def _run_git(
     timeout_seconds: float = MAX_GIT_COMMAND_TIMEOUT_SECONDS,
     failure_kind: WorktreeFailureKind = WorktreeFailureKind.COMMAND_FAILED,
     workspace_access_mode: LocalWorkspaceAccessMode = LocalWorkspaceAccessMode.READ_WRITE,
+    config_overrides: tuple[str, ...] = (),
+    read_only_config_probe: bool = False,
 ) -> _GitCommandResult:
     if not cwd.is_absolute() or not await run_blocking(cwd.is_dir):
         raise WorktreeError(
@@ -161,6 +205,13 @@ async def _run_git(
         raise ValueError("Git command timeout is outside the bounded range")
     if not isinstance(workspace_access_mode, LocalWorkspaceAccessMode):
         raise TypeError("Git workspace access mode must be canonical")
+    if read_only_config_probe and workspace_access_mode is not LocalWorkspaceAccessMode.READ_ONLY:
+        raise ValueError("Git configuration probes must use read-only workspace access")
+    if read_only_config_probe and args not in tuple(
+        ("config", "--null", "--includes", "--get-all", key)
+        for key in _SAFE_LINE_ENDING_CONFIG_KEYS
+    ):
+        raise ValueError("Git configuration probe command is not canonical")
     try:
         hooks_directory = await run_blocking(_prepare_hooks_directory, hooks_directory)
     except (OSError, RuntimeError) as error:
@@ -175,9 +226,18 @@ async def _run_git(
         "LANG": "C",
         "PATH": os.environ.get("PATH") or os.defpath,
     }
-    if workspace_access_mode is LocalWorkspaceAccessMode.READ_ONLY:
+    if workspace_access_mode is LocalWorkspaceAccessMode.READ_ONLY and not read_only_config_probe:
         environment["GIT_CONFIG_NOSYSTEM"] = "1"
         environment["GIT_CONFIG_GLOBAL"] = os.devnull
+    elif read_only_config_probe:
+        # The probe is a fixed, read-only ``git config`` command.  Expose only
+        # the standard config-location variables so Git can resolve the two
+        # allowlisted scalar values; every other system/global setting remains
+        # disabled for the actual inspection command below.
+        for name in _SAFE_LINE_ENDING_CONFIG_ENVIRONMENT_NAMES:
+            value = os.environ.get(name)
+            if value:
+                environment[name] = value
     if os.name == "nt":
         for name in ("SystemRoot", "SystemDrive", "PATHEXT"):
             value = os.environ.get(name)
@@ -198,6 +258,7 @@ async def _run_git(
             if workspace_access_mode is LocalWorkspaceAccessMode.READ_ONLY
             else ()
         ),
+        *config_overrides,
         *args,
     )
     request = SandboxedProcessRequest.exec(
@@ -460,6 +521,8 @@ class LocalGitWorktreeAdapter:
         timeout_seconds: float = MAX_GIT_COMMAND_TIMEOUT_SECONDS,
         failure_kind: WorktreeFailureKind = WorktreeFailureKind.COMMAND_FAILED,
         workspace_access_mode: LocalWorkspaceAccessMode = LocalWorkspaceAccessMode.READ_WRITE,
+        config_overrides: tuple[str, ...] = (),
+        read_only_config_probe: bool = False,
     ) -> _GitCommandResult:
         return await _run_git(
             self._local_process_sandbox,
@@ -471,6 +534,8 @@ class LocalGitWorktreeAdapter:
             timeout_seconds=timeout_seconds,
             failure_kind=failure_kind,
             workspace_access_mode=workspace_access_mode,
+            config_overrides=config_overrides,
+            read_only_config_probe=read_only_config_probe,
         )
 
     async def repository_identity(
@@ -522,6 +587,30 @@ class LocalGitWorktreeAdapter:
             head_sha=head,
         )
 
+    async def _read_safe_line_ending_overrides(
+        self,
+        cwd: Path,
+        *,
+        timeout_seconds: float,
+    ) -> tuple[str, ...]:
+        overrides: list[str] = []
+        for key in _SAFE_LINE_ENDING_CONFIG_KEYS:
+            result = await self._run_git(
+                cwd,
+                ("config", "--null", "--includes", "--get-all", key),
+                accepted_returncodes=frozenset({1}),
+                timeout_seconds=timeout_seconds,
+                failure_kind=WorktreeFailureKind.UNSAFE_GIT_CONFIGURATION,
+                workspace_access_mode=LocalWorkspaceAccessMode.READ_ONLY,
+                read_only_config_probe=True,
+            )
+            if result.returncode == 1:
+                continue
+            value = _normalize_safe_line_ending_value(key, result.stdout)
+            if value is not None:
+                overrides.extend(("-c", f"{key}={value}"))
+        return tuple(overrides)
+
     async def run_read_only_git(
         self,
         cwd: Path,
@@ -539,6 +628,12 @@ class LocalGitWorktreeAdapter:
         cancellation, and output bounds as managed worktree operations.
         """
 
+        config_overrides: tuple[str, ...] = ()
+        if args and args[0] in {"status", "diff"}:
+            config_overrides = await self._read_safe_line_ending_overrides(
+                cwd,
+                timeout_seconds=timeout_seconds,
+            )
         result = await self._run_git(
             cwd,
             args,
@@ -546,6 +641,7 @@ class LocalGitWorktreeAdapter:
             timeout_seconds=timeout_seconds,
             failure_kind=failure_kind,
             workspace_access_mode=LocalWorkspaceAccessMode.READ_ONLY,
+            config_overrides=config_overrides,
         )
         return result.stdout, result.stderr, result.returncode
 
