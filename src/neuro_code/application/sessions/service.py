@@ -12,7 +12,7 @@ application seam without changing the existing runtime path.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -254,12 +254,16 @@ class SessionApplicationService:
         store: SessionStore,
         *,
         workspace_matcher: SessionWorkspaceMatcher | None = None,
+        redaction_values: Sequence[str] = (),
     ) -> None:
         self._store = store
         self._lifecycle = SessionLifecycleService(store)
         self._event_queries = SessionEventQueryService(store)
         self._execution_queries = SessionExecutionQueryService(store)
-        self._item_queries = SessionItemQueryService(store)
+        self._item_queries = SessionItemQueryService(
+            store,
+            redaction_values=redaction_values,
+        )
         self._summary_queries = SessionSummaryQueryService(store)
         self._task_queries = SessionTaskQueryService(store)
         self._catalog = SessionCatalogApplicationService(

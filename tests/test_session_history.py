@@ -17,6 +17,7 @@ from neuro_code.application.ports.storage import SessionStore
 from neuro_code.application.ports.tools import ToolContext
 from neuro_code.application.runtime.context_builder import ContextBuilder
 from neuro_code.application.runtime.tool_pipeline import ToolExecutor
+from neuro_code.application.sessions import SessionApplicationService
 from neuro_code.application.sessions.item_queries import (
     SessionItemQueryService,
 )
@@ -253,6 +254,41 @@ class SessionHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(fork_page.items[0].reference, parent_reference)
         with self.assertRaises(SessionError):
             await self.query.read_session_item(ReadSessionItemRequest(fork_id, parent_reference))
+
+    async def test_application_service_and_model_tool_share_redaction_boundary(self) -> None:
+        secret = "configured-history-secret"
+        await self._save(Message(Role.USER, f"ordinary history {secret}"))
+        application = SessionApplicationService(self.store, redaction_values=(secret,))
+        before = await self.store.load_session_items(self.session_id)
+
+        listed = await application.list_session_items(ListSessionItemsRequest(self.session_id))
+        self.assertEqual(listed.items[0].preview, "ordinary history [REDACTED]")
+        reference = listed.items[0].reference
+
+        searched = await application.search_session_items(
+            SearchSessionItemsRequest(self.session_id, "ordinary history")
+        )
+        self.assertIn("ordinary history", searched.items[0].snippet or "")
+        self.assertNotIn(secret, searched.items[0].snippet or "")
+
+        read = await application.read_session_item(
+            ReadSessionItemRequest(self.session_id, reference)
+        )
+        self.assertEqual(read.content, "ordinary history [REDACTED]")
+        self.assertNotIn(secret, read.content)
+
+        tool = SessionHistoryTool(self.query)
+        tool_list = json.loads((await tool.execute({"operation": "list"}, self._context())).content)
+        tool_read = await tool.execute(
+            {
+                "operation": "read",
+                "reference": tool_list["items"][0]["reference"],
+            },
+            self._context(),
+        )
+        self.assertNotIn(secret, tool_read.content)
+        self.assertIn("ordinary history", tool_read.content)
+        self.assertEqual(await self.store.load_session_items(self.session_id), before)
 
     async def test_model_tool_is_read_only_and_uses_only_bound_session(self) -> None:
         await self._save(Message(Role.USER, "tool-visible history"))
