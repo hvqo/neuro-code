@@ -28,6 +28,11 @@ from neuro_code.application.ports.session_history import (
     SessionItemSummary,
 )
 from neuro_code.application.ports.storage import SessionStore
+from neuro_code.application.ports.working_set import (
+    ReadWorkingSetRequest,
+    UpdateWorkingSetRequest,
+    WorkingSetSnapshot,
+)
 from neuro_code.application.sessions.catalog import (
     ListSessionsPageRequest,
     ListSessionsRequest,
@@ -80,6 +85,7 @@ from neuro_code.application.sessions.turns import (
     SessionTurnService,
     UltracodeDelegate,
 )
+from neuro_code.application.sessions.working_set import SessionWorkingSetApplicationService
 from neuro_code.domain.conversation.messages import SessionItem
 from neuro_code.domain.execution import SessionExecutionRecord
 from neuro_code.domain.plans import PlanComment, SessionPlan
@@ -247,6 +253,7 @@ class SessionApplicationService:
         "_store",
         "_summary_queries",
         "_task_queries",
+        "_working_sets",
     )
 
     def __init__(
@@ -266,6 +273,10 @@ class SessionApplicationService:
         )
         self._summary_queries = SessionSummaryQueryService(store)
         self._task_queries = SessionTaskQueryService(store)
+        self._working_sets = SessionWorkingSetApplicationService(
+            store,
+            redaction_values=redaction_values,
+        )
         self._catalog = SessionCatalogApplicationService(
             store,
             workspace_matcher=workspace_matcher,
@@ -393,6 +404,16 @@ class SessionApplicationService:
         """
 
         return await self._item_queries.read_session_item(request)
+
+    async def read_working_set(self, request: ReadWorkingSetRequest) -> WorkingSetSnapshot:
+        """Read the current bounded structured task state for one session."""
+
+        return await self._working_sets.read_working_set(request)
+
+    async def update_working_set(self, request: UpdateWorkingSetRequest) -> WorkingSetSnapshot:
+        """Replace structured task state through the canonical application seam."""
+
+        return await self._working_sets.update_working_set(request)
 
     async def load_session_events(
         self,
@@ -686,6 +707,7 @@ __all__ = [
     "LoadSessionItemsRequest",
     "LoadSessionPlanRequest",
     "ReadSessionItemRequest",
+    "ReadWorkingSetRequest",
     "RenameSessionRequest",
     "ResolveSessionAliasRequest",
     "ResumeSessionRequest",
@@ -716,6 +738,9 @@ __all__ = [
     "SessionTaskQueryService",
     "SessionTurnRunner",
     "SessionTurnService",
+    "SessionWorkingSetApplicationService",
     "SessionWorkspaceMatcher",
     "StartSessionRequest",
+    "UpdateWorkingSetRequest",
+    "WorkingSetSnapshot",
 ]

@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
+from neuro_code.application.ports.working_set import WorkingSetSnapshot
 from neuro_code.domain.background_tasks.models import BackgroundWakeState
 from neuro_code.domain.conversation.compaction import DurableCompactionItem
 from neuro_code.domain.conversation.events import AgentEvent
@@ -175,6 +176,16 @@ class SessionStore(Protocol):
     async def load_messages(self, session_id: str) -> list[Message]: ...
 
     async def load_session_items(self, session_id: str) -> list[SessionItem]: ...
+
+    async def load_working_set(self, session_id: str) -> WorkingSetSnapshot | None: ...
+
+    async def save_working_set(
+        self,
+        session_id: str,
+        snapshot: WorkingSetSnapshot,
+        *,
+        expected_revision: int,
+    ) -> WorkingSetSnapshot: ...
 
     async def load_session_plan(self, session_id: str) -> SessionPlan | None: ...
 

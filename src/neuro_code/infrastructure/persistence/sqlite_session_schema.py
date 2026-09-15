@@ -1171,3 +1171,19 @@ def _ensure_session_turn_attempt_schema(connection: sqlite3.Connection) -> None:
         ON session_turn_attempts(session_id, resolution, accepted_at DESC, turn_id DESC)
         """
     )
+
+
+def _ensure_session_working_set_schema(connection: sqlite3.Connection) -> None:
+    """Create the one-current-snapshot task-state projection."""
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_working_sets (
+            session_id TEXT PRIMARY KEY,
+            revision INTEGER NOT NULL CHECK (revision >= 0),
+            snapshot_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )
+        """
+    )

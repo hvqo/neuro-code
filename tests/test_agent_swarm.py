@@ -5,7 +5,7 @@ import json
 import multiprocessing as mp
 import os
 import sqlite3
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1478,10 +1478,27 @@ async def test_swarm_cancellation_is_durable_indeterminate_without_recovery_call
     task = asyncio.create_task(
         service.run(RunAgentSwarmRequest("cancelled-run", "bounded objective"))
     )
-    await asyncio.wait_for(started.wait(), timeout=1)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    started_wait = asyncio.create_task(started.wait())
+    try:
+        done, _ = await asyncio.wait(
+            (started_wait, task),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if task in done:
+            await task
+            raise AssertionError("swarm task completed before planner started")
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        if not started_wait.done():
+            started_wait.cancel()
+        with suppress(asyncio.CancelledError):
+            await started_wait
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
     persisted = await store.get_swarm_run("cancelled-run")
     assert persisted is not None
     assert persisted.state is AgentSwarmRunState.INDETERMINATE

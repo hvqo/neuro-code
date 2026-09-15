@@ -275,7 +275,12 @@ class ContextBuilder:
         返回最近一次技能发现结果,如果存在."""
         return self._last_skill_result
 
-    def build(self, items: Sequence[SessionItem]) -> tuple[SessionItem, ...]:
+    def build(
+        self,
+        items: Sequence[SessionItem],
+        *,
+        working_set_message: Message | None = None,
+    ) -> tuple[SessionItem, ...]:
         """Apply the selected policy to a request without persisting control text.
 
         Reasoning effort, interaction mode, and batch-first guidance are
@@ -289,6 +294,12 @@ class ContextBuilder:
 
         将选定策略应用到请求,但不持久化控制文本. 仓库指令作为标记为合成原因的独立 User 消息注入.
         """
+
+        if working_set_message is not None and (
+            not isinstance(working_set_message, Message)
+            or working_set_message.synthetic_reason is not SyntheticReason.WORKING_SET
+        ):
+            raise TypeError("working set message must be canonical synthetic context")
 
         guidance_parts = [
             reasoning_guidance(self._reasoning_effort),
@@ -305,6 +316,7 @@ class ContextBuilder:
                 in {
                     SyntheticReason.PARENT_RELAY,
                     SyntheticReason.DAG_PREDECESSOR_RESULTS,
+                    SyntheticReason.WORKING_SET,
                 }
             )
         ]
@@ -351,6 +363,21 @@ class ContextBuilder:
                     break
             rendered.insert(insert_at, skill_msg)
 
+        # The current structured task state is refreshed by the runtime for
+        # each request. It remains synthetic and is never added to durable
+        # session items.
+        if working_set_message is not None:
+            insert_at = system_index + 1
+            while insert_at < len(rendered):
+                item = rendered[insert_at]
+                if not isinstance(item, Message) or item.synthetic_reason not in {
+                    SyntheticReason.PROJECT_INSTRUCTIONS,
+                    SyntheticReason.AVAILABLE_SKILLS,
+                }:
+                    break
+                insert_at += 1
+            rendered.insert(insert_at, working_set_message)
+
         # The immutable parent relay is context rather than authority. Insert
         # its single owned copy after stable workspace context and before
         # genuine child history on every request.
@@ -361,6 +388,7 @@ class ContextBuilder:
                 if not isinstance(item, Message) or item.synthetic_reason not in {
                     SyntheticReason.PROJECT_INSTRUCTIONS,
                     SyntheticReason.AVAILABLE_SKILLS,
+                    SyntheticReason.WORKING_SET,
                 }:
                     break
                 insert_at += 1
@@ -376,6 +404,7 @@ class ContextBuilder:
                 if not isinstance(item, Message) or item.synthetic_reason not in {
                     SyntheticReason.PROJECT_INSTRUCTIONS,
                     SyntheticReason.AVAILABLE_SKILLS,
+                    SyntheticReason.WORKING_SET,
                     SyntheticReason.PARENT_RELAY,
                 }:
                     break

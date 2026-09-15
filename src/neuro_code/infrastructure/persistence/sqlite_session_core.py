@@ -60,6 +60,7 @@ from neuro_code.infrastructure.persistence.sqlite_session_schema import (
     _ensure_session_plan_schema,
     _ensure_session_task_schema,
     _ensure_session_turn_attempt_schema,
+    _ensure_session_working_set_schema,
     _ensure_subagent_link_schema,
     _ensure_task_dag_dependency_result_relay_schema,
     _ensure_task_dag_recovery_claim_schema,
@@ -280,6 +281,12 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                             "UPDATE schema_meta SET version = 30 WHERE singleton = 1"
                         )
                         version = (30,)
+                    if version is not None and version[0] == 30:
+                        _ensure_session_working_set_schema(connection)
+                        connection.execute(
+                            "UPDATE schema_meta SET version = 31 WHERE singleton = 1"
+                        )
+                        version = (31,)
                     if version is None or version[0] != SCHEMA_VERSION:
                         raise SessionError(
                             "unsupported session schema version: "
@@ -295,6 +302,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                     _ensure_subagent_link_schema(connection)
                     _ensure_session_compaction_schema(connection)
                     _ensure_session_turn_attempt_schema(connection)
+                    _ensure_session_working_set_schema(connection)
                     _ensure_writable_subagent_lease_schema(connection)
                     _ensure_parent_context_relay_schema(connection)
                     _ensure_task_dag_schema(connection)

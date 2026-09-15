@@ -20,6 +20,7 @@ from neuro_code.application.ports.result_adoption import WorkspaceMutationPort
 from neuro_code.application.ports.storage import SessionStore
 from neuro_code.application.ports.tool_pipeline import ToolPipelineHook
 from neuro_code.application.ports.tools import Tool, ToolCollection, ToolContext
+from neuro_code.application.ports.working_set import WorkingSetController
 from neuro_code.application.ports.workspace_changes import WorkspaceChangeObserver
 from neuro_code.application.runtime.agent_loop import (
     AgentLoopRunner,
@@ -96,6 +97,7 @@ class AgentRuntime:
         tool_context: ToolContext,
         approver: PermissionApprover | None = None,
         session_store: SessionStore | None = None,
+        working_set: WorkingSetController | None = None,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         max_steps: int | None = None,
         execution_budget: ExecutionBudget | None = None,
@@ -230,6 +232,7 @@ class AgentRuntime:
             tools=self._tools,
             tool_context=self._tool_context,
             session_store=self._session_store,
+            working_set=working_set,
             system_prompt=self._system_prompt,
             execution_budget=self._execution_budget,
             context_builder=self._context_builder,
