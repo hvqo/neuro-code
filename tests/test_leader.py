@@ -9,6 +9,7 @@ import sqlite3
 import tempfile
 import unittest
 from collections.abc import AsyncIterator, Sequence
+from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1890,31 +1891,54 @@ class LeaderIntegrationTests(unittest.IsolatedAsyncioTestCase):
             session_store=self.store,
         )
         task = asyncio.create_task(leader.run(RunLeaderRequest("parallel-diamond", "objective")))
-        await asyncio.wait_for(state.both_started.wait(), timeout=5.0)
-        self.assertEqual(set(state.calls[:3]), {"a", "b", "c"})
-        self.assertEqual(state.max_active, 2)
-        self.assertNotIn("d", state.calls)
-        self.assertIn('"available_capacity":2', runner.prompts[1])
-        self.assertIn('"running_node_ids":[]', runner.prompts[1])
-        state.release.set()
-        result = await task
-        self.assertTrue(result.terminal)
-        self.assertEqual(result.final_response, "parallel done")
-        self.assertEqual(state.calls, ["a", "b", "c", "d"])
-        decisions = await self.store.list_leader_decisions("parallel-diamond")
-        self.assertEqual(
-            [record.decision.kind for record in decisions],
-            [
-                LeaderDecisionKind.SELECT_NODE,
-                LeaderDecisionKind.SELECT_NODES,
-                LeaderDecisionKind.SELECT_NODE,
-                LeaderDecisionKind.FINALIZE,
-            ],
-        )
-        wave = decisions[1]
-        self.assertEqual(wave.decision.selected_node_ids, ("b", "c"))
-        self.assertEqual(wave.selected_node_generations, (1, 1))
-        self.assertEqual(wave.parent_session_id, self.parent_session_id)
+        both_started_wait = asyncio.create_task(state.both_started.wait())
+        try:
+            done, _ = await asyncio.wait(
+                (both_started_wait, task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if task in done:
+                completed = await task
+                self.fail(
+                    "Leader completed before both real workers overlapped: "
+                    f"terminal={completed.terminal} "
+                    f"final_response={completed.final_response!r}"
+                )
+            self.assertIn(both_started_wait, done)
+            self.assertEqual(set(state.calls[:3]), {"a", "b", "c"})
+            self.assertEqual(state.max_active, 2)
+            self.assertNotIn("d", state.calls)
+            self.assertIn('"available_capacity":2', runner.prompts[1])
+            self.assertIn('"running_node_ids":[]', runner.prompts[1])
+            state.release.set()
+            result = await task
+            self.assertTrue(result.terminal)
+            self.assertEqual(result.final_response, "parallel done")
+            self.assertEqual(state.calls, ["a", "b", "c", "d"])
+            decisions = await self.store.list_leader_decisions("parallel-diamond")
+            self.assertEqual(
+                [record.decision.kind for record in decisions],
+                [
+                    LeaderDecisionKind.SELECT_NODE,
+                    LeaderDecisionKind.SELECT_NODES,
+                    LeaderDecisionKind.SELECT_NODE,
+                    LeaderDecisionKind.FINALIZE,
+                ],
+            )
+            wave = decisions[1]
+            self.assertEqual(wave.decision.selected_node_ids, ("b", "c"))
+            self.assertEqual(wave.selected_node_generations, (1, 1))
+            self.assertEqual(wave.parent_session_id, self.parent_session_id)
+        finally:
+            state.release.set()
+            if not both_started_wait.done():
+                both_started_wait.cancel()
+            with suppress(asyncio.CancelledError):
+                await both_started_wait
+            if not task.done():
+                task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     async def test_parallel_leader_rejects_noncanonical_duplicate_and_overflow_waves(self) -> None:
         for index, (response, message) in enumerate(
