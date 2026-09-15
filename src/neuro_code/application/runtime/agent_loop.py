@@ -1412,12 +1412,11 @@ class AgentLoopRunner:
                 and active_provider_window is not None
                 and self._session_store is not None
                 and session_id is not None
-                and active_context_boundary is None
             ):
                 records = await self._session_store.load_compaction_items(session_id)
                 resumed = rebuild_context_from_latest_compatible_compaction(
                     ModelContext(
-                        persistent_context_items(),
+                        active_persistent_context_items(),
                         context_source_provider,
                         context_source_model,
                         context_source_affinity,

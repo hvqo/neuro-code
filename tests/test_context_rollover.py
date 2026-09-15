@@ -10,6 +10,16 @@ from pathlib import Path
 
 import httpx
 
+from neuro_code.application.memory.compaction import (
+    ContextCompactionPlanner,
+    ContextCompactionPolicy,
+    ContextSummaryRequest,
+    ProviderContextWindow,
+    build_durable_compaction_item,
+)
+from neuro_code.application.memory.compaction_runtime import ContextCompactionRuntimeGate
+from neuro_code.application.memory.compaction_service import ContextCompactionApplicationService
+from neuro_code.application.memory.compaction_trigger import ContextCompactionTriggerService
 from neuro_code.application.permissions.policy import PermissionManager, PermissionMode
 from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
 from neuro_code.application.ports.tools import ToolContext
@@ -31,6 +41,7 @@ from neuro_code.application.sessions.recovery import TurnRecoveryService
 from neuro_code.application.sessions.working_set import SessionWorkingSetApplicationService
 from neuro_code.domain.conversation.context import ModelContext
 from neuro_code.domain.conversation.events import (
+    AgentEventKind,
     ModelCompleted,
     ModelEvent,
     ModelTextDelta,
@@ -114,6 +125,9 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
         provider: ModelProvider,
         *,
         store: SqliteSessionStore | None = None,
+        compaction_runtime_gate: ContextCompactionRuntimeGate | None = None,
+        provider_context_window: ProviderContextWindow | None = None,
+        provider_max_output_tokens: int | None = None,
     ) -> AgentRuntime:
         selected_store = store or self.store
         rollover = SessionContextRolloverApplicationService(selected_store)
@@ -136,6 +150,9 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
             context_rollover=rollover,
             max_steps=4,
             execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
+            compaction_runtime_gate=compaction_runtime_gate,
+            provider_context_window=provider_context_window,
+            provider_max_output_tokens=provider_max_output_tokens,
         )
 
     @staticmethod
@@ -702,6 +719,192 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
             await reopened_again.load_working_set(self.session_id),
             before_working_set,
         )
+
+    async def test_reopened_generation_resumes_only_compatible_compaction(self) -> None:
+        window = ProviderContextWindow(
+            "fixture-provider",
+            "fixture-model",
+            2_000,
+            "fixture-affinity",
+        )
+        old_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "generation-zero-reasoning",
+                "summary": [{"type": "summary_text", "text": "generation zero"}],
+                "encrypted_content": "generation-zero-native-state",
+            },
+        )
+        initial_items = (
+            Message(Role.SYSTEM, "fixture system"),
+            Message(Role.USER, "generation zero history"),
+            old_native,
+        )
+        await self.store.save_session_items(self.session_id, initial_items)
+        pre_rollover_compaction = build_durable_compaction_item(
+            ModelContext(
+                initial_items,
+                window.provider_name,
+                window.model_name,
+                window.context_affinity,
+            ),
+            ContextSummaryRequest(
+                provider_window=window,
+                source_item_count=3,
+                protected_item_count=1,
+                recent_item_count=0,
+                candidate_range=(1, 3),
+                target_tokens=1_600,
+                max_summary_tokens=32,
+            ),
+            compaction_id="generation-zero-compaction",
+            summary="pre-rollover summary that must not be selected",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        await self.store.save_compaction_item(self.session_id, pre_rollover_compaction)
+
+        generation_one_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "generation-one-reasoning",
+                "summary": [{"type": "summary_text", "text": "generation one"}],
+                "encrypted_content": "generation-one-native-state",
+            },
+        )
+        accumulated_context = "generation one accumulated evidence " + ("x" * 120_000)
+        provider = _ScriptedProvider(
+            (
+                (
+                    ModelToolCall(ToolCall("roll-1", "new_context", {})),
+                    ModelCompleted("tool_calls"),
+                ),
+                (ModelTextDelta(accumulated_context), ModelCompleted("stop")),
+                (
+                    ModelCompleted(
+                        "stop",
+                        response_text="generation-one durable summary",
+                    ),
+                ),
+                (
+                    ModelTextDelta("second turn finalized"),
+                    ModelCompleted("stop", context_items=(generation_one_native,)),
+                ),
+                (ModelTextDelta("reopened with generation-one compaction"), ModelCompleted("stop")),
+            )
+        )
+
+        def compaction_gate(store: SqliteSessionStore) -> ContextCompactionRuntimeGate:
+            return ContextCompactionRuntimeGate(
+                ContextCompactionTriggerService(
+                    ContextCompactionApplicationService(store, provider),
+                    planner=ContextCompactionPlanner(
+                        ContextCompactionPolicy(
+                            soft_limit_ratio=0.80,
+                            hard_limit_ratio=0.95,
+                            minimum_recent_items=1,
+                            max_summary_tokens=64,
+                        )
+                    ),
+                )
+            )
+
+        first = await self._runtime(
+            provider,
+            compaction_runtime_gate=compaction_gate(self.store),
+            provider_context_window=window,
+            provider_max_output_tokens=64,
+        ).run(
+            "generation one accumulation",
+            initial_items=initial_items,
+            source_provider=window.provider_name,
+            source_model=window.model_name,
+            source_context_affinity=window.context_affinity,
+            session_id=self.session_id,
+        )
+        self.assertEqual(first.response, accumulated_context)
+        self.assertEqual(await self.store.load_context_generation(self.session_id), 1)
+
+        persisted_after_first = await self.store.load_session_items(self.session_id)
+        second = await self._runtime(
+            provider,
+            compaction_runtime_gate=compaction_gate(self.store),
+            provider_context_window=window,
+            provider_max_output_tokens=64,
+        ).run(
+            "persist generation one compaction",
+            initial_items=persisted_after_first,
+            source_provider=window.provider_name,
+            source_model=window.model_name,
+            source_context_affinity=window.context_affinity,
+            session_id=self.session_id,
+        )
+        self.assertEqual(second.response, "second turn finalized")
+        stored_compactions = await self.store.load_compaction_items(self.session_id)
+        self.assertEqual(len(stored_compactions), 2)
+        self.assertEqual(stored_compactions[0].compaction_id, "generation-zero-compaction")
+        generation_one_compaction = stored_compactions[1]
+        self.assertNotEqual(generation_one_compaction.compaction_id, "generation-zero-compaction")
+        self.assertGreater(generation_one_compaction.source_item_count, 1)
+
+        reopened = SqliteSessionStore(self.database)
+        await reopened.initialize()
+        reopened_items = await reopened.load_session_items(self.session_id)
+        reopened_summary = await reopened.get_session(self.session_id)
+        third = await self._runtime(
+            provider,
+            store=reopened,
+            compaction_runtime_gate=compaction_gate(reopened),
+            provider_context_window=window,
+            provider_max_output_tokens=64,
+        ).run(
+            "reopen after generation one compaction",
+            initial_items=reopened_items,
+            source_provider=reopened_summary.provider,
+            source_model=reopened_summary.model,
+            source_context_affinity=reopened_summary.context_affinity,
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(third.response, "reopened with generation-one compaction")
+        resumed_items = provider.calls[-1].items
+        self.assertTrue(
+            any(
+                isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.COMPACTION_SUMMARY
+                and "generation-one durable summary" in item.content
+                for item in resumed_items
+            )
+        )
+        self.assertFalse(
+            any(
+                isinstance(item, Message)
+                and (
+                    "generation zero history" in item.content
+                    or "pre-rollover summary that must not be selected" in item.content
+                    or "generation one accumulated evidence" in item.content
+                )
+                for item in resumed_items
+            )
+        )
+        self.assertNotIn(old_native, resumed_items)
+        self.assertIn(generation_one_native, resumed_items)
+        self.assertEqual(
+            sum(
+                isinstance(item, Message)
+                and item.role is Role.USER
+                and item.content == "reopen after generation one compaction"
+                for item in resumed_items
+            ),
+            1,
+        )
+        preflight = next(
+            event for event in third.events if event.kind is AgentEventKind.CONTEXT_PREFLIGHT
+        )
+        self.assertEqual(preflight.data["status"], "safe")
+        self.assertIsInstance(preflight.data["context_tokens"], int)
+        self.assertLess(preflight.data["context_tokens"], 2_000)
 
     async def test_rollover_resets_local_provider_origin_after_foreign_native_failover(
         self,

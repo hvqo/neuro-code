@@ -59,6 +59,11 @@ active context 的内存 compaction projection；之后如果在允许的边界�
 active projection。Provider selection、failover、native context affinity、permission、verification、
 workspace/checkpoint state 和 final response commitment 都沿用既有路径。
 
+Session 重新打开时，durable compaction resume 同样会针对当前 active projection 进行评估。
+因此现有的精确 source-count、source-fingerprint 和 provider-origin 检查会接受有效的当前
+generation record，同时忽略 rollover 之前的 record；`ContextPreflight` 会计量重建后的当前
+generation projection。
+
 ## 不变量与非目标
 
 - Session identifier 和 canonical ordered durable `SessionItem` history 不变。CM1 list/search/read

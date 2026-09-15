@@ -84,6 +84,12 @@ the new active projection. Provider selection, failover, native context
 affinity, permissions, verification, workspace/checkpoint state, and final
 response commitment remain on their existing paths.
 
+When a session reopens, durable compaction resume is evaluated against the
+current active projection as well. The existing exact source-count,
+source-fingerprint, and provider-origin checks therefore accept a valid
+current-generation record while ignoring pre-rollover records, and
+`ContextPreflight` measures the rebuilt current-generation projection.
+
 ## Invariants and non-goals
 
 - The session identifier and canonical ordered durable `SessionItem` history
