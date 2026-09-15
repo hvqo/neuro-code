@@ -19,6 +19,7 @@ from collections.abc import Collection, Iterable
 
 from neuro_code.application.ports.client_filesystem import ClientFileSystem
 from neuro_code.application.ports.client_terminal import ClientTerminal
+from neuro_code.application.ports.context_rollover import ContextRolloverController
 from neuro_code.application.ports.git_inspection import GitInspectionApplication
 from neuro_code.application.ports.lsp import LanguageServerService
 from neuro_code.application.ports.session_history import SessionHistoryQueryController
@@ -97,6 +98,7 @@ def default_tool_registry(
     git_inspection: GitInspectionApplication | None = None,
     session_item_query: SessionHistoryQueryController | None = None,
     session_working_set: WorkingSetController | None = None,
+    context_rollover: ContextRolloverController | None = None,
 ) -> ToolRegistry:
     from neuro_code.infrastructure.tools.background_tasks import (
         KillTaskTool,
@@ -128,6 +130,7 @@ def default_tool_registry(
     from neuro_code.infrastructure.tools.git_inspection import GitInspectTool
     from neuro_code.infrastructure.tools.interaction import AskUserTool
     from neuro_code.infrastructure.tools.lsp import LspTool
+    from neuro_code.infrastructure.tools.new_context import NewContextTool
     from neuro_code.infrastructure.tools.plans import UpdatePlanTool
     from neuro_code.infrastructure.tools.session_history import SessionHistoryTool
     from neuro_code.infrastructure.tools.session_working_set import SessionWorkingSetTool
@@ -204,6 +207,8 @@ def default_tool_registry(
         tools.append(SessionHistoryTool(session_item_query))
     if session_working_set is not None:
         tools.append(SessionWorkingSetTool(session_working_set))
+    if context_rollover is not None:
+        tools.append(NewContextTool(context_rollover))
     if allowed_tool_names is not None:
         allowed = frozenset(allowed_tool_names)
         tools = [tool for tool in tools if tool.definition.name in allowed]

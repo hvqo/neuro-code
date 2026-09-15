@@ -71,6 +71,10 @@ class SessionStore(Protocol):
         context_affinity: str | None,
     ) -> None: ...
 
+    async def load_context_generation(self, session_id: str) -> int: ...
+
+    async def advance_context_generation(self, session_id: str) -> int: ...
+
     async def update_session_title(
         self,
         session_id: str,

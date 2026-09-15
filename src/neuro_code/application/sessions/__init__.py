@@ -27,6 +27,9 @@ from neuro_code.application.sessions.catalog import (
     SessionSearchInspectionPage,
     SessionWorkspaceMatcher,
 )
+from neuro_code.application.sessions.context_rollover import (
+    SessionContextRolloverApplicationService,
+)
 from neuro_code.application.sessions.event_queries import (
     LoadSessionEventsRequest,
     SessionEventQueryController,
@@ -150,6 +153,7 @@ __all__ = [
     "SearchSessionsRequest",
     "SessionApplicationService",
     "SessionCatalogApplicationService",
+    "SessionContextRolloverApplicationService",
     "SessionEventQueryController",
     "SessionEventQueryService",
     "SessionExecutionQueryController",

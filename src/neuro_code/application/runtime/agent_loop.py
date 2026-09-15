@@ -39,6 +39,12 @@ from neuro_code.application.memory.compaction_runtime import (
     ContextPreflightStatus,
     assess_context_preflight,
 )
+from neuro_code.application.ports.context_rollover import (
+    CONTEXT_ROLLOVER_TOOL_NAME,
+    MAX_CONTEXT_GENERATION,
+    ContextRolloverController,
+    ReadContextRolloverRequest,
+)
 from neuro_code.application.ports.model import ModelProvider
 from neuro_code.application.ports.storage import SessionStore
 from neuro_code.application.ports.tools import (
@@ -206,6 +212,16 @@ class _ScheduledToolOutcome:
     context_items: tuple[SessionItem, ...] = ()
 
 
+def _context_rollover_runtime_message(generation: int) -> Message:
+    return Message(
+        Role.USER,
+        "Context rollover completed. Continue the current task in fresh active context "
+        f"generation {generation}. Use the bounded session history and Working Set controls "
+        "when earlier detail or durable task state is needed.",
+        synthetic_reason=SyntheticReason.RUNTIME_CONTEXT_ROLLOVER,
+    )
+
+
 class AgentLoopRunner:
     """Own one agent turn's step loop and finalization orchestration.
 
@@ -215,6 +231,7 @@ class AgentLoopRunner:
         "_active_provider_window",
         "_compaction_runtime_gate",
         "_context_builder",
+        "_context_rollover",
         "_execution_budget",
         "_execution_control_mode",
         "_final_output_gate_enabled",
@@ -245,6 +262,7 @@ class AgentLoopRunner:
         tool_context: ToolContext,
         session_store: SessionStore | None,
         working_set: WorkingSetController | None = None,
+        context_rollover: ContextRolloverController | None = None,
         system_prompt: str,
         execution_budget: ExecutionBudget,
         context_builder: ContextBuilder,
@@ -265,6 +283,7 @@ class AgentLoopRunner:
         self._tool_context = tool_context
         self._session_store = session_store
         self._working_set = working_set
+        self._context_rollover = context_rollover
         self._system_prompt = system_prompt
         if not isinstance(execution_budget, ExecutionBudget):
             raise TypeError("execution_budget must be an ExecutionBudget")
@@ -411,6 +430,10 @@ class AgentLoopRunner:
             context_items.append(system_message)
             messages.append(system_message)
         turn_context_prefix = tuple(context_items)
+        active_context_boundary: int | None = None
+        active_context_seed: tuple[SessionItem, ...] = ()
+        context_rollover_generation = 0
+        current_user_message: Message | None = None
         pristine_cancel_eligible = cancellation_policy is TurnCancellationPolicy.REWIND_PRISTINE
         events: list[AgentEvent] = []
         sequence = 0
@@ -436,6 +459,19 @@ class AgentLoopRunner:
             session_id = started_session.id
         elif self._session_store is not None and session_id is not None:
             sequence = await self._session_store.next_event_sequence(session_id) - 1
+        if self._context_rollover is not None and session_id is not None:
+            rollover_state = await self._context_rollover.read_context_rollover(
+                ReadContextRolloverRequest(session_id)
+            )
+            context_rollover_generation = rollover_state.generation
+            if context_rollover_generation > 0:
+                active_context_seed = tuple(
+                    item
+                    for item in context_items
+                    if isinstance(item, Message) and item.role is Role.SYSTEM
+                )
+                active_context_boundary = len(context_items)
+                context_items.append(_context_rollover_runtime_message(context_rollover_generation))
         if plan_execution_requested and (self._session_store is None or session_id is None):
             raise ConfigurationError("session-backed task storage is unavailable")
         if plan_execution_requested and self._context_builder.plan is None:
@@ -729,6 +765,18 @@ class AgentLoopRunner:
                 if not (isinstance(item, Message) and item.synthetic_reason is not None)
             )
 
+        def active_model_context_items() -> tuple[SessionItem, ...]:
+            if active_context_boundary is None:
+                return tuple(context_items)
+            return (*active_context_seed, *context_items[active_context_boundary:])
+
+        def active_persistent_context_items() -> tuple[SessionItem, ...]:
+            return tuple(
+                item
+                for item in active_model_context_items()
+                if not (isinstance(item, Message) and item.synthetic_reason is not None)
+            )
+
         def canonical_model_context() -> ModelContext:
             return ModelContext(
                 tuple(context_items),
@@ -739,11 +787,18 @@ class AgentLoopRunner:
             )
 
         def projected_model_context() -> ModelContext:
-            context = canonical_model_context()
+            active_items = active_model_context_items()
+            context = ModelContext(
+                active_items,
+                context_source_provider,
+                context_source_model,
+                context_source_affinity,
+                self._context_builder.reasoning_effort,
+            )
             if active_compaction_item is None:
                 return context
             durable_context = ModelContext(
-                persistent_context_items(),
+                active_persistent_context_items(),
                 context_source_provider,
                 context_source_model,
                 context_source_affinity,
@@ -759,7 +814,7 @@ class AgentLoopRunner:
             )
             runtime_notices = tuple(
                 item
-                for item in context_items
+                for item in active_items
                 if isinstance(item, Message) and item.synthetic_reason is not None
             )
             return ModelContext(
@@ -795,6 +850,27 @@ class AgentLoopRunner:
                 self._context_builder.reasoning_effort,
             )
 
+        def start_fresh_context_generation() -> None:
+            nonlocal active_compaction_item
+            nonlocal active_context_boundary
+            nonlocal active_context_seed
+            nonlocal context_rollover_generation
+            if self._context_rollover is None:
+                raise ConfigurationError("context rollover control is not configured")
+            if context_rollover_generation >= MAX_CONTEXT_GENERATION:
+                raise ConfigurationError("context rollover generation limit reached")
+            context_rollover_generation += 1
+            active_context_seed = tuple(
+                item
+                for item in context_items
+                if isinstance(item, Message) and item.role is Role.SYSTEM
+            ) + ((current_user_message,) if current_user_message is not None else ())
+            active_context_boundary = len(context_items)
+            context_items.append(_context_rollover_runtime_message(context_rollover_generation))
+            # A compaction record belongs to the previous active projection;
+            # the next request starts from the new generation directly.
+            active_compaction_item = None
+
         async def emit_budget_usage() -> None:
             current = supervisor
             if (
@@ -826,7 +902,7 @@ class AgentLoopRunner:
             ):
                 return None
             source_context = ModelContext(
-                persistent_context_items(),
+                active_persistent_context_items(),
                 context_source_provider,
                 context_source_model,
                 context_source_affinity,
@@ -1283,6 +1359,7 @@ class AgentLoopRunner:
                 )
             if turn_source is TurnSource.USER:
                 user_message = Message(Role.USER, prompt, content_parts=prompt_parts)
+                current_user_message = user_message
                 context_items.append(user_message)
                 messages.append(user_message)
                 await emit(AgentEventKind.USER_MESSAGE, {"content": user_message.model_content()})
@@ -1294,6 +1371,7 @@ class AgentLoopRunner:
                 and active_provider_window is not None
                 and self._session_store is not None
                 and session_id is not None
+                and active_context_boundary is None
             ):
                 records = await self._session_store.load_compaction_items(session_id)
                 resumed = rebuild_context_from_latest_compatible_compaction(
@@ -1757,6 +1835,19 @@ class AgentLoopRunner:
                     record_tool_outcome(observation)
 
                 last_tool_decision: SupervisorDecision | None = None
+                context_rollover_calls = tuple(
+                    call for call in tool_calls if call.name == CONTEXT_ROLLOVER_TOOL_NAME
+                )
+                if context_rollover_calls and len(tool_calls) != 1:
+                    await self._tool_executor.record_rejected_tool_calls(
+                        tool_calls,
+                        messages,
+                        context_items,
+                        emit,
+                        reason="new_context must be issued as the only tool call in this model step.",
+                    )
+                    update_runtime_supervision_guidance(after_tool_batch_decision)
+                    continue
                 interaction_calls = tuple(
                     call
                     for call in tool_calls
@@ -1863,6 +1954,13 @@ class AgentLoopRunner:
                             pending_terminal_decision,
                             last_tool_decision,
                         )
+                if (
+                    context_rollover_calls
+                    and scheduled_observations
+                    and scheduled_observations[0].observation is not None
+                    and not scheduled_observations[0].observation.is_error
+                ):
+                    start_fresh_context_generation()
                 if pending_terminal_decision is not None:
                     return await complete_finalized_turn(pending_terminal_decision, step=step)
                 update_runtime_supervision_guidance(

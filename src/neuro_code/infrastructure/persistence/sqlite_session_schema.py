@@ -33,7 +33,8 @@ def _ensure_base_schema(connection: sqlite3.Connection) -> None:
             model TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            messages_json TEXT NOT NULL DEFAULT '[]'
+            messages_json TEXT NOT NULL DEFAULT '[]',
+            context_generation INTEGER NOT NULL DEFAULT 0 CHECK (context_generation >= 0)
         )
         """
     )
@@ -1187,3 +1188,14 @@ def _ensure_session_working_set_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def _ensure_session_context_generation_schema(connection: sqlite3.Connection) -> None:
+    """Add the durable active-context generation to legacy sessions."""
+
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(sessions)")}
+    if "context_generation" not in columns:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN context_generation INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (context_generation >= 0)"
+        )

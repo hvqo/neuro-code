@@ -15,6 +15,7 @@ from contextlib import closing
 from datetime import UTC, datetime
 from typing import Any
 
+from neuro_code.application.ports.context_rollover import MAX_CONTEXT_GENERATION
 from neuro_code.domain.background_tasks.models import BackgroundWakeState
 from neuro_code.domain.conversation.events import AgentEvent
 from neuro_code.domain.conversation.messages import (
@@ -55,6 +56,7 @@ from neuro_code.infrastructure.persistence.sqlite_session_schema import (
     _ensure_session_alias_schema,
     _ensure_session_background_wake_schema,
     _ensure_session_compaction_schema,
+    _ensure_session_context_generation_schema,
     _ensure_session_execution_record_schema,
     _ensure_session_plan_comment_schema,
     _ensure_session_plan_schema,
@@ -287,6 +289,12 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                             "UPDATE schema_meta SET version = 31 WHERE singleton = 1"
                         )
                         version = (31,)
+                    if version is not None and version[0] == 31:
+                        _ensure_session_context_generation_schema(connection)
+                        connection.execute(
+                            "UPDATE schema_meta SET version = 32 WHERE singleton = 1"
+                        )
+                        version = (32,)
                     if version is None or version[0] != SCHEMA_VERSION:
                         raise SessionError(
                             "unsupported session schema version: "
@@ -301,6 +309,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                     _ensure_session_background_wake_schema(connection)
                     _ensure_subagent_link_schema(connection)
                     _ensure_session_compaction_schema(connection)
+                    _ensure_session_context_generation_schema(connection)
                     _ensure_session_turn_attempt_schema(connection)
                     _ensure_session_working_set_schema(connection)
                     _ensure_writable_subagent_lease_schema(connection)
@@ -354,6 +363,67 @@ class CoreMixin(_SqliteSessionPersistenceContext):
         async with self._write_lock:
             await run_blocking(create)
         return session_id
+
+    async def load_context_generation(self, session_id: str) -> int:
+        def load() -> int:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    "SELECT context_generation FROM sessions WHERE id = ?",
+                    (session_id,),
+                ).fetchone()
+                if row is None:
+                    raise SessionError(f"unknown session: {session_id}")
+                generation = row[0]
+                if (
+                    isinstance(generation, bool)
+                    or not isinstance(generation, int)
+                    or generation < 0
+                ):
+                    raise SessionError(f"session {session_id} contains invalid context state")
+                return generation
+
+        return await run_blocking(load)
+
+    async def advance_context_generation(self, session_id: str) -> int:
+        def advance() -> int:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT context_generation FROM sessions WHERE id = ?",
+                    (session_id,),
+                ).fetchone()
+                if row is None:
+                    raise SessionError(f"unknown session: {session_id}")
+                current = row[0]
+                if (
+                    isinstance(current, bool)
+                    or not isinstance(current, int)
+                    or current < 0
+                    or current >= MAX_CONTEXT_GENERATION
+                ):
+                    raise SessionError(f"session {session_id} contains invalid context state")
+                next_generation = current + 1
+                cursor = connection.execute(
+                    """
+                    UPDATE sessions
+                    SET context_generation = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND context_generation = ?
+                    """,
+                    (next_generation, session_id, current),
+                )
+                if cursor.rowcount != 1:
+                    raise SessionError("context generation changed concurrently")
+                connection.commit()
+                return next_generation
+            except BaseException:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        async with self._write_lock:
+            return await run_blocking(advance)
 
     async def import_session(self, snapshot: SessionSnapshot) -> str:
         summary = snapshot.summary
