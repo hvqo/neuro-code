@@ -186,6 +186,17 @@ class ToolContext:
     # Runtime-owned session binding.  It is supplied only to an executing tool
     # and is intentionally excluded from model-facing tool arguments and repr.
     session_id: str | None = field(default=None, repr=False, kw_only=True)
+    # Runtime-owned turn binding used to reconcile a pending context boundary
+    # with the turn that durably finalizes it.
+    turn_id: str | None = field(default=None, repr=False, kw_only=True)
+    # Runtime-owned exclusive-rollover boundary.  It is the canonical
+    # SessionItem count immediately after the control's result, supplied only
+    # to ``new_context`` before its durable marker is written.
+    context_rollover_item_boundary: int | None = field(
+        default=None,
+        repr=False,
+        kw_only=True,
+    )
 
 
 class Tool(Protocol):

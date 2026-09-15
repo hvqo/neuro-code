@@ -222,6 +222,24 @@ def _context_rollover_runtime_message(generation: int) -> Message:
     )
 
 
+def _raw_context_index_after_canonical_boundary(
+    items: Sequence[SessionItem],
+    boundary: int,
+) -> int:
+    """Translate a durable-item count into an in-memory context index."""
+
+    if boundary <= 0:
+        return 0
+    durable_count = 0
+    for index, item in enumerate(items):
+        if isinstance(item, Message) and item.synthetic_reason is not None:
+            continue
+        durable_count += 1
+        if durable_count >= boundary:
+            return index + 1
+    return len(items)
+
+
 class AgentLoopRunner:
     """Own one agent turn's step loop and finalization orchestration.
 
@@ -470,7 +488,20 @@ class AgentLoopRunner:
                     for item in context_items
                     if isinstance(item, Message) and item.role is Role.SYSTEM
                 )
-                active_context_boundary = len(context_items)
+                persisted_boundary = rollover_state.history_item_boundary
+                # A boundary written before canonical turn finalization may
+                # point past the currently durable prefix after a crash.  A
+                # zero boundary with loaded history is invalid for a
+                # non-zero generation; fail closed by starting after the
+                # loaded prefix rather than re-injecting old history.
+                active_context_boundary = (
+                    len(context_items)
+                    if persisted_boundary == 0 and context_items
+                    else _raw_context_index_after_canonical_boundary(
+                        context_items,
+                        persisted_boundary,
+                    )
+                )
                 context_items.append(_context_rollover_runtime_message(context_rollover_generation))
         if plan_execution_requested and (self._session_store is None or session_id is None):
             raise ConfigurationError("session-backed task storage is unavailable")

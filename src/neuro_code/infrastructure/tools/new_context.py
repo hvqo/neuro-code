@@ -85,7 +85,11 @@ class NewContextTool:
             raise ToolError("output_byte_limit cannot represent a context rollover acknowledgement")
         try:
             state = await self._controller.advance_context_rollover(
-                AdvanceContextRolloverRequest(session_id)
+                AdvanceContextRolloverRequest(
+                    session_id,
+                    history_item_boundary=context.context_rollover_item_boundary,
+                    turn_id=context.turn_id,
+                )
             )
         except (SessionError, TypeError, ValueError) as error:
             raise ToolError("context rollover could not be completed") from error

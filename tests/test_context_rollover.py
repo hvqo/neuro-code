@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -20,10 +22,12 @@ from neuro_code.application.ports.working_set import (
     WorkingSetUpdate,
 )
 from neuro_code.application.runtime.agent import AgentRuntime
+from neuro_code.application.runtime.agent_loop import AgentRunResult
 from neuro_code.application.runtime.supervision import ExecutionControlMode
 from neuro_code.application.sessions.context_rollover import (
     SessionContextRolloverApplicationService,
 )
+from neuro_code.application.sessions.recovery import TurnRecoveryService
 from neuro_code.application.sessions.working_set import SessionWorkingSetApplicationService
 from neuro_code.domain.conversation.context import ModelContext
 from neuro_code.domain.conversation.events import (
@@ -33,13 +37,16 @@ from neuro_code.domain.conversation.events import (
     ModelToolCall,
 )
 from neuro_code.domain.conversation.messages import (
+    ContentPart,
     ContextItemKind,
     Message,
     PreservedContextItem,
     Role,
+    SessionItem,
     SyntheticReason,
     ToolCall,
 )
+from neuro_code.domain.execution import TurnInput, TurnRecoveryAttempt, TurnRecoveryStatus
 from neuro_code.domain.tools import ToolDefinition
 from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionStore
 from neuro_code.infrastructure.providers.failover import FailoverModelProvider, ProviderCandidate
@@ -263,6 +270,147 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(await self.store.load_context_generation(self.session_id), 0)
 
+    async def test_schema_32_migration_backfills_generation_boundary(self) -> None:
+        legacy_database = Path(self._temporary.name) / "legacy-sessions.db"
+        legacy_items = [
+            Message(Role.SYSTEM, "legacy system").to_dict(),
+            Message(Role.USER, "legacy durable item").to_dict(),
+        ]
+        connection = sqlite3.connect(legacy_database)
+        try:
+            connection.executescript(
+                """
+                CREATE TABLE schema_meta (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    version INTEGER NOT NULL
+                );
+                INSERT INTO schema_meta(singleton, version) VALUES (1, 32);
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    cwd TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    messages_json TEXT NOT NULL DEFAULT '[]',
+                    context_affinity TEXT,
+                    sandbox_profile TEXT,
+                    title TEXT NOT NULL DEFAULT '',
+                    context_generation INTEGER NOT NULL DEFAULT 0
+                        CHECK (context_generation >= 0)
+                );
+                CREATE TABLE events (
+                    session_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    data_json TEXT NOT NULL,
+                    PRIMARY KEY (session_id, sequence),
+                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                );
+                """,
+            )
+            connection.execute(
+                """
+                INSERT INTO sessions(
+                    id, cwd, provider, model, messages_json, context_generation
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy-session",
+                    self._temporary.name,
+                    "fixture-provider",
+                    "fixture-model",
+                    json.dumps(legacy_items),
+                    1,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        migrated = SqliteSessionStore(legacy_database)
+        await migrated.initialize()
+
+        self.assertEqual(
+            await migrated.load_context_generation_state("legacy-session"),
+            (1, 2),
+        )
+        connection = sqlite3.connect(legacy_database)
+        try:
+            columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
+            }
+            self.assertIn("context_generation_start_index", columns)
+            self.assertIn("context_generation_pending_turn_id", columns)
+            self.assertIn("context_generation_pending_item_boundary", columns)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT version FROM schema_meta WHERE singleton = 1"
+                ).fetchone(),
+                (33,),
+            )
+        finally:
+            connection.close()
+
+    async def test_crash_after_marker_reopens_safe_prefix_until_attempt_is_abandoned(self) -> None:
+        initial_items = (
+            Message(Role.SYSTEM, "fixture system"),
+            Message(Role.USER, "generation zero history"),
+        )
+        await self.store.save_session_items(self.session_id, initial_items)
+        attempt = TurnRecoveryAttempt.create(
+            turn_id="rollover-crashed-turn",
+            session_id=self.session_id,
+            input=TurnInput(
+                "continue after a crash",
+                (ContentPart.from_text("continue after a crash"),),
+            ),
+            accepted_at=datetime.now(UTC),
+        )
+        await self.store.start_turn_attempt(attempt)
+        await self.store.advance_context_generation(
+            self.session_id,
+            item_boundary=5,
+            turn_id=attempt.turn_id,
+        )
+
+        self.assertEqual(
+            await self.store.load_context_generation_state(self.session_id),
+            (1, 2),
+        )
+        reopened = SqliteSessionStore(self.database)
+        await reopened.initialize()
+        self.assertEqual(
+            await reopened.load_context_generation_state(self.session_id),
+            (1, 2),
+        )
+
+        resolved = await TurnRecoveryService(reopened).abandon(
+            self.session_id,
+            attempt.turn_id,
+        )
+        self.assertIs(resolved.status, TurnRecoveryStatus.ABANDONED)
+        self.assertEqual(
+            await reopened.load_context_generation_state(self.session_id),
+            (1, 2),
+        )
+        connection = sqlite3.connect(self.database)
+        try:
+            self.assertEqual(
+                connection.execute(
+                    """
+                    SELECT context_generation_pending_turn_id,
+                           context_generation_pending_item_boundary
+                    FROM sessions WHERE id = ?
+                    """,
+                    (self.session_id,),
+                ).fetchone(),
+                (None, None),
+            )
+        finally:
+            connection.close()
+
     async def test_generation_survives_failed_turn_and_reopen(self) -> None:
         initial_items = (
             Message(Role.SYSTEM, "fixture system"),
@@ -368,6 +516,191 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
                 and "generation 2" in item.content
                 for item in provider.calls[2].items
             )
+        )
+
+    async def test_rollover_boundary_accumulates_across_reopened_turns(self) -> None:
+        initial_items = (
+            Message(Role.SYSTEM, "fixture system"),
+            Message(Role.USER, "generation zero history"),
+        )
+        await self.store.save_session_items(self.session_id, initial_items)
+        before_working_set = await self._seed_working_set()
+        generation_one_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "generation-one-reasoning",
+                "summary": [{"type": "summary_text", "text": "generation one"}],
+                "encrypted_content": "generation-one-native-state",
+            },
+        )
+        turn_a_provider = _ScriptedProvider(
+            (
+                (
+                    ModelToolCall(ToolCall("roll-1", "new_context", {})),
+                    ModelCompleted("tool_calls"),
+                ),
+                (
+                    ModelTextDelta("generation one turn A"),
+                    ModelCompleted("stop", context_items=(generation_one_native,)),
+                ),
+            )
+        )
+        await self._runtime(turn_a_provider).run(
+            "generation one turn A",
+            initial_items=initial_items,
+            session_id=self.session_id,
+        )
+
+        async def run_reopened_turn(
+            store: SqliteSessionStore,
+            prompt: str,
+            provider: _ScriptedProvider,
+        ) -> tuple[AgentRunResult, list[SessionItem]]:
+            items = await store.load_session_items(self.session_id)
+            summary = await store.get_session(self.session_id)
+            result = await self._runtime(provider, store=store).run(
+                prompt,
+                initial_items=items,
+                source_provider=summary.provider,
+                source_model=summary.model,
+                source_context_affinity=summary.context_affinity,
+                session_id=self.session_id,
+            )
+            return result, list(provider.calls[0].items)
+
+        reopened = SqliteSessionStore(self.database)
+        await reopened.initialize()
+        turn_b_provider = _ScriptedProvider(
+            ((ModelTextDelta("generation one turn B"), ModelCompleted("stop")),)
+        )
+        turn_b_result, turn_b_items = await run_reopened_turn(
+            reopened,
+            "generation one turn B",
+            turn_b_provider,
+        )
+        self.assertEqual(turn_b_result.response, "generation one turn B")
+        self.assertIn(Message(Role.ASSISTANT, "generation one turn A"), turn_b_items)
+        self.assertIn(generation_one_native, turn_b_items)
+        self.assertNotIn(
+            Message(Role.USER, "generation zero history"),
+            turn_b_items,
+        )
+        self.assertEqual(
+            sum(
+                isinstance(item, Message)
+                and item.role is Role.USER
+                and item.content == "generation one turn B"
+                for item in turn_b_items
+            ),
+            1,
+        )
+        self.assertTrue(
+            any(
+                isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.WORKING_SET
+                and "preserve this durable goal" in item.content
+                for item in turn_b_items
+            )
+        )
+
+        turn_c_provider = _ScriptedProvider(
+            ((ModelTextDelta("generation one turn C"), ModelCompleted("stop")),)
+        )
+        turn_c_result, turn_c_items = await run_reopened_turn(
+            reopened,
+            "generation one turn C",
+            turn_c_provider,
+        )
+        self.assertEqual(turn_c_result.response, "generation one turn C")
+        self.assertIn(Message(Role.ASSISTANT, "generation one turn A"), turn_c_items)
+        self.assertIn(Message(Role.ASSISTANT, "generation one turn B"), turn_c_items)
+        self.assertIn(generation_one_native, turn_c_items)
+        self.assertNotIn(Message(Role.USER, "generation zero history"), turn_c_items)
+
+        generation_two_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "generation-two-reasoning",
+                "summary": [{"type": "summary_text", "text": "generation two"}],
+                "encrypted_content": "generation-two-native-state",
+            },
+        )
+        turn_d_provider = _ScriptedProvider(
+            (
+                (
+                    ModelToolCall(ToolCall("roll-2", "new_context", {})),
+                    ModelCompleted("tool_calls"),
+                ),
+                (
+                    ModelTextDelta("generation two turn D"),
+                    ModelCompleted("stop", context_items=(generation_two_native,)),
+                ),
+            )
+        )
+        reopened_items = await reopened.load_session_items(self.session_id)
+        reopened_summary = await reopened.get_session(self.session_id)
+        turn_d_result = await self._runtime(turn_d_provider, store=reopened).run(
+            "generation two turn D",
+            initial_items=reopened_items,
+            source_provider=reopened_summary.provider,
+            source_model=reopened_summary.model,
+            source_context_affinity=reopened_summary.context_affinity,
+            session_id=self.session_id,
+        )
+        self.assertEqual(turn_d_result.response, "generation two turn D")
+        self.assertNotIn(
+            Message(Role.ASSISTANT, "generation one turn A"), turn_d_provider.calls[1].items
+        )
+        self.assertNotIn(
+            Message(Role.ASSISTANT, "generation one turn B"), turn_d_provider.calls[1].items
+        )
+        self.assertNotIn(
+            Message(Role.ASSISTANT, "generation one turn C"), turn_d_provider.calls[1].items
+        )
+        self.assertNotIn(generation_one_native, turn_d_provider.calls[1].items)
+        self.assertEqual(
+            sum(
+                isinstance(item, Message)
+                and item.role is Role.USER
+                and item.content == "generation two turn D"
+                for item in turn_d_provider.calls[1].items
+            ),
+            1,
+        )
+
+        reopened_again = SqliteSessionStore(self.database)
+        await reopened_again.initialize()
+        turn_e_provider = _ScriptedProvider(
+            ((ModelTextDelta("generation two turn E"), ModelCompleted("stop")),)
+        )
+        turn_e_result, turn_e_items = await run_reopened_turn(
+            reopened_again,
+            "generation two turn E",
+            turn_e_provider,
+        )
+        self.assertEqual(turn_e_result.response, "generation two turn E")
+        self.assertIn(Message(Role.ASSISTANT, "generation two turn D"), turn_e_items)
+        self.assertIn(generation_two_native, turn_e_items)
+        self.assertNotIn(Message(Role.ASSISTANT, "generation one turn A"), turn_e_items)
+        self.assertNotIn(Message(Role.ASSISTANT, "generation one turn B"), turn_e_items)
+        self.assertNotIn(Message(Role.ASSISTANT, "generation one turn C"), turn_e_items)
+        self.assertNotIn(generation_one_native, turn_e_items)
+        self.assertNotIn(Message(Role.USER, "generation zero history"), turn_e_items)
+        self.assertEqual(
+            sum(
+                isinstance(item, Message)
+                and item.role is Role.USER
+                and item.content == "generation two turn E"
+                for item in turn_e_items
+            ),
+            1,
+        )
+        self.assertEqual(await reopened_again.load_context_generation(self.session_id), 2)
+        self.assertEqual(
+            await reopened_again.load_working_set(self.session_id),
+            before_working_set,
         )
 
     async def test_rollover_resets_local_provider_origin_after_foreign_native_failover(

@@ -16,16 +16,21 @@ same session.
 
 CM3a needs that control without making a second history, copying the Working
 Set, changing provider affinity, or treating transient runtime context as
-conversation history. The durable marker must also make a crash between the
-control and the next model request deterministic.
+conversation history. The durable generation boundary must also make a crash
+between the control and the next model request deterministic.
 
 ## Decision
 
-Add one monotonic `context_generation` integer to the existing `sessions` row.
-Schema version 32 adds the column with a non-negative default and migrates
-legacy schema-31 databases additively. `SessionStore` owns reading and
-atomically advancing the marker; `SessionContextRolloverApplicationService`
-is the application boundary. The marker is session metadata, not a copied
+Add one monotonic `context_generation` integer, one committed exclusive
+canonical `context_generation_start_index`, and an optional pending
+turn-boundary anchor to the existing `sessions` row. Schema version 32 added
+the generation marker; schema version 33 adds the boundary columns and
+migrates legacy schema-32 databases additively. For an already non-zero
+generation whose historical boundary cannot be recovered, migration sets the
+committed boundary to the current canonical item count, which is the
+fail-closed choice. `SessionStore` owns reading and atomically advancing the
+generation and boundary metadata; `SessionContextRolloverApplicationService`
+is the application boundary. These values are session metadata, not a copied
 history sequence, summary, or Working Set row.
 
 The normal composition binds a runtime-only `new_context` tool to the current
@@ -41,24 +46,34 @@ therefore fails before mutation. A successful advance returns the generation,
 `AgentLoopRunner` retains the complete in-memory turn sequence for existing
 finalization and persistence, but separately projects the active model
 context. At the beginning of a run with a non-zero durable generation, the
-active projection starts with the existing system messages and the current
-turn's new user input; old durable items remain in the full sequence and are
-not injected into that active projection. After a successful sole
+active projection starts with the existing system messages and the canonical
+items at or after the persisted exclusive boundary, followed by the current
+turn's new user input. Older durable items remain in the full sequence and
+are not injected into that active projection. After a successful sole
 `new_context` call, the same projection boundary is installed immediately:
 the system prefix and current user message seed the next request, followed by
-the new generation notice and later runtime/model/tool items. Instructions,
-skills, and the current Working Set are rebuilt by the existing
-`ContextBuilder`/Working Set path for that request.
+the new generation notice and later runtime/model/tool items. The control
+records the current durable item count as a committed safe fallback and, when
+runtime supplies them, records the candidate canonical boundary together with
+the owning turn ID as a pending anchor. Once that turn finalizes, its atomic
+session write promotes the candidate when the canonical prefix contains it;
+later normal turns in that generation therefore retain one another's durable
+messages and provider-native items. Instructions, skills, and the current
+Working Set are rebuilt by the existing `ContextBuilder`/Working Set path for
+each request.
 
 The control must be the only tool call in its model step. A mixed batch is
 rejected without advancing the generation. An unavailable, invalid, or
 output-limited control also leaves the marker unchanged. The control result
 itself follows the ordinary tool/event/finalization path when the turn is
-completed; the session marker is committed before the next model request and
-is therefore the recovery source of truth even if the process stops before
-turn finalization. On a later run, the persisted generation installs the same
-fresh projection before model execution. Existing unresolved-turn recovery
-rules still apply; rollover does not auto-replay a provider request.
+completed. Rehydration uses the committed fallback while the owning turn is
+unresolved, so a process stop before finalization cannot make an uncommitted
+turn part of the active projection. Finalization promotes the pending
+candidate only when it is represented by the durable prefix and clears the
+anchor; explicit abandonment clears the matching anchor without changing the
+generation or fallback. Recovery therefore does not rely on the persisted
+`new_context` tool result. Existing unresolved-turn recovery rules still
+apply; rollover does not auto-replay a provider request.
 
 Rollover does not remove or replace compaction. Existing compaction remains
 owned by its current safe-boundary gate, provider-window/accounting rules,
@@ -79,6 +94,11 @@ response commitment remain on their existing paths.
   rollover notice, refreshed instructions/skills, and other runtime-only
   messages are excluded from canonical history by the existing persistence
   filter.
+- A non-zero generation accumulates canonical items at or after its boundary
+  across subsequent normal turns. A later explicit rollover advances the
+  generation and installs a new boundary, excluding all earlier-generation
+  ordinary and provider-native items from the active projection while leaving
+  them available to CM1.
 - A rollover never changes provider identity, permissions, verification
   evidence, workspace authority, sandbox policy, or final-response truth.
   It changes only the active model projection and the durable generation
@@ -91,11 +111,14 @@ response commitment remain on their existing paths.
 ## Compatibility and validation
 
 The schema change is additive: existing sessions start at generation zero,
-and existing history/Working Set/compaction data remains readable. Forked
+and existing history/Working Set/compaction data remains readable. Existing
+schema-32 non-zero generations are conservatively backfilled to the current
+history end because their exact prior boundary was not stored. Forked
 sessions retain their existing history-copy behavior but start with the
 default generation and do not inherit CM2 Working Set state. Focused tests
-cover in-turn fresh projection, Working Set and canonical-history
-preservation, pre-write output-limit rejection, and generation recovery
-after an interrupted next model step. Ruff, format, focused mypy, and
-documentation parity are the change-level checks; the repository's full CI
-matrix remains the authoritative full validation gate.
+cover in-turn fresh projection, cross-turn accumulation after reopen,
+provider-native item isolation, Working Set and canonical-history
+preservation, pre-write output-limit rejection, schema migration, and
+generation recovery after an interrupted next model step. Ruff, format,
+focused mypy, and documentation parity are the change-level checks; the
+repository's full CI matrix remains the authoritative full validation gate.

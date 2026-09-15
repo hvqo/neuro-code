@@ -1720,12 +1720,12 @@ async def test_schema_27_to_32_migration_creates_ultracode_projection_without_lo
             connection.execute("UPDATE schema_meta SET version = 27 WHERE singleton = 1")
         await store.initialize()
 
-        assert SCHEMA_VERSION == 32
+        assert SCHEMA_VERSION == 33
         assert await store.get_session(session_id) is not None
         with closing(sqlite3.connect(database)) as connection:
             assert connection.execute(
                 "SELECT version FROM schema_meta WHERE singleton = 1"
-            ).fetchone() == (32,)
+            ).fetchone() == (33,)
             assert connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' "
                 "AND name = 'orchestration_ultracode_executions'"

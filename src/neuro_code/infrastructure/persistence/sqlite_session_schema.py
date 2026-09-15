@@ -34,7 +34,12 @@ def _ensure_base_schema(connection: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             messages_json TEXT NOT NULL DEFAULT '[]',
-            context_generation INTEGER NOT NULL DEFAULT 0 CHECK (context_generation >= 0)
+            context_generation INTEGER NOT NULL DEFAULT 0 CHECK (context_generation >= 0),
+            context_generation_start_index INTEGER NOT NULL DEFAULT 0
+                CHECK (context_generation_start_index >= 0),
+            context_generation_pending_turn_id TEXT,
+            context_generation_pending_item_boundary INTEGER
+                CHECK (context_generation_pending_item_boundary >= 0)
         )
         """
     )
@@ -1198,4 +1203,48 @@ def _ensure_session_context_generation_schema(connection: sqlite3.Connection) ->
         connection.execute(
             "ALTER TABLE sessions ADD COLUMN context_generation INTEGER NOT NULL DEFAULT 0 "
             "CHECK (context_generation >= 0)"
+        )
+
+
+def _ensure_session_context_generation_boundary_schema(connection: sqlite3.Connection) -> None:
+    """Add and backfill the durable canonical history boundary for CM3a.
+
+    The committed start is a safe fallback while a rollover turn is in
+    flight.  The optional pending anchor lets finalization make the boundary
+    exact without treating an uncommitted turn as durable history.
+    """
+
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(sessions)")}
+    added_start = "context_generation_start_index" not in columns
+    if added_start:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN context_generation_start_index "
+            "INTEGER NOT NULL DEFAULT 0 CHECK (context_generation_start_index >= 0)"
+        )
+    if "context_generation_pending_turn_id" not in columns:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN context_generation_pending_turn_id TEXT"
+        )
+    if "context_generation_pending_item_boundary" not in columns:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN context_generation_pending_item_boundary "
+            "INTEGER CHECK (context_generation_pending_item_boundary >= 0)"
+        )
+
+    if not added_start:
+        return
+
+    for session_id, generation, raw_items in connection.execute(
+        "SELECT id, context_generation, messages_json FROM sessions"
+    ).fetchall():
+        if not isinstance(generation, int) or isinstance(generation, bool) or generation <= 0:
+            continue
+        try:
+            items = json.loads(str(raw_items))
+            item_count = len(items) if isinstance(items, list) else 0
+        except (TypeError, ValueError, json.JSONDecodeError):
+            item_count = 0
+        connection.execute(
+            "UPDATE sessions SET context_generation_start_index = ? WHERE id = ?",
+            (item_count, session_id),
         )

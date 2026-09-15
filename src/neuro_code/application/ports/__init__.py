@@ -20,6 +20,8 @@ from neuro_code.application.ports.client_terminal import ClientTerminal, ClientT
 from neuro_code.application.ports.context_rollover import (
     CONTEXT_ROLLOVER_TOOL_NAME,
     MAX_CONTEXT_GENERATION,
+    MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY,
+    MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES,
     AdvanceContextRolloverRequest,
     ContextRolloverController,
     ContextRolloverState,
@@ -334,6 +336,8 @@ __all__ = [
     "DEFAULT_PROVIDER_SERVICE_CATALOG",
     "MAX_CITED_TEXT_CHARS",
     "MAX_CONTEXT_GENERATION",
+    "MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY",
+    "MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES",
     "MAX_DOMAIN_CHARS",
     "MAX_DOMAIN_COUNT",
     "MAX_EVIDENCE_CHARS",

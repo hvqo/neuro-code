@@ -15,7 +15,11 @@ from contextlib import closing
 from datetime import UTC, datetime
 from typing import Any
 
-from neuro_code.application.ports.context_rollover import MAX_CONTEXT_GENERATION
+from neuro_code.application.ports.context_rollover import (
+    MAX_CONTEXT_GENERATION,
+    MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY,
+    MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES,
+)
 from neuro_code.domain.background_tasks.models import BackgroundWakeState
 from neuro_code.domain.conversation.events import AgentEvent
 from neuro_code.domain.conversation.messages import (
@@ -56,6 +60,7 @@ from neuro_code.infrastructure.persistence.sqlite_session_schema import (
     _ensure_session_alias_schema,
     _ensure_session_background_wake_schema,
     _ensure_session_compaction_schema,
+    _ensure_session_context_generation_boundary_schema,
     _ensure_session_context_generation_schema,
     _ensure_session_execution_record_schema,
     _ensure_session_plan_comment_schema,
@@ -295,6 +300,12 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                             "UPDATE schema_meta SET version = 32 WHERE singleton = 1"
                         )
                         version = (32,)
+                    if version is not None and version[0] == 32:
+                        _ensure_session_context_generation_boundary_schema(connection)
+                        connection.execute(
+                            "UPDATE schema_meta SET version = 33 WHERE singleton = 1"
+                        )
+                        version = (33,)
                     if version is None or version[0] != SCHEMA_VERSION:
                         raise SessionError(
                             "unsupported session schema version: "
@@ -310,6 +321,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                     _ensure_subagent_link_schema(connection)
                     _ensure_session_compaction_schema(connection)
                     _ensure_session_context_generation_schema(connection)
+                    _ensure_session_context_generation_boundary_schema(connection)
                     _ensure_session_turn_attempt_schema(connection)
                     _ensure_session_working_set_schema(connection)
                     _ensure_writable_subagent_lease_schema(connection)
@@ -365,10 +377,19 @@ class CoreMixin(_SqliteSessionPersistenceContext):
         return session_id
 
     async def load_context_generation(self, session_id: str) -> int:
-        def load() -> int:
+        generation, _ = await self.load_context_generation_state(session_id)
+        return generation
+
+    async def load_context_generation_state(self, session_id: str) -> tuple[int, int]:
+        def load() -> tuple[int, int]:
             with closing(self._connect()) as connection:
                 row = connection.execute(
-                    "SELECT context_generation FROM sessions WHERE id = ?",
+                    """
+                    SELECT context_generation, context_generation_start_index,
+                           context_generation_pending_turn_id,
+                           context_generation_pending_item_boundary, messages_json
+                    FROM sessions WHERE id = ?
+                    """,
                     (session_id,),
                 ).fetchone()
                 if row is None:
@@ -380,17 +401,80 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                     or generation < 0
                 ):
                     raise SessionError(f"session {session_id} contains invalid context state")
-                return generation
+                boundary = row[1]
+                if isinstance(boundary, bool) or not isinstance(boundary, int) or boundary < 0:
+                    raise SessionError(f"session {session_id} contains invalid context boundary")
+                pending_turn_id = row[2]
+                pending_boundary = row[3]
+                if pending_turn_id is not None and (
+                    not isinstance(pending_turn_id, str)
+                    or not pending_turn_id.strip()
+                    or "\x00" in pending_turn_id
+                    or len(pending_turn_id.encode("utf-8")) > MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES
+                    or any(
+                        ord(character) < 32 or ord(character) == 127
+                        for character in pending_turn_id
+                    )
+                ):
+                    raise SessionError(
+                        f"session {session_id} contains invalid pending context turn"
+                    )
+                if pending_boundary is not None and (
+                    isinstance(pending_boundary, bool)
+                    or not isinstance(pending_boundary, int)
+                    or not 0 <= pending_boundary <= MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY
+                ):
+                    raise SessionError(
+                        f"session {session_id} contains invalid pending context boundary"
+                    )
+                if (pending_turn_id is None) != (pending_boundary is None):
+                    raise SessionError(f"session {session_id} contains incomplete context marker")
+                try:
+                    item_count = len(_session_items_from_json(row[4]))
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                    raise SessionError(
+                        f"session {session_id} contains invalid session items"
+                    ) from error
+                # The committed start is the safe fallback while a rollover
+                # turn is in flight.  Its pending candidate is deliberately
+                # not exposed until that same turn finalizes atomically.
+                return generation, min(boundary, item_count)
 
         return await run_blocking(load)
 
-    async def advance_context_generation(self, session_id: str) -> int:
+    async def advance_context_generation(
+        self,
+        session_id: str,
+        *,
+        item_boundary: int | None = None,
+        turn_id: str | None = None,
+    ) -> int:
+        if item_boundary is not None and (
+            isinstance(item_boundary, bool)
+            or not isinstance(item_boundary, int)
+            or not 0 <= item_boundary <= MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY
+        ):
+            raise ValueError("context rollover item boundary is invalid")
+        if turn_id is not None and (
+            not isinstance(turn_id, str)
+            or not turn_id.strip()
+            or "\x00" in turn_id
+            or len(turn_id.encode("utf-8")) > MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES
+            or any(ord(character) < 32 or ord(character) == 127 for character in turn_id)
+        ):
+            raise ValueError("context rollover turn_id is invalid")
+        if (item_boundary is None) != (turn_id is None):
+            raise ValueError("context rollover item boundary and turn_id must be supplied together")
+
         def advance() -> int:
             connection = self._connect()
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 row = connection.execute(
-                    "SELECT context_generation FROM sessions WHERE id = ?",
+                    """
+                    SELECT context_generation, messages_json
+                    FROM sessions WHERE id = ?
+                    """,
                     (session_id,),
                 ).fetchone()
                 if row is None:
@@ -403,14 +487,35 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                     or current >= MAX_CONTEXT_GENERATION
                 ):
                     raise SessionError(f"session {session_id} contains invalid context state")
+                try:
+                    current_item_count = len(_session_items_from_json(row[1]))
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                    raise SessionError(
+                        f"session {session_id} contains invalid session items"
+                    ) from error
+                pending_boundary = item_boundary
+                if pending_boundary is not None and pending_boundary < current_item_count:
+                    raise SessionError(
+                        "context rollover boundary precedes persisted session history"
+                    )
                 next_generation = current + 1
                 cursor = connection.execute(
                     """
                     UPDATE sessions
-                    SET context_generation = ?, updated_at = CURRENT_TIMESTAMP
+                    SET context_generation = ?, context_generation_start_index = ?,
+                        context_generation_pending_turn_id = ?,
+                        context_generation_pending_item_boundary = ?,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ? AND context_generation = ?
                     """,
-                    (next_generation, session_id, current),
+                    (
+                        next_generation,
+                        current_item_count,
+                        turn_id,
+                        pending_boundary,
+                        session_id,
+                        current,
+                    ),
                 )
                 if cursor.rowcount != 1:
                     raise SessionError("context generation changed concurrently")

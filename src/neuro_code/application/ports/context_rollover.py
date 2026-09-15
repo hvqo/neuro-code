@@ -17,7 +17,9 @@ from typing import Protocol
 
 CONTEXT_ROLLOVER_TOOL_NAME = "new_context"
 MAX_CONTEXT_GENERATION = 2**63 - 1
+MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY = 2**63 - 1
 MAX_CONTEXT_ROLLOVER_SESSION_ID_BYTES = 512
+MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES = 512
 
 
 def _require_session_id(value: str) -> None:
@@ -40,6 +42,30 @@ def _require_generation(value: int) -> None:
         raise ValueError("context generation is invalid")
 
 
+def _require_optional_item_boundary(value: int | None) -> None:
+    if value is None:
+        return
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 <= value <= MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY
+    ):
+        raise ValueError("context rollover item boundary is invalid")
+
+
+def _require_optional_turn_id(value: str | None) -> None:
+    if value is None:
+        return
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or "\x00" in value
+        or len(value.encode("utf-8")) > MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError("context rollover turn_id is invalid")
+
+
 @dataclass(frozen=True, slots=True)
 class ReadContextRolloverRequest:
     """Read the durable active-context generation for one session."""
@@ -55,9 +81,15 @@ class AdvanceContextRolloverRequest:
     """Advance one session to its next fresh active-context generation."""
 
     session_id: str
+    history_item_boundary: int | None = None
+    turn_id: str | None = None
 
     def __post_init__(self) -> None:
         _require_session_id(self.session_id)
+        _require_optional_item_boundary(self.history_item_boundary)
+        _require_optional_turn_id(self.turn_id)
+        if (self.history_item_boundary is None) != (self.turn_id is None):
+            raise ValueError("context rollover item boundary and turn_id must be supplied together")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +98,12 @@ class ContextRolloverState:
 
     session_id: str
     generation: int
+    history_item_boundary: int = 0
 
     def __post_init__(self) -> None:
         _require_session_id(self.session_id)
         _require_generation(self.generation)
+        _require_optional_item_boundary(self.history_item_boundary)
 
 
 class ContextRolloverController(Protocol):
@@ -89,7 +123,9 @@ class ContextRolloverController(Protocol):
 __all__ = [
     "CONTEXT_ROLLOVER_TOOL_NAME",
     "MAX_CONTEXT_GENERATION",
+    "MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY",
     "MAX_CONTEXT_ROLLOVER_SESSION_ID_BYTES",
+    "MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES",
     "AdvanceContextRolloverRequest",
     "ContextRolloverController",
     "ContextRolloverState",
