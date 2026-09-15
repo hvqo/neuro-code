@@ -15,6 +15,7 @@ from neuro_code.application.memory.compaction_runtime import (
 )
 from neuro_code.application.permissions.policy import PermissionManager, PermissionMode
 from neuro_code.application.ports.approval import PermissionApprover
+from neuro_code.application.ports.context_rollover import ContextRolloverController
 from neuro_code.application.ports.model import ModelProvider
 from neuro_code.application.ports.result_adoption import WorkspaceMutationPort
 from neuro_code.application.ports.storage import SessionStore
@@ -98,6 +99,7 @@ class AgentRuntime:
         approver: PermissionApprover | None = None,
         session_store: SessionStore | None = None,
         working_set: WorkingSetController | None = None,
+        context_rollover: ContextRolloverController | None = None,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         max_steps: int | None = None,
         execution_budget: ExecutionBudget | None = None,
@@ -233,6 +235,7 @@ class AgentRuntime:
             tool_context=self._tool_context,
             session_store=self._session_store,
             working_set=working_set,
+            context_rollover=context_rollover,
             system_prompt=self._system_prompt,
             execution_budget=self._execution_budget,
             context_builder=self._context_builder,

@@ -17,6 +17,16 @@ from neuro_code.application.ports.background_tasks import (
 )
 from neuro_code.application.ports.client_filesystem import ClientFileSystem
 from neuro_code.application.ports.client_terminal import ClientTerminal, ClientTerminalResult
+from neuro_code.application.ports.context_rollover import (
+    CONTEXT_ROLLOVER_TOOL_NAME,
+    MAX_CONTEXT_GENERATION,
+    MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY,
+    MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES,
+    AdvanceContextRolloverRequest,
+    ContextRolloverController,
+    ContextRolloverState,
+    ReadContextRolloverRequest,
+)
 from neuro_code.application.ports.git_inspection import (
     MAX_GIT_INSPECTION_DIFF_SECTION_BYTES,
     MAX_GIT_INSPECTION_ERROR_BYTES,
@@ -321,9 +331,13 @@ from neuro_code.application.ports.writable_subagent import (
 )
 
 __all__ = [
+    "CONTEXT_ROLLOVER_TOOL_NAME",
     "DEFAULT_FETCH_MAX_CHARS",
     "DEFAULT_PROVIDER_SERVICE_CATALOG",
     "MAX_CITED_TEXT_CHARS",
+    "MAX_CONTEXT_GENERATION",
+    "MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY",
+    "MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES",
     "MAX_DOMAIN_CHARS",
     "MAX_DOMAIN_COUNT",
     "MAX_EVIDENCE_CHARS",
@@ -364,6 +378,7 @@ __all__ = [
     "RESULT_ADOPTION_POST_APPLY_CONCURRENT_MODIFICATION",
     "TOOL_OUTPUT_ARTIFACT_PRUNE_GRACE_SECONDS",
     "WINDOWS_SANDBOX_SETUP_SCHEMA_VERSION",
+    "AdvanceContextRolloverRequest",
     "AgentSwarmRunClaim",
     "AgentSwarmStore",
     "AgentSwarmStoreError",
@@ -374,6 +389,8 @@ __all__ = [
     "ClientFileSystem",
     "ClientTerminal",
     "ClientTerminalResult",
+    "ContextRolloverController",
+    "ContextRolloverState",
     "CredentialStyle",
     "DagReplanAttemptClaim",
     "FilesystemAccessOperation",
@@ -467,6 +484,7 @@ __all__ = [
     "ProviderServiceCatalog",
     "ProviderServiceDescriptor",
     "ProviderSettingsStore",
+    "ReadContextRolloverRequest",
     "ReadSessionItemRequest",
     "ReadWorkingSetRequest",
     "ResultAdoptionError",

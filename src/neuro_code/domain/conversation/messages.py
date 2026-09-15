@@ -57,6 +57,7 @@ class SyntheticReason(StrEnum):
     RUNTIME_CHECKPOINT = "runtime-checkpoint"
     RUNTIME_SUPERVISION = "runtime-supervision"
     RUNTIME_BACKGROUND_TASK = "runtime-background-task"
+    RUNTIME_CONTEXT_ROLLOVER = "runtime-context-rollover"
 
 
 def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:

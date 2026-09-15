@@ -42,6 +42,7 @@ from neuro_code.application.permissions.policy import (
 )
 from neuro_code.application.permissions.scopes import PermissionScopeContext
 from neuro_code.application.ports.approval import PermissionApprover
+from neuro_code.application.ports.context_rollover import CONTEXT_ROLLOVER_TOOL_NAME
 from neuro_code.application.ports.result_adoption import (
     WorkspaceMutationRequest,
     WorkspaceMutationResult,
@@ -758,6 +759,16 @@ class ToolExecutor:
                 interaction_event_sink=interaction_event_sink,
                 web_search_event_sink=web_search_event_sink,
                 session_id=session_id,
+                turn_id=turn_id,
+                context_rollover_item_boundary=(
+                    sum(
+                        not (isinstance(item, Message) and item.synthetic_reason is not None)
+                        for item in context_items
+                    )
+                    + 1
+                    if call.name == CONTEXT_ROLLOVER_TOOL_NAME
+                    else None
+                ),
                 terminal_creation_authorization=(
                     _issue_terminal_creation_authorization(call.id, call.arguments)
                     if call.name == "create_terminal"

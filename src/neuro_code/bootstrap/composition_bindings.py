@@ -72,6 +72,9 @@ from neuro_code.application.sessions.binding import (
     ConversationBinding,
     ConversationBindingResourceScope,
 )
+from neuro_code.application.sessions.context_rollover import (
+    SessionContextRolloverApplicationService,
+)
 from neuro_code.application.sessions.conversation import AgentConversation
 from neuro_code.application.sessions.item_queries import SessionItemQueryService
 from neuro_code.application.sessions.summary import (
@@ -419,6 +422,11 @@ class CompositionBindingMixin(CompositionRootMixin):
             self.store,
             redaction_values=selected_config.redaction_values(os.environ),
         )
+        session_context_rollover = (
+            SessionContextRolloverApplicationService(self.store)
+            if capabilities is None and parent_context_relay is None and dag_result_relay is None
+            else None
+        )
         preview_tools = default_tool_registry(
             selected_config.sandbox_profile,
             enable_background_tasks=enable_background_tasks,
@@ -430,6 +438,7 @@ class CompositionBindingMixin(CompositionRootMixin):
             git_inspection=git_inspection,
             session_item_query=session_item_query,
             session_working_set=session_working_set,
+            context_rollover=session_context_rollover,
         )
         for tool in additional_tools:
             if allowed_tool_names is not None and tool.definition.name not in allowed_tool_names:
@@ -591,6 +600,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                     git_inspection=git_inspection,
                     session_item_query=session_item_query,
                     session_working_set=session_working_set,
+                    context_rollover=session_context_rollover,
                 )
                 if fetch_path is WebFetchExecutionPath.LOCAL and (
                     allowed_tool_names is None or "web_fetch" in allowed_tool_names
@@ -743,6 +753,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                 approver=approval_service,
                 session_store=self.store,
                 working_set=session_working_set,
+                context_rollover=session_context_rollover,
                 workspace_mutation_tool=ExactWorkspaceMutationTool(),
                 execution_budget=selected_execution_budget,
                 reasoning_effort=effective_reasoning_effort,

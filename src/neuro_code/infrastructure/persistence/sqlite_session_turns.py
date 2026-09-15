@@ -11,6 +11,10 @@ from collections.abc import Callable, Sequence
 from contextlib import closing
 from datetime import UTC, datetime
 
+from neuro_code.application.ports.context_rollover import (
+    MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY,
+    MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES,
+)
 from neuro_code.domain.conversation.compaction import DurableCompactionItem
 from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
 from neuro_code.domain.conversation.messages import SessionItem
@@ -605,6 +609,16 @@ class TurnsMixin(_SqliteSessionPersistenceContext):
                     session_id=session_id,
                     turn_id=turn_id,
                     event=event,
+                )
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET context_generation_pending_turn_id = NULL,
+                        context_generation_pending_item_boundary = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND context_generation_pending_turn_id = ?
+                    """,
+                    (session_id, turn_id),
                 )
                 connection.execute(
                     "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1431,6 +1445,68 @@ def _turn_recovery_attempt_from_row(row: Sequence[object]) -> TurnRecoveryAttemp
         raise SessionError("session contains an invalid turn recovery attempt") from error
 
 
+def _context_generation_finalization_update(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    turn_id: str | None,
+    item_count: int,
+) -> tuple[int | None, bool]:
+    """Resolve a pending rollover marker with its owning turn.
+
+    The committed start index is the crash-safe fallback.  Only the turn that
+    wrote the pending candidate may promote it, and only when the final
+    canonical prefix contains that candidate.
+    """
+
+    if turn_id is None:
+        return None, False
+    row = connection.execute(
+        """
+        SELECT context_generation_start_index,
+               context_generation_pending_turn_id,
+               context_generation_pending_item_boundary
+        FROM sessions
+        WHERE id = ?
+        """,
+        (session_id,),
+    ).fetchone()
+    if row is None:
+        raise SessionError(f"unknown session: {session_id}")
+    stable_boundary, pending_turn_id, pending_boundary = row
+    if (
+        isinstance(stable_boundary, bool)
+        or not isinstance(stable_boundary, int)
+        or stable_boundary < 0
+    ):
+        raise SessionError(f"session {session_id} contains invalid context boundary")
+    if pending_turn_id is not None and (
+        not isinstance(pending_turn_id, str)
+        or not pending_turn_id.strip()
+        or "\x00" in pending_turn_id
+        or len(pending_turn_id.encode("utf-8")) > MAX_CONTEXT_ROLLOVER_TURN_ID_BYTES
+        or any(ord(character) < 32 or ord(character) == 127 for character in pending_turn_id)
+    ):
+        raise SessionError(f"session {session_id} contains invalid pending context turn")
+    if pending_boundary is not None and (
+        isinstance(pending_boundary, bool)
+        or not isinstance(pending_boundary, int)
+        or not 0 <= pending_boundary <= MAX_CONTEXT_ROLLOVER_ITEM_BOUNDARY
+    ):
+        raise SessionError(f"session {session_id} contains invalid pending context boundary")
+    if (pending_turn_id is None) != (pending_boundary is None):
+        raise SessionError(f"session {session_id} contains incomplete context marker")
+    if pending_turn_id != turn_id:
+        return None, False
+    assert pending_boundary is not None
+    if pending_boundary < stable_boundary:
+        raise SessionError(f"session {session_id} contains an out-of-order context marker")
+    return (
+        pending_boundary if pending_boundary <= item_count else min(stable_boundary, item_count),
+        True,
+    )
+
+
 def _persist_finalized_turn(
     connection: sqlite3.Connection,
     *,
@@ -1495,6 +1571,12 @@ def _persist_finalized_turn(
     payload = json.dumps(dict(event.data), ensure_ascii=False, separators=(",", ":"))
     items_payload = _serialize_session_items(items)
     title = str(row[1]) or fallback_session_title(items)
+    boundary_update, clear_pending_boundary = _context_generation_finalization_update(
+        connection,
+        session_id=session_id,
+        turn_id=turn_id,
+        item_count=len(items),
+    )
     if committed_response_event is not None:
         _insert_event_row(
             connection,
@@ -1502,14 +1584,28 @@ def _persist_finalized_turn(
             event=committed_response_event,
         )
     _insert_event_row(connection, session_id=session_id, event=event, payload=payload)
-    cursor = connection.execute(
-        """
-        UPDATE sessions
-        SET messages_json = ?, title = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        """,
-        (items_payload, title, session_id),
-    )
+    if clear_pending_boundary:
+        cursor = connection.execute(
+            """
+            UPDATE sessions
+            SET messages_json = ?, title = ?,
+                context_generation_start_index = ?,
+                context_generation_pending_turn_id = NULL,
+                context_generation_pending_item_boundary = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (items_payload, title, boundary_update, session_id),
+        )
+    else:
+        cursor = connection.execute(
+            """
+            UPDATE sessions
+            SET messages_json = ?, title = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (items_payload, title, session_id),
+        )
     if cursor.rowcount != 1:
         raise SessionError(f"unknown session: {session_id}")
     _upsert_search_document(
@@ -1596,14 +1692,34 @@ def _persist_failed_turn(
     _insert_event_row(connection, session_id=session_id, event=event)
     items_payload = _serialize_session_items(items)
     title = str(row[1]) or fallback_session_title(items)
-    cursor = connection.execute(
-        """
-        UPDATE sessions
-        SET messages_json = ?, title = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        """,
-        (items_payload, title, session_id),
+    boundary_update, clear_pending_boundary = _context_generation_finalization_update(
+        connection,
+        session_id=session_id,
+        turn_id=turn_id,
+        item_count=len(items),
     )
+    if clear_pending_boundary:
+        cursor = connection.execute(
+            """
+            UPDATE sessions
+            SET messages_json = ?, title = ?,
+                context_generation_start_index = ?,
+                context_generation_pending_turn_id = NULL,
+                context_generation_pending_item_boundary = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (items_payload, title, boundary_update, session_id),
+        )
+    else:
+        cursor = connection.execute(
+            """
+            UPDATE sessions
+            SET messages_json = ?, title = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (items_payload, title, session_id),
+        )
     if cursor.rowcount != 1:
         raise SessionError(f"unknown session: {session_id}")
     _upsert_search_document(
