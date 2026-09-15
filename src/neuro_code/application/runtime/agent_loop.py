@@ -854,6 +854,9 @@ class AgentLoopRunner:
             nonlocal active_compaction_item
             nonlocal active_context_boundary
             nonlocal active_context_seed
+            nonlocal context_source_affinity
+            nonlocal context_source_model
+            nonlocal context_source_provider
             nonlocal context_rollover_generation
             if self._context_rollover is None:
                 raise ConfigurationError("context rollover control is not configured")
@@ -867,6 +870,13 @@ class AgentLoopRunner:
             ) + ((current_user_message,) if current_user_message is not None else ())
             active_context_boundary = len(context_items)
             context_items.append(_context_rollover_runtime_message(context_rollover_generation))
+            # The new generation deliberately excludes all prior preserved
+            # provider state.  Bind any native state produced after this
+            # boundary to the provider that actually owns the fresh request,
+            # including a pre-output failover candidate.
+            context_source_provider = self._provider.provider_name
+            context_source_model = self._provider.model_name
+            context_source_affinity = getattr(self._provider, "context_affinity", None)
             # A compaction record belongs to the previous active projection;
             # the next request starts from the new generation directly.
             active_compaction_item = None
@@ -1704,7 +1714,7 @@ class AgentLoopRunner:
                     completion_reminders.clear()
                 if completion.context_items:
                     context_items.extend(completion.context_items)
-                    if can_adopt_provider_origin:
+                    if can_adopt_provider_origin or active_context_boundary is not None:
                         context_source_provider = self._provider.provider_name
                         context_source_model = self._provider.model_name
                         context_source_affinity = getattr(self._provider, "context_affinity", None)

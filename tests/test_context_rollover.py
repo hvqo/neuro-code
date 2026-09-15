@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
+import httpx
+
 from neuro_code.application.permissions.policy import PermissionManager, PermissionMode
-from neuro_code.application.ports.model import ModelToolPolicy
+from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
 from neuro_code.application.ports.tools import ToolContext
 from neuro_code.application.ports.working_set import (
     WORKING_SET_SECTION_ORDER,
@@ -29,9 +32,18 @@ from neuro_code.domain.conversation.events import (
     ModelTextDelta,
     ModelToolCall,
 )
-from neuro_code.domain.conversation.messages import Message, Role, SyntheticReason, ToolCall
+from neuro_code.domain.conversation.messages import (
+    ContextItemKind,
+    Message,
+    PreservedContextItem,
+    Role,
+    SyntheticReason,
+    ToolCall,
+)
 from neuro_code.domain.tools import ToolDefinition
 from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionStore
+from neuro_code.infrastructure.providers.failover import FailoverModelProvider, ProviderCandidate
+from neuro_code.infrastructure.providers.openai_responses import OpenAIResponsesProvider
 from neuro_code.infrastructure.tools.new_context import NewContextTool
 from neuro_code.infrastructure.tools.registry import default_tool_registry
 from neuro_code.shared.errors import ProviderError, ToolError
@@ -43,9 +55,19 @@ class _ScriptedProvider:
     model_name = "fixture-model"
     context_affinity = "fixture-affinity"
 
-    def __init__(self, scripts: Sequence[Sequence[ModelEvent | BaseException]]) -> None:
+    def __init__(
+        self,
+        scripts: Sequence[Sequence[ModelEvent | BaseException]],
+        *,
+        provider_name: str = "fixture-provider",
+        model_name: str = "fixture-model",
+        context_affinity: str | None = "fixture-affinity",
+    ) -> None:
         self._scripts = list(scripts)
         self.calls: list[ModelContext] = []
+        self.provider_name = provider_name
+        self.model_name = model_name
+        self.context_affinity = context_affinity
 
     async def stream(
         self,
@@ -82,7 +104,7 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
 
     def _runtime(
         self,
-        provider: _ScriptedProvider,
+        provider: ModelProvider,
         *,
         store: SqliteSessionStore | None = None,
     ) -> AgentRuntime:
@@ -107,6 +129,17 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
             context_rollover=rollover,
             max_steps=4,
             execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
+        )
+
+    @staticmethod
+    def _responses_sse(response: dict[str, object]) -> str:
+        return (
+            "data: "
+            + json.dumps(
+                {"type": "response.completed", "response": response},
+                ensure_ascii=False,
+            )
+            + "\n\ndata: [DONE]\n\n"
         )
 
     async def _seed_working_set(self) -> object:
@@ -282,6 +315,199 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertEqual(await reopened.load_context_generation(self.session_id), 1)
+
+    async def test_repeated_rollovers_keep_one_current_prompt_and_advance_generation(self) -> None:
+        initial_items = (
+            Message(Role.SYSTEM, "fixture system"),
+            Message(Role.USER, "old durable evidence"),
+        )
+        await self.store.save_session_items(self.session_id, initial_items)
+        provider = _ScriptedProvider(
+            (
+                (
+                    ModelToolCall(ToolCall("roll-1", "new_context", {})),
+                    ModelCompleted("tool_calls"),
+                ),
+                (
+                    ModelToolCall(ToolCall("roll-2", "new_context", {})),
+                    ModelCompleted("tool_calls"),
+                ),
+                (ModelTextDelta("twice fresh"), ModelCompleted("stop")),
+            )
+        )
+
+        result = await self._runtime(provider).run(
+            "the one current prompt",
+            initial_items=initial_items,
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(result.response, "twice fresh")
+        self.assertEqual(await self.store.load_context_generation(self.session_id), 2)
+        self.assertEqual(len(provider.calls), 3)
+        for call in provider.calls[1:]:
+            self.assertEqual(
+                sum(
+                    isinstance(item, Message)
+                    and item.role is Role.USER
+                    and item.content == "the one current prompt"
+                    for item in call.items
+                ),
+                1,
+            )
+            self.assertFalse(
+                any(
+                    isinstance(item, Message) and item.content == "old durable evidence"
+                    for item in call.items
+                )
+            )
+        self.assertTrue(
+            any(
+                isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.RUNTIME_CONTEXT_ROLLOVER
+                and "generation 2" in item.content
+                for item in provider.calls[2].items
+            )
+        )
+
+    async def test_rollover_resets_local_provider_origin_after_foreign_native_failover(
+        self,
+    ) -> None:
+        old_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "old-reasoning",
+                "summary": [{"type": "summary_text", "text": "old"}],
+                "encrypted_content": "old-provider-state",
+            },
+        )
+        initial_items = (Message(Role.SYSTEM, "fixture system"), old_native)
+        await self.store.save_session_items(self.session_id, initial_items)
+        await self.store.update_session_provider(
+            self.session_id,
+            "primary",
+            "primary-model",
+            "primary-affinity",
+        )
+        primary = _ScriptedProvider(
+            ((ProviderError("primary unavailable"),),),
+            provider_name="primary",
+            model_name="primary-model",
+            context_affinity="primary-affinity",
+        )
+        fallback = _ScriptedProvider(
+            (
+                (
+                    ModelToolCall(ToolCall("roll-1", "new_context", {})),
+                    ModelCompleted("tool_calls"),
+                ),
+                (ModelTextDelta("fallback fresh"), ModelCompleted("stop")),
+            ),
+            provider_name="fallback",
+            model_name="fallback-model",
+            context_affinity="fallback-affinity",
+        )
+        provider = FailoverModelProvider(
+            (
+                ProviderCandidate(
+                    "primary",
+                    "primary-model",
+                    "primary-affinity",
+                    lambda: primary,
+                ),
+                ProviderCandidate(
+                    "fallback",
+                    "fallback-model",
+                    "fallback-affinity",
+                    lambda: fallback,
+                ),
+            )
+        )
+
+        result = await self._runtime(provider).run(
+            "continue after failover",
+            initial_items=initial_items,
+            source_provider="primary",
+            source_model="primary-model",
+            source_context_affinity="primary-affinity",
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(result.response, "fallback fresh")
+        self.assertEqual(len(fallback.calls), 2)
+        self.assertEqual(fallback.calls[1].source_provider, "fallback")
+        self.assertEqual(fallback.calls[1].source_model, "fallback-model")
+        self.assertEqual(fallback.calls[1].source_context_affinity, "fallback-affinity")
+        self.assertNotIn(old_native, fallback.calls[1].preserved_items)
+        summary = await self.store.get_session(self.session_id)
+        self.assertEqual(summary.provider, "primary")
+        self.assertEqual(summary.context_affinity, "primary-affinity")
+
+    async def test_rollover_filters_native_state_from_an_actual_responses_request(self) -> None:
+        captured: list[dict[str, object]] = []
+        responses = [
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "roll-1",
+                        "name": "new_context",
+                        "arguments": "{}",
+                    }
+                ],
+            },
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "wire fresh"}],
+                    }
+                ],
+            },
+        ]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, text=self._responses_sse(responses[len(captured) - 1]))
+
+        old_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "old-reasoning",
+                "summary": [{"type": "summary_text", "text": "old"}],
+                "encrypted_content": "old-generation-opaque-state",
+            },
+        )
+        initial_items = (Message(Role.SYSTEM, "fixture system"), old_native)
+        await self.store.save_session_items(self.session_id, initial_items)
+        provider = OpenAIResponsesProvider(
+            model="response-model",
+            base_url="https://gateway.invalid/v1",
+            api_key="fixture",
+            provider_name="gateway",
+            context_affinity="profile-v1:matching",
+            transport=httpx.MockTransport(handler),
+        )
+
+        result = await self._runtime(provider).run(
+            "continue on the wire",
+            initial_items=initial_items,
+            source_provider="gateway",
+            source_model="response-model",
+            source_context_affinity="profile-v1:matching",
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(result.response, "wire fresh")
+        self.assertEqual(len(captured), 2)
+        self.assertIn("old-generation-opaque-state", json.dumps(captured[0]))
+        self.assertNotIn("old-generation-opaque-state", json.dumps(captured[1]))
+        self.assertEqual(await self.store.load_context_generation(self.session_id), 1)
 
 
 if __name__ == "__main__":
