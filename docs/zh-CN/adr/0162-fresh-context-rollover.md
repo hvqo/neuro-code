@@ -76,7 +76,8 @@ generation projection。
   item 都不进入 active projection，但仍可通过 CM1 获取。
 - Rollover 永不改变 provider identity、permission、verification evidence、workspace authority、sandbox
   policy 或 final-response truth；它只改变 active model projection 和 durable generation marker。
-- Control 有界、session-scoped，并且只属于 normal agent。没有 automatic rollover policy、cross-session
+- Control 有界、session-scoped，并且只属于 normal agent；不存在独立的 rollover threshold，有界的
+  automatic policy 由 [ADR 0163](0163-automatic-fresh-context-rollover.md) 单独规定。没有 cross-session
   memory、embedding retrieval、semantic search、history schema/index redesign、artifact redesign，也不
   移除现有 compaction。
 

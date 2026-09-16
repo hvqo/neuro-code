@@ -26,11 +26,15 @@ from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
 from neuro_code.application.ports.tools import Tool, ToolContext
 from neuro_code.application.runtime.agent import AgentRuntime
 from neuro_code.application.runtime.supervision import ExecutionControlMode
+from neuro_code.application.sessions.context_rollover import (
+    SessionContextRolloverApplicationService,
+)
 from neuro_code.domain.conversation.context import ModelContext
 from neuro_code.domain.conversation.events import AgentEventKind, ModelCompleted, ModelEvent
 from neuro_code.domain.conversation.messages import Message, Role
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.conversation.request import ModelRequestSnapshot
+from neuro_code.domain.execution import AgentExecutionStatus
 from neuro_code.domain.tools import ToolDefinition
 from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionStore
 from tests.fakes import EmptyWorkspaceChangeObserver
@@ -499,6 +503,55 @@ class ContextPreflightRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(preflight.data["status"], ContextPreflightStatus.UNKNOWN.value)
         self.assertIsNone(preflight.data["capacity_tokens"])
 
+    async def test_unknown_capacity_does_not_trigger_compaction_or_rollover(self) -> None:
+        provider = _ScriptedProvider((ModelCompleted("stop", response_text="answer"),))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = SqliteSessionStore(root / "sessions.db")
+            await store.initialize()
+            session_id = await store.create_session(str(root), "fixture", "fixture-model")
+            rollover = SessionContextRolloverApplicationService(store)
+            gate = ContextCompactionRuntimeGate(
+                ContextCompactionTriggerService(
+                    ContextCompactionApplicationService(store, provider),
+                    planner=ContextCompactionPlanner(
+                        ContextCompactionPolicy(minimum_recent_items=1, max_summary_tokens=64)
+                    ),
+                )
+            )
+            history = (
+                Message(Role.SYSTEM, "Use the repository context."),
+                *(Message(Role.USER, f"history-{index}: " + "x" * 1_500) for index in range(8)),
+            )
+            runtime = AgentRuntime(
+                provider=provider,
+                tools=_EmptyToolCollection(),
+                workspace_change_observer=EmptyWorkspaceChangeObserver(),
+                permissions=PermissionManager(),
+                tool_context=ToolContext(root),
+                session_store=store,
+                context_rollover=rollover,
+                execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
+                compaction_runtime_gate=gate,
+                provider_max_output_tokens=128,
+            )
+
+            result = await runtime.run(
+                "unknown capacity request",
+                session_id=session_id,
+                initial_items=history,
+            )
+            preflight = next(
+                event for event in result.events if event.kind is AgentEventKind.CONTEXT_PREFLIGHT
+            )
+
+            self.assertEqual(len(provider.calls), 1)
+            self.assertEqual(await store.load_compaction_items(session_id), [])
+            self.assertEqual(await store.load_context_generation(session_id), 0)
+
+        self.assertEqual(preflight.data["status"], ContextPreflightStatus.UNKNOWN.value)
+        self.assertFalse(preflight.data["automatic_rollover_attempted"])
+
     async def test_first_request_compacts_once_and_rebuilds_the_request(self) -> None:
         provider = _SequencedProvider(
             (
@@ -518,6 +571,7 @@ class ContextPreflightRuntimeTests(unittest.IsolatedAsyncioTestCase):
             store = SqliteSessionStore(root / "sessions.db")
             await store.initialize()
             session_id = await store.create_session(str(root), "fixture", "fixture-model")
+            rollover = SessionContextRolloverApplicationService(store)
             gate = ContextCompactionRuntimeGate(
                 ContextCompactionTriggerService(
                     ContextCompactionApplicationService(store, provider),
@@ -537,6 +591,7 @@ class ContextPreflightRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 permissions=PermissionManager(),
                 tool_context=ToolContext(root),
                 session_store=store,
+                context_rollover=rollover,
                 execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
                 compaction_runtime_gate=gate,
                 provider_context_window=ProviderContextWindow("fixture", "fixture-model", 2_000),
@@ -549,12 +604,14 @@ class ContextPreflightRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 initial_items=history,
             )
             compaction_count = len(await store.load_compaction_items(session_id))
+            generation = await store.load_context_generation(session_id)
 
         self.assertEqual(result.response, "final answer")
         self.assertEqual(len(provider.calls), 2)
         self.assertEqual(provider.calls[0][1], ())
         self.assertEqual(provider.calls[1][1], definitions)
         self.assertEqual(compaction_count, 1)
+        self.assertEqual(generation, 0)
         preflights = [
             event for event in result.events if event.kind is AgentEventKind.CONTEXT_PREFLIGHT
         ]
@@ -580,6 +637,158 @@ class ContextPreflightRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             snapshot_event.data["request_fingerprint"], rebuilt_snapshot.request_fingerprint
         )
+
+    async def test_insufficient_compaction_rolls_over_once_to_a_fresh_request(self) -> None:
+        provider = _SequencedProvider(
+            (
+                (ModelCompleted("stop", response_text="bounded history summary"),),
+                (ModelCompleted("stop", response_text="fresh answer"),),
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = SqliteSessionStore(root / "sessions.db")
+            await store.initialize()
+            session_id = await store.create_session(str(root), "fixture", "fixture-model")
+            rollover = SessionContextRolloverApplicationService(store)
+            gate = ContextCompactionRuntimeGate(
+                ContextCompactionTriggerService(
+                    ContextCompactionApplicationService(store, provider),
+                    planner=ContextCompactionPlanner(
+                        ContextCompactionPolicy(minimum_recent_items=4, max_summary_tokens=64)
+                    ),
+                )
+            )
+            history = (
+                Message(Role.SYSTEM, "Use the repository context."),
+                *(Message(Role.USER, f"history-{index}: " + "x" * 1_500) for index in range(8)),
+            )
+            runtime = AgentRuntime(
+                provider=provider,
+                tools=_EmptyToolCollection(),
+                workspace_change_observer=EmptyWorkspaceChangeObserver(),
+                permissions=PermissionManager(),
+                tool_context=ToolContext(root),
+                session_store=store,
+                context_rollover=rollover,
+                execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
+                compaction_runtime_gate=gate,
+                provider_context_window=ProviderContextWindow("fixture", "fixture-model", 2_000),
+                provider_max_output_tokens=128,
+            )
+
+            result = await runtime.run(
+                "answer from a fresh context",
+                session_id=session_id,
+                initial_items=history,
+            )
+
+            self.assertEqual(result.response, "fresh answer")
+            self.assertEqual(len(provider.calls), 2)
+            self.assertEqual(await store.load_context_generation(session_id), 1)
+            fresh_items = provider.calls[1][0].items
+            self.assertFalse(
+                any(
+                    isinstance(item, Message) and "history-" in item.content for item in fresh_items
+                )
+            )
+            self.assertEqual(
+                sum(
+                    isinstance(item, Message)
+                    and item.role is Role.USER
+                    and item.content == "answer from a fresh context"
+                    for item in fresh_items
+                ),
+                1,
+            )
+            self.assertTrue(
+                any(
+                    isinstance(item, Message)
+                    and item.synthetic_reason is not None
+                    and item.synthetic_reason.value == "runtime-context-rollover"
+                    and "generation 1" in item.content
+                    for item in fresh_items
+                )
+            )
+            preflights = [
+                event for event in result.events if event.kind is AgentEventKind.CONTEXT_PREFLIGHT
+            ]
+
+        self.assertEqual(
+            [event.data["status"] for event in preflights],
+            [
+                ContextPreflightStatus.COMPACTION_REQUIRED.value,
+                ContextPreflightStatus.BLOCKED.value,
+                ContextPreflightStatus.SAFE.value,
+            ],
+        )
+        self.assertTrue(preflights[-1].data["automatic_rollover_eligible"])
+        self.assertTrue(preflights[-1].data["automatic_rollover_attempted"])
+        self.assertTrue(preflights[-1].data["automatic_rollover_succeeded"])
+
+    async def test_fresh_seed_that_still_exceeds_capacity_blocks_without_rollover_or_model_call(
+        self,
+    ) -> None:
+        provider = _SequencedProvider(
+            ((ModelCompleted("stop", response_text="bounded history summary"),),)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = SqliteSessionStore(root / "sessions.db")
+            await store.initialize()
+            session_id = await store.create_session(str(root), "fixture", "fixture-model")
+            rollover = SessionContextRolloverApplicationService(store)
+            gate = ContextCompactionRuntimeGate(
+                ContextCompactionTriggerService(
+                    ContextCompactionApplicationService(store, provider),
+                    planner=ContextCompactionPlanner(
+                        ContextCompactionPolicy(minimum_recent_items=4, max_summary_tokens=64)
+                    ),
+                )
+            )
+            history = (
+                Message(Role.SYSTEM, "Use the repository context."),
+                *(Message(Role.USER, f"history-{index}: " + "x" * 1_500) for index in range(8)),
+            )
+            runtime = AgentRuntime(
+                provider=provider,
+                tools=_EmptyToolCollection(),
+                workspace_change_observer=EmptyWorkspaceChangeObserver(),
+                permissions=PermissionManager(),
+                tool_context=ToolContext(root),
+                session_store=store,
+                context_rollover=rollover,
+                execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
+                compaction_runtime_gate=gate,
+                provider_context_window=ProviderContextWindow("fixture", "fixture-model", 1_000),
+                provider_max_output_tokens=128,
+            )
+
+            result = await runtime.run(
+                "request " + "y" * 5_000,
+                session_id=session_id,
+                initial_items=history,
+            )
+            preflights = [
+                event for event in result.events if event.kind is AgentEventKind.CONTEXT_PREFLIGHT
+            ]
+
+            self.assertEqual(len(provider.calls), 1)
+            self.assertEqual(
+                await store.load_context_generation_state(session_id),
+                (0, 0),
+            )
+            self.assertEqual(
+                sum(event.kind is AgentEventKind.MODEL_REQUEST_STARTED for event in result.events),
+                0,
+            )
+            assert result.outcome is not None
+            self.assertIs(result.outcome.status, AgentExecutionStatus.BUDGET_LIMITED)
+
+        self.assertEqual(preflights[-1].data["status"], ContextPreflightStatus.BLOCKED.value)
+        self.assertTrue(preflights[-1].data["automatic_rollover_eligible"])
+        self.assertTrue(preflights[-1].data["automatic_rollover_attempted"])
+        self.assertFalse(preflights[-1].data["automatic_rollover_succeeded"])
 
 
 if __name__ == "__main__":
