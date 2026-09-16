@@ -10,6 +10,7 @@ from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.interfaces.tui.controllers.base import TuiAppControllerMixin
 from neuro_code.interfaces.tui.screens import (
     BackgroundWakeSettingsScreen,
+    InteractionModeScreen,
     LanguageSettingsScreen,
     NetworkProxySettingsScreen,
     ProviderSettingsScreen,
@@ -40,6 +41,8 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                     self._managed_provider_settings is not None
                     and self._provider_settings_store is not None
                 ),
+                reasoning_effort=self._reasoning_effort,
+                interaction_mode=self._interaction_mode,
             ),
             self._settings_category_selected,
         )
@@ -50,6 +53,12 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                 LanguageSettingsScreen(self._language, language=self._language),
                 self._language_settings_selected,
             )
+            return
+        if category == "agent-reasoning":
+            await self._select_reasoning_effort(None)
+            return
+        if category == "agent-interaction-mode":
+            await self._select_interaction_mode(None)
             return
         if category == "providers":
             if self._managed_provider_settings is None or self._provider_settings_store is None:
@@ -138,12 +147,40 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
             return
         await self._apply_reasoning_effort(requested)
 
+    async def _select_interaction_mode(
+        self,
+        requested: InteractionMode | None,
+    ) -> None:
+        if self._interaction_mode_controller is None:
+            self._write_ui_entry("error", "mode.unavailable")
+            return
+        if self._turn_worker is not None and self._turn_worker.is_running:
+            self._write_ui_entry("error", "mode.switch_running")
+            return
+        if requested is None:
+            self.push_screen(
+                InteractionModeScreen(
+                    self._interaction_mode,
+                    language=self._language,
+                ),
+                self._interaction_mode_selected,
+            )
+            return
+        await self._apply_interaction_mode(requested)
+
     async def _reasoning_effort_selected(
         self,
         effort: ReasoningEffort | None,
     ) -> None:
         if effort is not None:
             await self._apply_reasoning_effort(effort)
+
+    async def _interaction_mode_selected(
+        self,
+        mode: InteractionMode | None,
+    ) -> None:
+        if mode is not None:
+            await self._apply_interaction_mode(mode)
 
     async def _apply_reasoning_effort(self, effort: ReasoningEffort) -> None:
         assert self._reasoning_controller is not None
@@ -155,6 +192,8 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
 
         self._reasoning_effort = result.requested
         self._effective_reasoning_effort = result.effective
+        if result.changed:
+            self._ultracode_decision = None
         self._refresh_runtime_bar()
         if not result.changed:
             self._write_ui_entry(

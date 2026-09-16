@@ -11,6 +11,7 @@ from textual.widgets import Static
 
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
+from neuro_code.domain.ultracode import UltracodeDelegationDecision
 from neuro_code.interfaces.tui.commands import SlashCompletion, slash_completions
 from neuro_code.interfaces.tui.controllers.base import TuiAppControllerMixin
 from neuro_code.interfaces.tui.state import (
@@ -221,22 +222,68 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         loading.append(self._context_token_usage(), style=self._context_color())
         return loading
 
-    def _refresh_runtime_bar(self) -> None:
-        model = Text(self._model_name, style=TEXT_EMPHASIS, overflow="ellipsis", no_wrap=True)
+    def _record_ultracode_decision(self, raw_decision: str) -> None:
+        """Project one canonical delegation decision into the transient status bar."""
+
+        try:
+            decision = UltracodeDelegationDecision(raw_decision.casefold())
+        except ValueError:
+            return
+        self._ultracode_decision = decision
+        self._refresh_runtime_bar()
+
+    def _ultracode_route_label(self) -> str:
+        decision = self._ultracode_decision
+        if decision is UltracodeDelegationDecision.MAIN_MAX:
+            return ui_text(self._language, "runtime.ultracode.main_max")
+        if decision is UltracodeDelegationDecision.BOUNDED_SWARM:
+            return ui_text(self._language, "runtime.ultracode.swarm")
+        return ui_text(self._language, "runtime.ultracode.auto_routing")
+
+    def _ultracode_status_summary(self) -> str:
+        return " · ".join(
+            (
+                ui_text(self._language, "runtime.ultracode"),
+                self._ultracode_route_label(),
+                ui_text(
+                    self._language,
+                    "runtime.ultracode.provider_effort",
+                    effort=self._effective_reasoning_effort.value,
+                ),
+            )
+        )
+
+    def _runtime_effort(self) -> Text:
         requested = self._reasoning_effort
         effective = self._effective_reasoning_effort
         effort = Text()
         effort.append(" · ", style=TEXT_DIM)
-        effort.append(
-            requested.value,
-            style=TEXT_MUTED if requested is ReasoningEffort.ULTRACODE else TEXT_SECONDARY,
-        )
-        if effective is not requested:
-            effort.append(" → ", style=TEXT_DIM)
+        if requested is ReasoningEffort.ULTRACODE:
             effort.append(
-                effective.value,
+                ui_text(self._language, "runtime.ultracode"),
+                style=TEXT_EMPHASIS,
+            )
+            effort.append(" · ", style=TEXT_DIM)
+            effort.append(self._ultracode_route_label(), style=TEXT_SECONDARY)
+            effort.append(" · ", style=TEXT_DIM)
+            effort.append(
+                ui_text(
+                    self._language,
+                    "runtime.ultracode.provider_effort",
+                    effort=effective.value,
+                ),
                 style=TEXT_SECONDARY,
             )
+            return effort
+        effort.append(requested.value, style=TEXT_SECONDARY)
+        if effective is not requested:
+            effort.append(" → ", style=TEXT_DIM)
+            effort.append(effective.value, style=TEXT_SECONDARY)
+        return effort
+
+    def _refresh_runtime_bar(self) -> None:
+        model = Text(self._model_name, style=TEXT_EMPHASIS, overflow="ellipsis", no_wrap=True)
+        effort = self._runtime_effort()
         mode = Text()
         mode.append(" · ", style=TEXT_DIM)
         mode.append(self._interaction_mode.value, style=TEXT_SECONDARY)
@@ -300,6 +347,8 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
     def _reasoning_effort_summary(self) -> str:
         requested = self._reasoning_effort
         effective = self._effective_reasoning_effort
+        if requested is ReasoningEffort.ULTRACODE:
+            return self._ultracode_status_summary()
         summary = f"{requested.glyph} {requested.value}"
         if effective is not requested:
             summary += f" → {effective.glyph} {effective.value}"

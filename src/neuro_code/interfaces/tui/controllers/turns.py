@@ -62,6 +62,7 @@ class TurnControllerMixin(TuiAppControllerMixin):
             return
         self._active_prompt = prompt
         self._active_prompt_entry_index = len(self._entries)
+        self._ultracode_decision = None
         self._turn_pristine_rewound = False
         self._write_entry("user", prompt)
         self._context_used_tokens += 4 + estimate_text_tokens(prompt)
@@ -331,6 +332,7 @@ class TurnControllerMixin(TuiAppControllerMixin):
             decision = data.get("decision")
             state = data.get("state")
             if isinstance(decision, str) and isinstance(state, str):
+                self._record_ultracode_decision(decision)
                 self._turn_activity_kind = "orchestrating"
                 self._turn_activity_tool_name = None
                 self._turn_activity_tool_started_at = None

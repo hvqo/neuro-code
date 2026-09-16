@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from neuro_code.domain.conversation.reasoning import ReasoningEffort
     from neuro_code.domain.execution import SessionExecutionRecord
     from neuro_code.domain.plans import PlanComment, SessionPlan
+    from neuro_code.domain.ultracode import UltracodeDelegationDecision
     from neuro_code.interfaces.tui.clipboard import (
         ClipboardWriter,
         ClipboardWriteResult,
@@ -143,6 +144,7 @@ class TuiAppControllerMixin:
         _reasoning_effort: ReasoningEffort
         _effective_reasoning_effort: ReasoningEffort
         _interaction_mode: InteractionMode
+        _ultracode_decision: UltracodeDelegationDecision | None
         _auto_mode_unrestricted: bool
         _cwd: Path
         _context_window_tokens: int | None

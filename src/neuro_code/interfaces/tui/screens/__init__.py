@@ -5,6 +5,7 @@ TUI 内聚的模态与配置屏幕.
 
 from neuro_code.interfaces.tui.screens.provider import ProviderSettingsScreen, ProviderSetupApp
 from neuro_code.interfaces.tui.screens.selection import (
+    InteractionModeScreen,
     PermissionApprovalScreen,
     ProviderSelectionScreen,
     ReasoningEffortScreen,
@@ -20,6 +21,7 @@ from neuro_code.interfaces.tui.screens.transcript import TranscriptCopyScreen
 
 __all__ = [
     "BackgroundWakeSettingsScreen",
+    "InteractionModeScreen",
     "LanguageSettingsScreen",
     "NetworkProxySettingsScreen",
     "PermissionApprovalScreen",
