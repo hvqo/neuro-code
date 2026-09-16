@@ -35,7 +35,13 @@ The sequence is deterministic:
    deterministic budget-limited path before compaction or rollover.
 4. For `COMPACTION_REQUIRED`, invoke the existing automatic compaction gate
    once at its existing safe boundary. Rebuild the request from the resulting
-   compatible projection and run `ContextPreflight` again.
+   compatible projection and run `ContextPreflight` again. A compatible
+   durable compaction resumed from an earlier turn is reusable state and does
+   not consume this request cycle's compaction attempt. If the planner selects
+   the same source range, the existing projection is reused without invoking
+   another summarizer; that no-op is nevertheless the one bounded compaction
+   decision for this cycle. A changed source range may therefore produce a new
+   compaction before rollover is considered.
 5. If that projection is still `BLOCKED`, automatic rollover is eligible only
    before the first real provider request of the current user turn, when the
    durable controller, session and turn identity are available, the current
@@ -88,9 +94,12 @@ without adding a new event or durable record.
 
 ## Invariants and non-goals
 
-- At most one existing automatic compaction and one automatic rollover are
-  attempted for a model request/preflight recovery cycle. A later normal
-  model step may start a new bounded cycle.
+- At most one automatic compaction decision and one automatic rollover are
+  attempted for a model request/preflight recovery cycle. The compaction
+  decision is tracked for the current cycle, not inferred from the presence
+  of an older compatible active projection. Same-range reuse consumes that
+  cycle's decision without a duplicate summarizer call; a later normal model
+  step may start a new bounded cycle.
 - `UNKNOWN` is not treated as zero capacity, infinite capacity, or permission
   to guess a threshold. An irreducible request is not rolled over.
 - A successful automatic rollover is a durable CM3a transition in the same

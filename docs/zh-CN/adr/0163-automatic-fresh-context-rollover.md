@@ -28,7 +28,11 @@ output-reserve、safety-margin 和 provider-window accounting。
 3. 不可约的 `BLOCKED` request 在 compaction 或 rollover 之前，沿用已有 deterministic budget-limited
    path 完成。
 4. 对 `COMPACTION_REQUIRED`，在已有 safe boundary 调用一次既有 automatic compaction gate。基于所得
-   compatible projection rebuild request，并再次运行 `ContextPreflight`。
+   compatible projection rebuild request，并再次运行 `ContextPreflight`。从更早 turn resume 的 compatible
+   durable compaction 是可复用 state，不会消耗本 request cycle 的 compaction attempt。如果 planner 选择
+   完全相同的 source range，则复用已有 projection 而不再次调用 summarizer；但这个 no-op 仍是该 cycle
+   唯一的 bounded compaction decision。因此在考虑 rollover 之前，source range 变化时仍可以产生新的
+   compaction。
 5. 如果 projection 仍为 `BLOCKED`，automatic rollover 只在当前 user turn 的第一次真实 provider request
    之前 eligible，并且必须满足 durable controller、session 和 turn identity 可用，当前 generation 存在
    可丢弃的 active history，request 可约（`irreducible_tokens < capacity_tokens`），且 prospective fresh
@@ -65,8 +69,10 @@ durable record。
 
 ## 不变量与非目标
 
-- 对一次 model request/preflight recovery cycle，最多执行一次既有 automatic compaction 和一次 automatic
-  rollover。之后的 normal model step 可以开始新的有界 cycle。
+- 对一次 model request/preflight recovery cycle，最多执行一次 automatic compaction decision 和一次
+  automatic rollover。Compaction decision 按当前 cycle 单独跟踪，而不是从较早的 compatible active
+  projection 是否存在来推断。同一 source range 的 reuse 不会重复调用 summarizer，但会消耗该 cycle 的
+  decision；之后的 normal model step 可以开始新的有界 cycle。
 - `UNKNOWN` 不会被当作 zero capacity、infinite capacity，也不会被当作猜测 threshold 的许可。不可约 request
   不会 rollover。
 - 成功的 automatic rollover 是同一 session 内的 durable CM3a transition；它不会删除 compaction record、

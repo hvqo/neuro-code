@@ -631,6 +631,7 @@ class AgentLoopRunner:
         request_budget_window = self._provider_context_window
         active_provider_window = self._active_provider_window
         active_compaction_item: DurableCompactionItem | None = None
+        compaction_decision_pending_for_next_cycle = False
         has_completed_model_step = False
         segment_number = 1
         segment_start_counters = ExecutionCounters()
@@ -1068,7 +1069,7 @@ class AgentLoopRunner:
             usage_context: ModelContext,
             usage_override: CompactionContextUsage | None = None,
             provider_window_override: ProviderContextWindow | None = None,
-        ) -> SupervisorDecision | None:
+        ) -> tuple[SupervisorDecision | None, bool]:
             nonlocal active_compaction_item
             gate = self._compaction_runtime_gate
             compaction_window = provider_window_override or active_provider_window
@@ -1080,7 +1081,7 @@ class AgentLoopRunner:
                 or self._session_store is None
                 or session_id is None
             ):
-                return None
+                return None, False
             source_context = ModelContext(
                 active_persistent_context_items(),
                 context_source_provider,
@@ -1107,7 +1108,7 @@ class AgentLoopRunner:
             )
             assessment = gate.assess(request)
             if not assessment.will_trigger:
-                return None
+                return None, False
             plan = assessment.trigger.plan
             if (
                 active_compaction_item is not None
@@ -1118,18 +1119,22 @@ class AgentLoopRunner:
                     self._context_rollover is None
                     and plan.decision is ContextCompactionDecision.REQUIRED
                 ):
-                    return SupervisorDecision(
-                        SupervisorDecisionKind.MARK_BUDGET_LIMITED,
-                        "context remains above its hard limit after bounded compaction",
-                        AgentExecutionStatus.BUDGET_LIMITED,
-                        False,
-                        SupervisorReasonCode.CONTEXT_WINDOW_BUDGET,
+                    return (
+                        SupervisorDecision(
+                            SupervisorDecisionKind.MARK_BUDGET_LIMITED,
+                            "context remains above its hard limit after bounded compaction",
+                            AgentExecutionStatus.BUDGET_LIMITED,
+                            False,
+                            SupervisorReasonCode.CONTEXT_WINDOW_BUDGET,
+                        ),
+                        True,
                     )
                 # The existing projection already represents this source
-                # range.  Let the caller's preflight cycle decide whether the
-                # request is safe or should cross the automatic fresh-context
-                # boundary; do not consume a second compaction attempt here.
-                return None
+                # range.  Do not invoke a second summarizer, but consume this
+                # cycle's bounded compaction decision so preflight can decide
+                # whether the request is safe or should cross the automatic
+                # fresh-context boundary.
+                return None, True
             await emit(
                 AgentEventKind.CONTEXT_COMPACTION_STARTED,
                 {
@@ -1142,16 +1147,19 @@ class AgentLoopRunner:
             try:
                 result = await gate.trigger(request)
             except ContextCompactionTimeoutError:
-                return SupervisorDecision(
-                    SupervisorDecisionKind.MARK_BUDGET_LIMITED,
-                    "automatic context compaction exceeded its wall-clock budget",
-                    AgentExecutionStatus.BUDGET_LIMITED,
-                    False,
-                    SupervisorReasonCode.WALL_TIME_BUDGET,
+                return (
+                    SupervisorDecision(
+                        SupervisorDecisionKind.MARK_BUDGET_LIMITED,
+                        "automatic context compaction exceeded its wall-clock budget",
+                        AgentExecutionStatus.BUDGET_LIMITED,
+                        False,
+                        SupervisorReasonCode.WALL_TIME_BUDGET,
+                    ),
+                    True,
                 )
             persistence = result.trigger_result.persistence
             if persistence is None:
-                return None
+                return None, True
             active_compaction_item = persistence.item
             await emit(
                 AgentEventKind.CONTEXT_COMPACTION_COMPLETED,
@@ -1165,7 +1173,7 @@ class AgentLoopRunner:
                     "summary_truncated": persistence.item.summary_truncated,
                 },
             )
-            return None
+            return None, True
 
         def outcome_for_terminal_decision(
             decision: SupervisorDecision,
@@ -1583,6 +1591,8 @@ class AgentLoopRunner:
                 automatic_rollover_eligible = False
                 automatic_rollover_attempted = False
                 automatic_rollover_succeeded = False
+                compaction_attempted_this_cycle = compaction_decision_pending_for_next_cycle
+                compaction_decision_pending_for_next_cycle = False
                 await emit(AgentEventKind.MODEL_STEP_STARTED, {"step": step})
                 completion_batch: tuple[BackgroundTaskSnapshot, ...] = ()
                 if background_tasks is not None:
@@ -1662,17 +1672,16 @@ class AgentLoopRunner:
                             deterministic_fallback_only=True,
                         )
                 prior_compaction_item = active_compaction_item
-                compaction_decision = await maybe_compact_context(
+                compaction_decision, compaction_decision_consumed = await maybe_compact_context(
                     ContextCompactionSafePoint.BEFORE_MODEL_REQUEST,
                     step=step,
                     usage_context=context,
                 )
+                compaction_attempted_this_cycle = (
+                    compaction_attempted_this_cycle or compaction_decision_consumed
+                )
                 if compaction_decision is not None:
                     return await complete_finalized_turn(compaction_decision, step=step - 1)
-                preflight_compaction_attempted = (
-                    active_compaction_item is not None
-                    or active_compaction_item is not prior_compaction_item
-                )
                 if active_compaction_item is not prior_compaction_item:
                     context = await build_request_context(completion_reminders)
                 if self._execution_control_mode is ExecutionControlMode.FINALIZE_TERMINAL:
@@ -1685,7 +1694,7 @@ class AgentLoopRunner:
                         reasoning_effort=context.reasoning_effort,
                         provider_window=request_budget_window,
                         max_output_tokens=self._provider_max_output_tokens,
-                        compaction_attempted=preflight_compaction_attempted,
+                        compaction_attempted=compaction_attempted_this_cycle,
                     )
                     await emit(
                         AgentEventKind.CONTEXT_PREFLIGHT,
@@ -1707,7 +1716,7 @@ class AgentLoopRunner:
                             request_budget_window.capacity_tokens,
                             active_provider_window.context_affinity,
                         )
-                        compaction_decision = await maybe_compact_context(
+                        compaction_decision, _ = await maybe_compact_context(
                             ContextCompactionSafePoint.BEFORE_MODEL_REQUEST,
                             step=step,
                             usage_context=context,
@@ -1718,7 +1727,7 @@ class AgentLoopRunner:
                             ),
                             provider_window_override=compaction_window,
                         )
-                        preflight_compaction_attempted = True
+                        compaction_attempted_this_cycle = True
                         if compaction_decision is not None:
                             return await complete_finalized_turn(
                                 compaction_decision,
@@ -1736,7 +1745,7 @@ class AgentLoopRunner:
                             reasoning_effort=context.reasoning_effort,
                             provider_window=request_budget_window,
                             max_output_tokens=self._provider_max_output_tokens,
-                            compaction_attempted=preflight_compaction_attempted,
+                            compaction_attempted=compaction_attempted_this_cycle,
                         )
                         await emit(
                             AgentEventKind.CONTEXT_PREFLIGHT,
@@ -2195,13 +2204,15 @@ class AgentLoopRunner:
                 append_runtime_plan_notice()
                 append_budget_pressure_notice(include_model_reserve=True)
                 post_batch_context = await build_request_context()
-                compaction_decision = await maybe_compact_context(
+                compaction_decision, compaction_decision_consumed = await maybe_compact_context(
                     ContextCompactionSafePoint.AFTER_TOOL_BATCH,
                     step=step,
                     usage_context=post_batch_context,
                 )
                 if compaction_decision is not None:
                     return await complete_finalized_turn(compaction_decision, step=step)
+                if compaction_decision_consumed:
+                    compaction_decision_pending_for_next_cycle = True
 
                 current_supervisor = supervisor
                 if (
