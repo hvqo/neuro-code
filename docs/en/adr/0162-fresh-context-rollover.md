@@ -110,9 +110,10 @@ current-generation record while ignoring pre-rollover records, and
   It changes only the active model projection and the durable generation
   marker.
 - The control is bounded, session-scoped, and normal-agent-only. There is no
-  automatic rollover policy, cross-session memory, embedding retrieval,
-  semantic search, history schema/index redesign, artifact redesign, or
-  removal of existing compaction.
+  independent rollover threshold; the bounded automatic policy is specified
+  separately in [ADR 0163](0163-automatic-fresh-context-rollover.md). There
+  is no cross-session memory, embedding retrieval, semantic search, history
+  schema/index redesign, artifact redesign, or removal of existing compaction.
 
 ## Compatibility and validation
 

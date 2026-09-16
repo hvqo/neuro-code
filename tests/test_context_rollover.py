@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import tempfile
 import unittest
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -22,7 +24,7 @@ from neuro_code.application.memory.compaction_service import ContextCompactionAp
 from neuro_code.application.memory.compaction_trigger import ContextCompactionTriggerService
 from neuro_code.application.permissions.policy import PermissionManager, PermissionMode
 from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
-from neuro_code.application.ports.tools import ToolContext
+from neuro_code.application.ports.tools import Tool, ToolCollection, ToolContext
 from neuro_code.application.ports.working_set import (
     WORKING_SET_SECTION_ORDER,
     UpdateWorkingSetRequest,
@@ -58,7 +60,7 @@ from neuro_code.domain.conversation.messages import (
     ToolCall,
 )
 from neuro_code.domain.execution import TurnInput, TurnRecoveryAttempt, TurnRecoveryStatus
-from neuro_code.domain.tools import ToolDefinition
+from neuro_code.domain.tools import ToolDefinition, ToolResult
 from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionStore
 from neuro_code.infrastructure.providers.failover import FailoverModelProvider, ProviderCandidate
 from neuro_code.infrastructure.providers.openai_responses import OpenAIResponsesProvider
@@ -102,6 +104,37 @@ class _ScriptedProvider:
             yield event
 
 
+class _LargeResultTool:
+    definition = ToolDefinition(
+        name="inspect",
+        description="Return a large current-turn fixture result.",
+        input_schema={"type": "object", "additionalProperties": False},
+    )
+    side_effecting = False
+
+    def __init__(self, content: str) -> None:
+        self._content = content
+
+    async def execute(
+        self,
+        arguments: Mapping[str, Any],
+        context: ToolContext,
+    ) -> ToolResult:
+        del arguments, context
+        return ToolResult(self._content)
+
+
+class _ToolCollection:
+    def __init__(self, tools: Sequence[Tool]) -> None:
+        self._tools = {tool.definition.name: tool for tool in tools}
+
+    def get(self, name: str) -> Tool | None:
+        return self._tools.get(name)
+
+    def definitions(self) -> tuple[ToolDefinition, ...]:
+        return tuple(tool.definition for tool in self._tools.values())
+
+
 class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
@@ -124,6 +157,7 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
         self,
         provider: ModelProvider,
         *,
+        tools: ToolCollection | None = None,
         store: SqliteSessionStore | None = None,
         compaction_runtime_gate: ContextCompactionRuntimeGate | None = None,
         provider_context_window: ProviderContextWindow | None = None,
@@ -132,13 +166,13 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
         selected_store = store or self.store
         rollover = SessionContextRolloverApplicationService(selected_store)
         working_set = SessionWorkingSetApplicationService(selected_store)
-        tools = default_tool_registry(
+        selected_tools = tools or default_tool_registry(
             allowed_tool_names=("new_context",),
             context_rollover=rollover,
         )
         return AgentRuntime(
             provider=provider,
-            tools=tools,
+            tools=selected_tools,
             workspace_change_observer=EmptyWorkspaceChangeObserver(),
             permissions=PermissionManager(mode=PermissionMode.BYPASS),
             tool_context=ToolContext(
@@ -534,6 +568,485 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
                 for item in provider.calls[2].items
             )
         )
+
+    async def test_automatic_rollover_preserves_working_set_and_new_native_state(self) -> None:
+        old_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "generation-zero-reasoning",
+                "summary": [{"type": "summary_text", "text": "old"}],
+                "encrypted_content": "generation-zero-native-state",
+            },
+        )
+        new_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "generation-one-reasoning",
+                "summary": [{"type": "summary_text", "text": "new"}],
+                "encrypted_content": "generation-one-native-state",
+            },
+        )
+        initial_items = (
+            Message(Role.SYSTEM, "fixture system"),
+            *(Message(Role.USER, f"old history-{index}: " + "x" * 1_500) for index in range(8)),
+            old_native,
+        )
+        await self.store.save_session_items(self.session_id, initial_items)
+        before_working_set = await self._seed_working_set()
+        window = ProviderContextWindow(
+            "fixture-provider",
+            "fixture-model",
+            1_500,
+            "fixture-affinity",
+        )
+        provider = _ScriptedProvider(
+            (
+                (ModelTextDelta("automatic summary"), ModelCompleted("stop")),
+                (
+                    ModelTextDelta("automatic fresh response"),
+                    ModelCompleted("stop", context_items=(new_native,)),
+                ),
+            )
+        )
+
+        def compaction_gate(
+            store: SqliteSessionStore,
+            provider: _ScriptedProvider,
+        ) -> ContextCompactionRuntimeGate:
+            return ContextCompactionRuntimeGate(
+                ContextCompactionTriggerService(
+                    ContextCompactionApplicationService(store, provider),
+                    planner=ContextCompactionPlanner(
+                        ContextCompactionPolicy(minimum_recent_items=6, max_summary_tokens=64)
+                    ),
+                )
+            )
+
+        first = await self._runtime(
+            provider,
+            compaction_runtime_gate=compaction_gate(self.store, provider),
+            provider_context_window=window,
+            provider_max_output_tokens=64,
+        ).run(
+            "automatic fresh request",
+            initial_items=initial_items,
+            source_provider=window.provider_name,
+            source_model=window.model_name,
+            source_context_affinity=window.context_affinity,
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(first.response, "automatic fresh response")
+        self.assertEqual(await self.store.load_context_generation(self.session_id), 1)
+        self.assertEqual(len(provider.calls), 2)
+        fresh_items = provider.calls[1].items
+        self.assertNotIn(old_native, fresh_items)
+        self.assertFalse(
+            any(
+                isinstance(item, Message) and "old history-" in item.content for item in fresh_items
+            )
+        )
+        self.assertTrue(
+            any(
+                isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.WORKING_SET
+                and "preserve this durable goal" in item.content
+                for item in fresh_items
+            )
+        )
+        self.assertTrue(
+            any(
+                isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.RUNTIME_CONTEXT_ROLLOVER
+                and "generation 1" in item.content
+                for item in fresh_items
+            )
+        )
+        self.assertEqual(
+            sum(
+                isinstance(item, Message)
+                and item.role is Role.USER
+                and item.content == "automatic fresh request"
+                for item in fresh_items
+            ),
+            1,
+        )
+
+        stored_items = await self.store.load_session_items(self.session_id)
+        self.assertIn(old_native, stored_items)
+        self.assertIn(new_native, stored_items)
+        self.assertFalse(
+            any(
+                isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.COMPACTION_SUMMARY
+                for item in stored_items
+            )
+        )
+        self.assertEqual(await self.store.load_working_set(self.session_id), before_working_set)
+
+        reopened = SqliteSessionStore(self.database)
+        await reopened.initialize()
+        reopened_items = await reopened.load_session_items(self.session_id)
+        reopened_summary = await reopened.get_session(self.session_id)
+        next_provider = _ScriptedProvider(
+            ((ModelTextDelta("reopened response"), ModelCompleted("stop")),)
+        )
+        second = await self._runtime(
+            next_provider,
+            store=reopened,
+            provider_context_window=window,
+            provider_max_output_tokens=64,
+        ).run(
+            "reopen after automatic rollover",
+            initial_items=reopened_items,
+            source_provider=reopened_summary.provider,
+            source_model=reopened_summary.model,
+            source_context_affinity=reopened_summary.context_affinity,
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(second.response, "reopened response")
+        self.assertEqual(len(next_provider.calls), 1)
+        self.assertIn(new_native, next_provider.calls[0].items)
+        self.assertNotIn(old_native, next_provider.calls[0].items)
+        self.assertFalse(
+            any(
+                isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.COMPACTION_SUMMARY
+                for item in next_provider.calls[0].items
+            )
+        )
+        self.assertEqual(
+            await reopened.load_context_generation_state(self.session_id),
+            (1, len(initial_items) + 1),
+        )
+
+    async def test_automatic_rollover_cancellation_reopens_at_the_committed_boundary(self) -> None:
+        initial_items = (
+            Message(Role.SYSTEM, "fixture system"),
+            *(Message(Role.USER, f"old history-{index}: " + "x" * 1_500) for index in range(8)),
+        )
+        await self.store.save_session_items(self.session_id, initial_items)
+        window = ProviderContextWindow(
+            "fixture-provider",
+            "fixture-model",
+            1_500,
+            "fixture-affinity",
+        )
+        provider = _ScriptedProvider(
+            ((ModelTextDelta("automatic summary"), ModelCompleted("stop")),)
+        )
+        gate = ContextCompactionRuntimeGate(
+            ContextCompactionTriggerService(
+                ContextCompactionApplicationService(self.store, provider),
+                planner=ContextCompactionPlanner(
+                    ContextCompactionPolicy(minimum_recent_items=6, max_summary_tokens=64)
+                ),
+            )
+        )
+        runtime = self._runtime(
+            provider,
+            compaction_runtime_gate=gate,
+            provider_context_window=window,
+            provider_max_output_tokens=64,
+        )
+
+        async def cancel_after_rollover(event: object) -> None:
+            if getattr(event, "kind", None) is AgentEventKind.CONTEXT_PREFLIGHT and getattr(
+                event, "data", {}
+            ).get("automatic_rollover_succeeded"):
+                task = asyncio.current_task()
+                assert task is not None
+                task.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await runtime.run(
+                "cancel after automatic rollover",
+                initial_items=initial_items,
+                source_provider=window.provider_name,
+                source_model=window.model_name,
+                source_context_affinity=window.context_affinity,
+                session_id=self.session_id,
+                sink=cancel_after_rollover,
+            )
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(
+            await self.store.load_context_generation_state(self.session_id),
+            (1, len(initial_items) + 1),
+        )
+        cancelled_items = await self.store.load_session_items(self.session_id)
+        self.assertIn(Message(Role.USER, "cancel after automatic rollover"), cancelled_items)
+        self.assertFalse(
+            any(
+                isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.RUNTIME_CONTEXT_ROLLOVER
+                for item in cancelled_items
+            )
+        )
+
+        reopened = SqliteSessionStore(self.database)
+        await reopened.initialize()
+        reopened_items = await reopened.load_session_items(self.session_id)
+        reopened_summary = await reopened.get_session(self.session_id)
+        next_provider = _ScriptedProvider(
+            ((ModelTextDelta("recovered response"), ModelCompleted("stop")),)
+        )
+        recovered = await self._runtime(
+            next_provider,
+            store=reopened,
+            provider_context_window=window,
+            provider_max_output_tokens=64,
+        ).run(
+            "recovered after automatic rollover cancellation",
+            initial_items=reopened_items,
+            source_provider=reopened_summary.provider,
+            source_model=reopened_summary.model,
+            source_context_affinity=reopened_summary.context_affinity,
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(recovered.response, "recovered response")
+        self.assertEqual(len(next_provider.calls), 1)
+        self.assertFalse(
+            any(
+                isinstance(item, Message) and "old history-" in item.content
+                for item in next_provider.calls[0].items
+            )
+        )
+        self.assertEqual(
+            sum(
+                isinstance(item, Message)
+                and item.role is Role.USER
+                and item.content == "recovered after automatic rollover cancellation"
+                for item in next_provider.calls[0].items
+            ),
+            1,
+        )
+
+    async def test_automatic_rollover_failover_rebinds_native_origin_for_reopen(self) -> None:
+        old_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "old-primary-reasoning",
+                "summary": [{"type": "summary_text", "text": "old"}],
+                "encrypted_content": "old-primary-state",
+            },
+        )
+        new_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "new-fallback-reasoning",
+                "summary": [{"type": "summary_text", "text": "new"}],
+                "encrypted_content": "new-fallback-state",
+            },
+        )
+        initial_items = (
+            Message(Role.SYSTEM, "fixture system"),
+            *(Message(Role.USER, f"old history-{index}: " + "x" * 1_500) for index in range(8)),
+            old_native,
+        )
+        await self.store.save_session_items(self.session_id, initial_items)
+        await self.store.update_session_provider(
+            self.session_id,
+            "primary",
+            "primary-model",
+            "primary-affinity",
+        )
+        primary_window = ProviderContextWindow(
+            "primary",
+            "primary-model",
+            1_500,
+            "primary-affinity",
+        )
+        fallback_window = ProviderContextWindow(
+            "fallback",
+            "fallback-model",
+            1_500,
+            "fallback-affinity",
+        )
+        primary = _ScriptedProvider(
+            (
+                (ModelTextDelta("automatic summary"), ModelCompleted("stop")),
+                (ProviderError("primary fresh request unavailable"),),
+            ),
+            provider_name="primary",
+            model_name="primary-model",
+            context_affinity="primary-affinity",
+        )
+        fallback = _ScriptedProvider(
+            (
+                (
+                    ModelTextDelta("fallback fresh response"),
+                    ModelCompleted("stop", context_items=(new_native,)),
+                ),
+                (ModelTextDelta("fallback reopened response"), ModelCompleted("stop")),
+            ),
+            provider_name="fallback",
+            model_name="fallback-model",
+            context_affinity="fallback-affinity",
+        )
+        provider = FailoverModelProvider(
+            (
+                ProviderCandidate(
+                    "primary",
+                    "primary-model",
+                    "primary-affinity",
+                    lambda: primary,
+                    context_window_tokens=1_500,
+                ),
+                ProviderCandidate(
+                    "fallback",
+                    "fallback-model",
+                    "fallback-affinity",
+                    lambda: fallback,
+                    context_window_tokens=1_500,
+                ),
+            )
+        )
+        gate = ContextCompactionRuntimeGate(
+            ContextCompactionTriggerService(
+                ContextCompactionApplicationService(self.store, provider),
+                planner=ContextCompactionPlanner(
+                    ContextCompactionPolicy(minimum_recent_items=6, max_summary_tokens=64)
+                ),
+            )
+        )
+
+        first = await self._runtime(
+            provider,
+            compaction_runtime_gate=gate,
+            provider_context_window=primary_window,
+            provider_max_output_tokens=64,
+        ).run(
+            "automatic failover request",
+            initial_items=initial_items,
+            source_provider=primary_window.provider_name,
+            source_model=primary_window.model_name,
+            source_context_affinity=primary_window.context_affinity,
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(first.response, "fallback fresh response")
+        self.assertNotIn(old_native, fallback.calls[0].items)
+        self.assertEqual(
+            (await self.store.get_session(self.session_id)).provider,
+            "fallback",
+        )
+        self.assertEqual(
+            (await self.store.get_session(self.session_id)).context_affinity,
+            "fallback-affinity",
+        )
+
+        reopened = SqliteSessionStore(self.database)
+        await reopened.initialize()
+        reopened_items = await reopened.load_session_items(self.session_id)
+        reopened_summary = await reopened.get_session(self.session_id)
+        second = await self._runtime(
+            provider,
+            store=reopened,
+            provider_context_window=fallback_window,
+            provider_max_output_tokens=64,
+        ).run(
+            "reopen after automatic failover",
+            initial_items=reopened_items,
+            source_provider=reopened_summary.provider,
+            source_model=reopened_summary.model,
+            source_context_affinity=reopened_summary.context_affinity,
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(second.response, "fallback reopened response")
+        self.assertIn(new_native, fallback.calls[1].items)
+        self.assertNotIn(old_native, fallback.calls[1].items)
+        self.assertEqual(fallback.calls[1].source_provider, "fallback")
+        self.assertEqual(fallback.calls[1].source_model, "fallback-model")
+        self.assertEqual(fallback.calls[1].source_context_affinity, "fallback-affinity")
+
+    async def test_automatic_rollover_keeps_uncommitted_tool_context_in_place(self) -> None:
+        old_history = tuple(
+            Message(Role.USER, f"old durable history-{index}: " + "x" * 200) for index in range(8)
+        )
+        initial_items = (Message(Role.SYSTEM, "fixture system"), *old_history)
+        await self.store.save_session_items(self.session_id, initial_items)
+        current_turn_native = PreservedContextItem(
+            ContextItemKind.REASONING,
+            {
+                "type": "reasoning",
+                "id": "current-turn-native-state",
+                "summary": [{"type": "summary_text", "text": "current turn"}],
+                "encrypted_content": "current-turn-native-state",
+            },
+        )
+        tool = _LargeResultTool("current-turn-tool-result " + "z" * 16_000)
+        window = ProviderContextWindow(
+            "fixture-provider",
+            "fixture-model",
+            4_000,
+            "fixture-affinity",
+        )
+        provider = _ScriptedProvider(
+            (
+                (
+                    ModelToolCall(ToolCall("inspect-1", "inspect", {})),
+                    ModelCompleted("tool_calls", context_items=(current_turn_native,)),
+                ),
+                (ModelCompleted("stop", response_text="bounded summary"),),
+            )
+        )
+        gate = ContextCompactionRuntimeGate(
+            ContextCompactionTriggerService(
+                ContextCompactionApplicationService(self.store, provider),
+                planner=ContextCompactionPlanner(
+                    ContextCompactionPolicy(
+                        minimum_recent_items=4,
+                        max_summary_tokens=64,
+                    )
+                ),
+            )
+        )
+
+        result = await self._runtime(
+            provider,
+            tools=_ToolCollection((tool,)),
+            compaction_runtime_gate=gate,
+            provider_context_window=window,
+            provider_max_output_tokens=128,
+        ).run(
+            "current turn with a tool result",
+            initial_items=initial_items,
+            source_provider=window.provider_name,
+            source_model=window.model_name,
+            source_context_affinity=window.context_affinity,
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(await self.store.load_context_generation(self.session_id), 0)
+        self.assertEqual(
+            sum(event.kind is AgentEventKind.MODEL_REQUEST_STARTED for event in result.events),
+            1,
+        )
+        self.assertEqual(len(provider.calls), 2)
+        self.assertIn(current_turn_native, result.items)
+        self.assertTrue(
+            any(
+                isinstance(item, Message)
+                and item.role is Role.TOOL
+                and "current-turn-tool-result" in item.content
+                for item in result.items
+            )
+        )
+        preflights = [
+            event for event in result.events if event.kind is AgentEventKind.CONTEXT_PREFLIGHT
+        ]
+        self.assertEqual(preflights[-1].data["status"], "blocked")
+        self.assertTrue(preflights[-1].data["compaction_attempted"])
+        self.assertFalse(preflights[-1].data["automatic_rollover_eligible"])
+        self.assertFalse(preflights[-1].data["automatic_rollover_attempted"])
 
     async def test_rollover_boundary_accumulates_across_reopened_turns(self) -> None:
         initial_items = (

@@ -36,12 +36,14 @@ from neuro_code.application.memory.compaction_runtime import (
     ContextCompactionRuntimeGate,
     ContextCompactionSafePoint,
     ContextCompactionTimeoutError,
+    ContextPreflightAssessment,
     ContextPreflightStatus,
     assess_context_preflight,
 )
 from neuro_code.application.ports.context_rollover import (
     CONTEXT_ROLLOVER_TOOL_NAME,
     MAX_CONTEXT_GENERATION,
+    AdvanceContextRolloverRequest,
     ContextRolloverController,
     ReadContextRolloverRequest,
 )
@@ -137,8 +139,9 @@ from neuro_code.domain.execution import (
 )
 from neuro_code.domain.plans import PlanStepStatus, SessionPlan
 from neuro_code.domain.session_tasks import SessionTask, SessionTaskKind, SessionTaskStatus
+from neuro_code.domain.tools import ToolDefinition
 from neuro_code.shared.async_utils import run_blocking
-from neuro_code.shared.errors import ConfigurationError, ProviderError
+from neuro_code.shared.errors import ConfigurationError, ProviderError, SessionError
 from neuro_code.shared.redaction import redact_sensitive_arguments, redact_sensitive_text
 
 LOGGER = logging.getLogger(__name__)
@@ -858,8 +861,10 @@ class AgentLoopRunner:
 
         async def build_request_context(
             additional_items: Sequence[SessionItem] = (),
+            *,
+            projected: ModelContext | None = None,
         ) -> ModelContext:
-            projected = projected_model_context()
+            projected = projected if projected is not None else projected_model_context()
             working_set_message = None
             if self._working_set is not None and session_id is not None:
                 working_set_snapshot = await self._working_set.read_working_set(
@@ -881,7 +886,23 @@ class AgentLoopRunner:
                 self._context_builder.reasoning_effort,
             )
 
-        def start_fresh_context_generation() -> None:
+        def fresh_context_seed_items() -> tuple[SessionItem, ...]:
+            return tuple(
+                item
+                for item in context_items
+                if isinstance(item, Message) and item.role is Role.SYSTEM
+            ) + ((current_user_message,) if current_user_message is not None else ())
+
+        def fresh_context_projection(generation: int) -> ModelContext:
+            return ModelContext(
+                (*fresh_context_seed_items(), _context_rollover_runtime_message(generation)),
+                self._provider.provider_name,
+                self._provider.model_name,
+                getattr(self._provider, "context_affinity", None),
+                self._context_builder.reasoning_effort,
+            )
+
+        def start_fresh_context_generation(generation: int | None = None) -> None:
             nonlocal active_compaction_item
             nonlocal active_context_boundary
             nonlocal active_context_seed
@@ -889,16 +910,18 @@ class AgentLoopRunner:
             nonlocal context_source_model
             nonlocal context_source_provider
             nonlocal context_rollover_generation
+            nonlocal can_adopt_provider_origin
             if self._context_rollover is None:
                 raise ConfigurationError("context rollover control is not configured")
-            if context_rollover_generation >= MAX_CONTEXT_GENERATION:
+            expected_generation = context_rollover_generation + 1
+            if expected_generation > MAX_CONTEXT_GENERATION:
                 raise ConfigurationError("context rollover generation limit reached")
-            context_rollover_generation += 1
-            active_context_seed = tuple(
-                item
-                for item in context_items
-                if isinstance(item, Message) and item.role is Role.SYSTEM
-            ) + ((current_user_message,) if current_user_message is not None else ())
+            if generation is None:
+                generation = expected_generation
+            if generation != expected_generation:
+                raise ConfigurationError("context rollover generation changed concurrently")
+            context_rollover_generation = generation
+            active_context_seed = fresh_context_seed_items()
             active_context_boundary = len(context_items)
             context_items.append(_context_rollover_runtime_message(context_rollover_generation))
             # The new generation deliberately excludes all prior preserved
@@ -908,9 +931,125 @@ class AgentLoopRunner:
             context_source_provider = self._provider.provider_name
             context_source_model = self._provider.model_name
             context_source_affinity = getattr(self._provider, "context_affinity", None)
+            # The new active projection contains no prior preserved state, so
+            # a provider selected after this boundary may safely become the
+            # durable origin for native state produced in this generation.
+            can_adopt_provider_origin = True
             # A compaction record belongs to the previous active projection;
             # the next request starts from the new generation directly.
             active_compaction_item = None
+
+        def has_discardable_active_history() -> bool:
+            return any(
+                item is not current_user_message
+                and not (isinstance(item, Message) and item.role is Role.SYSTEM)
+                for item in active_persistent_context_items()
+            )
+
+        async def attempt_automatic_context_rollover(
+            *,
+            context: ModelContext,
+            additional_items: Sequence[SessionItem],
+            preflight: ContextPreflightAssessment,
+            tool_definitions: Sequence[ToolDefinition],
+            request_budget_window: ProviderContextWindow | None,
+        ) -> tuple[bool, bool, bool, ModelContext]:
+            """Try one durable fresh-context transition after compaction.
+
+            The loop owns the bounded decision, but the session controller owns
+            the durable marker and pending turn anchor.  A prospective fresh
+            projection is built before the write so a rollover is attempted
+            only when dropping the active history changes the actual request
+            accounting.  The returned booleans are respectively eligibility,
+            attempted, and committed in-memory success.
+            """
+
+            if (
+                self._execution_control_mode is not ExecutionControlMode.FINALIZE_TERMINAL
+                or turn_source is not TurnSource.USER
+                or plan_execution_requested
+                or ultracode_execution_id is not None
+                or self._context_rollover is None
+                or self._compaction_runtime_gate is None
+                or self._session_store is None
+                or session_id is None
+                or turn_id is None
+                or has_completed_model_step
+                or context_rollover_generation >= MAX_CONTEXT_GENERATION
+                or preflight.status is not ContextPreflightStatus.BLOCKED
+                or not preflight.compaction_attempted
+                or preflight.capacity_tokens is None
+                or preflight.irreducible_tokens is None
+                or preflight.irreducible_tokens >= preflight.capacity_tokens
+                or preflight.context_tokens is None
+                or automatic_rollover_attempted
+                or not has_discardable_active_history()
+            ):
+                return False, False, False, context
+
+            next_generation = context_rollover_generation + 1
+            prospective = await build_request_context(
+                additional_items,
+                projected=fresh_context_projection(next_generation),
+            )
+            prospective_preflight = assess_context_preflight(
+                context=prospective,
+                tools=tool_definitions,
+                provider=self._provider.provider_name,
+                model=self._provider.model_name,
+                context_affinity=getattr(self._provider, "context_affinity", None),
+                reasoning_effort=prospective.reasoning_effort,
+                provider_window=request_budget_window,
+                max_output_tokens=self._provider_max_output_tokens,
+                compaction_attempted=True,
+            )
+            if (
+                prospective_preflight.status is not ContextPreflightStatus.SAFE
+                or prospective_preflight.context_tokens is None
+                or preflight.context_tokens is None
+                or prospective_preflight.context_tokens >= preflight.context_tokens
+            ):
+                # Previewing a fresh projection is not a durable rollover. A
+                # blocked or unknown preview must leave the existing marker
+                # and pending-boundary state untouched.
+                return True, True, False, context
+            boundary = len(persistent_context_items())
+            try:
+                state = await self._context_rollover.advance_context_rollover(
+                    AdvanceContextRolloverRequest(
+                        session_id,
+                        history_item_boundary=boundary,
+                        turn_id=turn_id,
+                    )
+                )
+            except (SessionError, TypeError, ValueError) as error:
+                # A failed durable transition must not be replaced with an
+                # in-memory fresh projection.  The caller will take the
+                # existing deterministic context-budget finalization path.
+                LOGGER.debug(
+                    "automatic context rollover could not be committed error_type=%s",
+                    type(error).__name__,
+                )
+                return True, True, False, context
+            start_fresh_context_generation(state.generation)
+            return True, True, True, await build_request_context(additional_items)
+
+        def context_preflight_event_data(
+            assessment: ContextPreflightAssessment,
+            *,
+            automatic_rollover_eligible: bool = False,
+            automatic_rollover_attempted: bool = False,
+            automatic_rollover_succeeded: bool = False,
+        ) -> dict[str, object]:
+            data = assessment.to_event_data()
+            data.update(
+                {
+                    "automatic_rollover_eligible": automatic_rollover_eligible,
+                    "automatic_rollover_attempted": automatic_rollover_attempted,
+                    "automatic_rollover_succeeded": automatic_rollover_succeeded,
+                }
+            )
+            return data
 
         async def emit_budget_usage() -> None:
             current = supervisor
@@ -975,7 +1114,10 @@ class AgentLoopRunner:
                 and active_compaction_item.source_item_count == plan.source_item_count
                 and active_compaction_item.candidate_range == plan.candidate_range
             ):
-                if plan.decision is ContextCompactionDecision.REQUIRED:
+                if (
+                    self._context_rollover is None
+                    and plan.decision is ContextCompactionDecision.REQUIRED
+                ):
                     return SupervisorDecision(
                         SupervisorDecisionKind.MARK_BUDGET_LIMITED,
                         "context remains above its hard limit after bounded compaction",
@@ -983,6 +1125,10 @@ class AgentLoopRunner:
                         False,
                         SupervisorReasonCode.CONTEXT_WINDOW_BUDGET,
                     )
+                # The existing projection already represents this source
+                # range.  Let the caller's preflight cycle decide whether the
+                # request is safe or should cross the automatic fresh-context
+                # boundary; do not consume a second compaction attempt here.
                 return None
             await emit(
                 AgentEventKind.CONTEXT_COMPACTION_STARTED,
@@ -1434,6 +1580,9 @@ class AgentLoopRunner:
                 if pending_terminal_decision is not None:
                     return await complete_finalized_turn(pending_terminal_decision, step=step - 1)
                 step_started_at = monotonic()
+                automatic_rollover_eligible = False
+                automatic_rollover_attempted = False
+                automatic_rollover_succeeded = False
                 await emit(AgentEventKind.MODEL_STEP_STARTED, {"step": step})
                 completion_batch: tuple[BackgroundTaskSnapshot, ...] = ()
                 if background_tasks is not None:
@@ -1498,7 +1647,7 @@ class AgentLoopRunner:
                     if initial_preflight.status is ContextPreflightStatus.BLOCKED:
                         await emit(
                             AgentEventKind.CONTEXT_PREFLIGHT,
-                            initial_preflight.to_event_data(),
+                            context_preflight_event_data(initial_preflight),
                         )
                         preflight_decision = SupervisorDecision(
                             SupervisorDecisionKind.MARK_BUDGET_LIMITED,
@@ -1520,7 +1669,10 @@ class AgentLoopRunner:
                 )
                 if compaction_decision is not None:
                     return await complete_finalized_turn(compaction_decision, step=step - 1)
-                preflight_compaction_attempted = active_compaction_item is not prior_compaction_item
+                preflight_compaction_attempted = (
+                    active_compaction_item is not None
+                    or active_compaction_item is not prior_compaction_item
+                )
                 if active_compaction_item is not prior_compaction_item:
                     context = await build_request_context(completion_reminders)
                 if self._execution_control_mode is ExecutionControlMode.FINALIZE_TERMINAL:
@@ -1537,7 +1689,7 @@ class AgentLoopRunner:
                     )
                     await emit(
                         AgentEventKind.CONTEXT_PREFLIGHT,
-                        preflight.to_event_data(),
+                        context_preflight_event_data(preflight),
                     )
                     if preflight.status is ContextPreflightStatus.COMPACTION_REQUIRED:
                         capacity = preflight.capacity_tokens
@@ -1588,8 +1740,42 @@ class AgentLoopRunner:
                         )
                         await emit(
                             AgentEventKind.CONTEXT_PREFLIGHT,
-                            preflight.to_event_data(),
+                            context_preflight_event_data(preflight),
                         )
+                    if preflight.status is ContextPreflightStatus.BLOCKED:
+                        (
+                            automatic_rollover_eligible,
+                            automatic_rollover_attempted,
+                            automatic_rollover_succeeded,
+                            context,
+                        ) = await attempt_automatic_context_rollover(
+                            context=context,
+                            additional_items=completion_reminders,
+                            preflight=preflight,
+                            tool_definitions=tool_definitions,
+                            request_budget_window=request_budget_window,
+                        )
+                        if automatic_rollover_attempted:
+                            preflight = assess_context_preflight(
+                                context=context,
+                                tools=tool_definitions,
+                                provider=self._provider.provider_name,
+                                model=self._provider.model_name,
+                                context_affinity=getattr(self._provider, "context_affinity", None),
+                                reasoning_effort=context.reasoning_effort,
+                                provider_window=request_budget_window,
+                                max_output_tokens=self._provider_max_output_tokens,
+                                compaction_attempted=True,
+                            )
+                            await emit(
+                                AgentEventKind.CONTEXT_PREFLIGHT,
+                                context_preflight_event_data(
+                                    preflight,
+                                    automatic_rollover_eligible=automatic_rollover_eligible,
+                                    automatic_rollover_attempted=automatic_rollover_attempted,
+                                    automatic_rollover_succeeded=automatic_rollover_succeeded,
+                                ),
+                            )
                     if preflight.status is ContextPreflightStatus.BLOCKED:
                         preflight_decision = SupervisorDecision(
                             SupervisorDecisionKind.MARK_BUDGET_LIMITED,
