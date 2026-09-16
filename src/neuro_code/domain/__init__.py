@@ -188,6 +188,8 @@ from neuro_code.domain.tools import (
     ToolExecutionMode,
     ToolExecutionResult,
     ToolResult,
+    ToolResultContextProjection,
+    ToolResultProjectionStrategy,
 )
 from neuro_code.domain.ultracode import (
     MAX_ULTRACODE_EXECUTION_ID_BYTES,
@@ -379,6 +381,8 @@ __all__ = [
     "ToolExecutionMode",
     "ToolExecutionResult",
     "ToolResult",
+    "ToolResultContextProjection",
+    "ToolResultProjectionStrategy",
     "UiLanguage",
     "UltracodeDelegationDecision",
     "UltracodeExecution",

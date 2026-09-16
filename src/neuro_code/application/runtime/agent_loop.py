@@ -86,6 +86,10 @@ from neuro_code.application.runtime.supervision import (
     ToolExecutionObservation,
 )
 from neuro_code.application.runtime.tool_pipeline import ToolExecutor
+from neuro_code.application.runtime.tool_result_guard import (
+    MAX_MODEL_TOOL_RESULT_BYTES,
+    MAX_MODEL_TOOL_RESULT_ESTIMATED_TOKENS,
+)
 from neuro_code.application.runtime.tool_scheduler import (
     ToolBatchExecutionError,
     ToolScheduler,
@@ -1052,6 +1056,84 @@ class AgentLoopRunner:
             )
             return data
 
+        def allocate_model_tool_result_limits(
+            *,
+            context: ModelContext,
+            assistant_message: Message,
+            preserved_context_items: Sequence[PreservedContextItem],
+            calls: Sequence[ToolCall],
+            tool_definitions: Sequence[ToolDefinition],
+        ) -> dict[int, tuple[int, int]]:
+            """Allocate one deterministic model-result share per tool call.
+
+            The executor still owns each complete canonical result.  This
+            helper only supplies the ordered batch boundary with a bounded
+            model-facing share after reserving the current request, tool
+            schemas, output reserve, and preflight margin.
+            """
+
+            if len(calls) < 2:
+                return {}
+
+            empty_results = tuple(
+                Message(Role.TOOL, name=call.name, tool_call_id=call.id) for call in calls
+            )
+            base_context = ModelContext(
+                (
+                    *context.items,
+                    *preserved_context_items,
+                    assistant_message,
+                    *empty_results,
+                ),
+                context.source_provider,
+                context.source_model,
+                context.source_context_affinity,
+                context.reasoning_effort,
+            )
+            base_preflight = assess_context_preflight(
+                context=base_context,
+                tools=tool_definitions,
+                provider=self._provider.provider_name,
+                model=self._provider.model_name,
+                context_affinity=getattr(self._provider, "context_affinity", None),
+                reasoning_effort=base_context.reasoning_effort,
+                provider_window=request_budget_window,
+                max_output_tokens=self._provider_max_output_tokens,
+            )
+            aggregate_token_limit = MAX_MODEL_TOOL_RESULT_ESTIMATED_TOKENS
+            if (
+                base_preflight.capacity_tokens is not None
+                and base_preflight.estimated_total_tokens is not None
+            ):
+                aggregate_token_limit = min(
+                    aggregate_token_limit,
+                    max(
+                        0,
+                        base_preflight.capacity_tokens - base_preflight.estimated_total_tokens,
+                    ),
+                )
+            output_byte_limit = max(0, self._tool_context.output_byte_limit)
+            aggregate_byte_limit = min(
+                MAX_MODEL_TOOL_RESULT_BYTES,
+                output_byte_limit * len(calls),
+            )
+
+            def split_budget(total: int) -> tuple[int, ...]:
+                share, remainder = divmod(total, len(calls))
+                return tuple(share + (index < remainder) for index in range(len(calls)))
+
+            token_shares = split_budget(aggregate_token_limit)
+            byte_shares = split_budget(aggregate_byte_limit)
+            return {
+                id(call): (byte_limit, token_limit)
+                for call, byte_limit, token_limit in zip(
+                    calls,
+                    byte_shares,
+                    token_shares,
+                    strict=True,
+                )
+            }
+
         async def emit_budget_usage() -> None:
             current = supervisor
             if (
@@ -1972,6 +2054,13 @@ class AgentLoopRunner:
                 messages.append(assistant_message)
                 if persist_turn_context:
                     context_items.append(assistant_message)
+                model_tool_result_limits = allocate_model_tool_result_limits(
+                    context=context,
+                    assistant_message=assistant_message,
+                    preserved_context_items=completion.context_items,
+                    calls=tool_calls,
+                    tool_definitions=tool_definitions,
+                )
 
                 if not tool_calls:
                     result_items = (
@@ -2102,6 +2191,8 @@ class AgentLoopRunner:
                 async def execute_scheduled_tool(
                     call: ToolCall,
                     isolated: bool,
+                    *,
+                    batch_limits: dict[int, tuple[int, int]] = model_tool_result_limits,
                 ) -> _ScheduledToolOutcome:
                     # Parallel calls get private append-only projections.  The
                     # executor still owns every permission, approval, sandbox,
@@ -2116,6 +2207,7 @@ class AgentLoopRunner:
                     )
                     if interaction_tool and supervisor is not None:
                         supervisor.pause_wall_clock()
+                    result_limits = batch_limits.get(id(call))
                     try:
                         observation = await self._tool_executor.execute(
                             call,
@@ -2148,6 +2240,12 @@ class AgentLoopRunner:
                                 else None
                             ),
                             verification_requirements=verification_requirements,
+                            model_result_byte_limit=(
+                                result_limits[0] if result_limits is not None else None
+                            ),
+                            model_result_estimated_token_limit=(
+                                result_limits[1] if result_limits is not None else None
+                            ),
                         )
                         return _ScheduledToolOutcome(
                             observation,

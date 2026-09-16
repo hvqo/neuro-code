@@ -7,6 +7,15 @@ from neuro_code.domain.tools.models import (
     ToolExecutionMode,
     ToolExecutionResult,
     ToolResult,
+    ToolResultContextProjection,
+    ToolResultProjectionStrategy,
 )
 
-__all__ = ["ToolDefinition", "ToolExecutionMode", "ToolExecutionResult", "ToolResult"]
+__all__ = [
+    "ToolDefinition",
+    "ToolExecutionMode",
+    "ToolExecutionResult",
+    "ToolResult",
+    "ToolResultContextProjection",
+    "ToolResultProjectionStrategy",
+]

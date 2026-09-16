@@ -66,6 +66,90 @@ class ToolResult:
         return result
 
 
+class ToolResultProjectionStrategy(StrEnum):
+    """Describe how a canonical tool result entered model context.
+
+    描述规范工具结果如何进入模型上下文.
+    """
+
+    PASS_THROUGH = "pass_through"
+    DETERMINISTIC_HEAD_TAIL = "deterministic_head_tail"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResultContextProjection:
+    """Bounded model-facing facts for one canonical tool result.
+
+    The projection is deliberately separate from :class:`ToolResult`: the
+    canonical result remains complete for events, verification, supervision,
+    and artifact handling, while this value describes only the content placed
+    in a model-facing ``Role.TOOL`` message.
+
+    一个规范工具结果面向模型的有界事实投影. 该投影有意独立于
+    :class:`ToolResult`:规范结果继续为事件、验证、监督和 artifact 处理保留完整内容,
+    此值只描述放入面向模型 ``Role.TOOL`` 消息的内容.
+    """
+
+    content: str
+    truncated: bool
+    original_bytes: int
+    projected_bytes: int
+    original_estimated_tokens: int
+    projected_estimated_tokens: int
+    omitted_bytes: int
+    artifact_available: bool
+    strategy: ToolResultProjectionStrategy
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.content, str):
+            raise TypeError("projected tool content must be text")
+        if not isinstance(self.truncated, bool):
+            raise TypeError("tool projection truncation must be a bool")
+        for name in (
+            "original_bytes",
+            "projected_bytes",
+            "original_estimated_tokens",
+            "projected_estimated_tokens",
+            "omitted_bytes",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if self.projected_bytes != len(self.content.encode("utf-8")):
+            raise ValueError("projected_bytes must match the UTF-8 content size")
+        if self.omitted_bytes > self.original_bytes:
+            raise ValueError("omitted_bytes must not exceed original_bytes")
+        if not isinstance(self.artifact_available, bool):
+            raise TypeError("artifact_available must be a bool")
+        if not isinstance(self.strategy, ToolResultProjectionStrategy):
+            raise TypeError("tool projection strategy must be canonical")
+        if not self.truncated:
+            if self.strategy is not ToolResultProjectionStrategy.PASS_THROUGH:
+                raise ValueError("untruncated projection must use pass_through")
+            if self.omitted_bytes != 0:
+                raise ValueError("untruncated projection must omit no bytes")
+        elif self.strategy is ToolResultProjectionStrategy.PASS_THROUGH:
+            raise ValueError("truncated projection must describe a bounded strategy")
+
+    def to_metadata(self) -> dict[str, object]:
+        """Return bounded diagnostic metadata without output text or paths.
+
+        返回不包含输出文本或路径的有界诊断元数据.
+        """
+
+        return {
+            "activated": self.truncated,
+            "truncated": self.truncated,
+            "original_bytes": self.original_bytes,
+            "projected_bytes": self.projected_bytes,
+            "original_estimated_tokens": self.original_estimated_tokens,
+            "projected_estimated_tokens": self.projected_estimated_tokens,
+            "omitted_bytes": self.omitted_bytes,
+            "artifact_available": self.artifact_available,
+            "strategy": self.strategy.value,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class ToolExecutionResult:
     """Canonical bounded result shared by model, UI, ACP, and replay layers."""
@@ -133,4 +217,11 @@ class ToolExecutionResult:
         return result
 
 
-__all__ = ["ToolDefinition", "ToolExecutionMode", "ToolExecutionResult", "ToolResult"]
+__all__ = [
+    "ToolDefinition",
+    "ToolExecutionMode",
+    "ToolExecutionResult",
+    "ToolResult",
+    "ToolResultContextProjection",
+    "ToolResultProjectionStrategy",
+]
