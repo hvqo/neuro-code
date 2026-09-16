@@ -24,7 +24,9 @@ from neuro_code.application.ports.tools import ToolContext
 from neuro_code.domain.sandbox import SandboxProfile
 from neuro_code.infrastructure.background_tasks import LocalBackgroundTaskManager
 from neuro_code.infrastructure.persistence.output_artifacts import FileToolOutputArtifactStore
+from neuro_code.infrastructure.sandbox import shell_contract
 from neuro_code.infrastructure.sandbox.local_process import ProcessTreeLocalProcessSandbox
+from neuro_code.infrastructure.sandbox.shell_contract import LocalShellDialect, model_shell_guidance
 from neuro_code.infrastructure.tools.background_tasks import TaskOutputTool
 from neuro_code.infrastructure.tools.bash import BashTool
 from neuro_code.shared.errors import ToolError
@@ -79,6 +81,46 @@ class _EnabledRecordingLocalProcessSandbox(LocalProcessSandbox):
 
 
 class BashToolTests(unittest.IsolatedAsyncioTestCase):
+    def test_model_facing_contract_describes_posix_shell_without_bash_assumption(self) -> None:
+        with mock.patch.object(
+            shell_contract,
+            "current_shell_dialect",
+            return_value=LocalShellDialect.POSIX_SH,
+        ):
+            description = BashTool(background_enabled=True).definition.description
+
+        self.assertIn("POSIX `/bin/sh` semantics, not Bash", description)
+        self.assertIn("set -o pipefail", description)
+        self.assertIn("invoke it explicitly", description)
+        self.assertIn("pytest ... | tail", description)
+        self.assertIn("task_output", description)
+        self.assertIn("wait_tasks", description)
+
+    def test_model_facing_contract_describes_windows_shell_semantics(self) -> None:
+        with mock.patch.object(
+            shell_contract,
+            "current_shell_dialect",
+            return_value=LocalShellDialect.WINDOWS_CMD,
+        ):
+            description = BashTool(background_enabled=True).definition.description
+
+        self.assertIn("trusted Windows `cmd.exe` shell", description)
+        self.assertIn("Do not assume POSIX or Bash syntax", description)
+        self.assertNotIn("POSIX `/bin/sh` semantics", description)
+
+    def test_foreground_and_background_advertise_the_same_shell_contract(self) -> None:
+        with mock.patch.object(
+            shell_contract,
+            "current_shell_dialect",
+            return_value=LocalShellDialect.POSIX_SH,
+        ):
+            guidance = model_shell_guidance()
+            foreground = BashTool().definition.description
+            background = BashTool(background_enabled=True).definition.description
+
+        self.assertIn(guidance, foreground)
+        self.assertIn(guidance, background)
+
     async def test_foreground_bash_uses_a_canonical_sandbox_request(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

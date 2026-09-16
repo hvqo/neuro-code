@@ -97,6 +97,30 @@ class BackgroundTaskToolTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await manager.shutdown()
 
+    async def test_nonzero_background_command_is_a_truthful_failed_task_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = LocalBackgroundTaskManager()
+            context = ToolContext(Path(directory), background_tasks=manager)
+            try:
+                started = await BashTool(background_enabled=True).execute(
+                    {"command": "exit 7", "is_background": True},
+                    context,
+                )
+                assert started.metadata is not None
+                task_id = started.metadata["task_id"]
+                assert isinstance(task_id, str)
+
+                failed = await TaskOutputTool().execute(
+                    {"task_id": task_id, "wait_seconds": 2},
+                    context,
+                )
+
+                self.assertTrue(failed.is_error)
+                self.assertIn("status: failed", failed.content)
+                self.assertIn("exit_code: 7", failed.content)
+            finally:
+                await manager.shutdown()
+
     async def test_background_command_uses_child_sandbox_request_and_strips_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sandbox = _EnabledProcessSandboxFixture()
