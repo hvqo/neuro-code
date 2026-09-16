@@ -1792,6 +1792,7 @@ def test_canonical_runtime_modules_are_the_only_runtime_implementations() -> Non
         "neuro_code.application.runtime.supervision",
         "neuro_code.application.runtime.tool_scheduler",
         "neuro_code.application.runtime.tool_pipeline",
+        "neuro_code.application.runtime.tool_result_guard",
         "neuro_code.application.runtime.verification",
     }
     assert {
@@ -1829,6 +1830,7 @@ def test_canonical_runtime_modules_are_the_only_runtime_implementations() -> Non
         },
         "neuro_code.application.sessions.conversation": {"AgentConversation"},
         "neuro_code.application.runtime.tool_pipeline": {
+            "_RuntimeArtifactStore",
             "ToolExecutor",
             "ToolObservationBuilder",
         },

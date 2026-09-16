@@ -55,6 +55,8 @@ from neuro_code.application.ports.tools import (
     Tool,
     ToolCollection,
     ToolContext,
+    ToolOutputArtifact,
+    ToolOutputArtifactStore,
 )
 from neuro_code.application.ports.web_search import HostedWebSearchEvent
 from neuro_code.application.ports.workspace_changes import (
@@ -70,6 +72,7 @@ from neuro_code.application.runtime.supervision import (
     ToolExecutionObservation,
     stable_metadata_fact,
 )
+from neuro_code.application.runtime.tool_result_guard import project_tool_result
 from neuro_code.application.runtime.verification import (
     VerificationBlocker,
     VerificationBlockReason,
@@ -80,7 +83,11 @@ from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
 from neuro_code.domain.conversation.messages import Message, Role, SessionItem, ToolCall
 from neuro_code.domain.execution import ProgressKind, VerificationRequirementsSnapshot
 from neuro_code.domain.plans import SessionPlan
-from neuro_code.domain.tools import ToolExecutionResult, ToolResult
+from neuro_code.domain.tools import (
+    ToolExecutionResult,
+    ToolResult,
+    ToolResultContextProjection,
+)
 from neuro_code.shared.async_utils import run_blocking
 from neuro_code.shared.errors import ToolError
 from neuro_code.shared.redaction import redact_sensitive_arguments, redact_sensitive_text
@@ -284,6 +291,60 @@ class ToolObservationBuilder:
         )
 
 
+class _RuntimeArtifactStore:
+    """Track typed artifacts produced through this runtime tool binding.
+
+    Generic result metadata is intentionally insufficient to tell the model
+    that a fuller artifact can be reread.  This wrapper records only the
+    canonical handles returned by the configured artifact store; it delegates
+    all persistence to that existing store and never creates a second one.
+    """
+
+    __slots__ = ("_artifacts", "_delegate")
+
+    def __init__(self, delegate: ToolOutputArtifactStore) -> None:
+        self._delegate = delegate
+        self._artifacts: set[ToolOutputArtifact] = set()
+
+    async def save(
+        self,
+        *,
+        tool_name: str,
+        content: bytes,
+        content_truncated: bool = False,
+    ) -> ToolOutputArtifact:
+        artifact = await self._delegate.save(
+            tool_name=tool_name,
+            content=content,
+            content_truncated=content_truncated,
+        )
+        if not isinstance(artifact, ToolOutputArtifact):
+            raise TypeError("artifact store returned a non-canonical artifact")
+        self._artifacts.add(artifact)
+        return artifact
+
+    def matches(self, metadata: Mapping[str, object] | None) -> bool:
+        if metadata is None:
+            return False
+        raw_id = metadata.get("output_artifact_id")
+        raw_path = metadata.get("output_artifact_path")
+        raw_bytes = metadata.get("output_artifact_bytes")
+        raw_truncated = metadata.get("output_artifact_truncated")
+        if (
+            not isinstance(raw_id, str)
+            or not isinstance(raw_path, str)
+            or isinstance(raw_bytes, bool)
+            or not isinstance(raw_bytes, int)
+            or not isinstance(raw_truncated, bool)
+        ):
+            return False
+        try:
+            artifact = ToolOutputArtifact(raw_id, raw_path, raw_bytes, raw_truncated)
+        except ValueError:
+            return False
+        return artifact in self._artifacts
+
+
 class ToolExecutor:
     """Execute one tool call through the permission/workspace/supervision pipeline.
 
@@ -291,6 +352,7 @@ class ToolExecutor:
 
     __slots__ = (
         "_approver",
+        "_artifact_store",
         "_binding_scope_identity",
         "_context_builder",
         "_hooks",
@@ -322,7 +384,15 @@ class ToolExecutor:
         self._permissions = permissions
         self._approver = approver
         self._binding_scope_identity = uuid.uuid4().hex
-        self._tool_context = tool_context
+        artifact_store = tool_context.output_artifact_store
+        self._artifact_store = (
+            _RuntimeArtifactStore(artifact_store) if artifact_store is not None else None
+        )
+        self._tool_context = (
+            replace(tool_context, output_artifact_store=self._artifact_store)
+            if self._artifact_store is not None
+            else tool_context
+        )
         self._session_store = session_store
         self._hooks = tuple(hooks)
         self._workspace_change_observer = workspace_change_observer
@@ -434,6 +504,8 @@ class ToolExecutor:
         workspace_change_sink: Callable[[WorkspaceChangeReport], None] | None = None,
         recovery_started_sink: Callable[[str, str, bool], Awaitable[None]] | None = None,
         verification_requirements: VerificationRequirementsSnapshot | None = None,
+        model_result_byte_limit: int | None = None,
+        model_result_estimated_token_limit: int | None = None,
     ) -> ToolExecutionObservation | None:
         resolved = False
         tool_requested_at = monotonic()
@@ -461,12 +533,18 @@ class ToolExecutor:
                 not_started=extra.get("not_started") is True,
                 cancelled=extra.get("cancelled") is True,
             )
+            projection = self._model_context_projection(
+                result,
+                byte_limit=model_result_byte_limit,
+                estimated_token_limit=model_result_estimated_token_limit,
+            )
             return {
                 "id": call.id,
                 "name": call.name,
                 **result.to_dict(),
                 "duration_seconds": duration_seconds,
                 "execution_result": canonical.to_dict(),
+                "model_context_projection": projection.to_metadata(),
                 **extra,
             }
 
@@ -474,7 +552,12 @@ class ToolExecutor:
             nonlocal resolved
             if resolved:
                 return
-            message = Message(Role.TOOL, result.content, name=call.name, tool_call_id=call.id)
+            projection = self._model_context_projection(
+                result,
+                byte_limit=model_result_byte_limit,
+                estimated_token_limit=model_result_estimated_token_limit,
+            )
+            message = Message(Role.TOOL, projection.content, name=call.name, tool_call_id=call.id)
             messages.append(message)
             context_items.append(message)
             resolved = True
@@ -935,6 +1018,29 @@ class ToolExecutor:
             )
             return None
 
+    def _model_context_projection(
+        self,
+        result: ToolResult,
+        *,
+        byte_limit: int | None = None,
+        estimated_token_limit: int | None = None,
+        artifact_available: bool | None = None,
+    ) -> ToolResultContextProjection:
+        if artifact_available is None:
+            artifact_available = (
+                self._artifact_store.matches(result.metadata)
+                if self._artifact_store is not None
+                else False
+            )
+        return project_tool_result(
+            result,
+            byte_limit=(
+                max(0, self._tool_context.output_byte_limit) if byte_limit is None else byte_limit
+            ),
+            estimated_token_limit=estimated_token_limit,
+            artifact_available=artifact_available,
+        )
+
     async def capture_workspace_snapshot(self) -> WorkspaceChangeCheckpoint | None:
         try:
             return await run_blocking(
@@ -1007,8 +1113,8 @@ class ToolExecutor:
         )
         return report if report.should_emit else None
 
-    @staticmethod
     async def record_unstarted_tool_calls(
+        self,
         calls: Sequence[ToolCall],
         messages: list[Message],
         context_items: list[SessionItem],
@@ -1026,8 +1132,14 @@ class ToolExecutor:
             ),
             is_error=True,
         )
+        projection = self._model_context_projection(result)
         for call in calls:
-            message = Message(Role.TOOL, result.content, name=call.name, tool_call_id=call.id)
+            message = Message(
+                Role.TOOL,
+                projection.content,
+                name=call.name,
+                tool_call_id=call.id,
+            )
             messages.append(message)
             context_items.append(message)
         for call in calls:
@@ -1047,11 +1159,12 @@ class ToolExecutor:
                     "cancelled": cancelled,
                     "not_started": True,
                     "execution_result": canonical.to_dict(),
+                    "model_context_projection": projection.to_metadata(),
                 },
             )
 
-    @staticmethod
     async def record_rejected_tool_calls(
+        self,
         calls: Sequence[ToolCall],
         messages: list[Message],
         context_items: list[SessionItem],
@@ -1062,8 +1175,14 @@ class ToolExecutor:
         """Pair a control-tool batch rejection without executing any call."""
 
         result = ToolResult(reason, is_error=True)
+        projection = self._model_context_projection(result)
         for call in calls:
-            message = Message(Role.TOOL, reason, name=call.name, tool_call_id=call.id)
+            message = Message(
+                Role.TOOL,
+                projection.content,
+                name=call.name,
+                tool_call_id=call.id,
+            )
             messages.append(message)
             context_items.append(message)
         for call in calls:
@@ -1082,6 +1201,7 @@ class ToolExecutor:
                     "not_started": True,
                     "control_batch_rejected": True,
                     "execution_result": canonical.to_dict(),
+                    "model_context_projection": projection.to_metadata(),
                 },
             )
 
