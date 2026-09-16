@@ -125,6 +125,7 @@ from neuro_code.interfaces.tui.app import NeuroCodeApp
 from neuro_code.interfaces.tui.clipboard import ClipboardWriteResult
 from neuro_code.interfaces.tui.screens import (
     BackgroundWakeSettingsScreen,
+    InteractionModeScreen,
     LanguageSettingsScreen,
     NetworkProxySettingsScreen,
     PermissionApprovalScreen,
@@ -1907,7 +1908,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
-    async def test_user_and_assistant_messages_use_distinct_unlabelled_blocks(self) -> None:
+    async def test_wide_transcript_messages_use_available_width_without_a_hard_cap(self) -> None:
         app = NeuroCodeApp(
             TuiConversation(),
             provider_name="fixture",
@@ -1937,9 +1938,30 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("Assistant:", assistant_text)
             tool = next(message for message in messages if message.category == "tool")
             self.assertEqual({user.region.x, assistant.region.x, tool.region.x}, {4})
-            self.assertLessEqual(user.region.width, 116)
-            self.assertLessEqual(assistant.region.width, 116)
-            self.assertLessEqual(tool.region.width, 116)
+            self.assertLessEqual(user.region.width, 120)
+            self.assertGreater(assistant.region.width, 116)
+            self.assertGreater(tool.region.width, 116)
+
+    async def test_transcript_messages_fit_a_narrow_terminal(self) -> None:
+        app = NeuroCodeApp(
+            TuiConversation(),
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(54, 24)) as pilot:
+            app._write_entry("user", "short prompt")
+            app._write_entry("assistant", "assistant response")
+            app._write_entry("tool", "tool output")
+            await pilot.pause()
+
+            transcript = app.query_one("#transcript", VerticalScroll)
+            messages = list(app.query(ConversationMessage))
+            self.assertTrue(messages)
+            self.assertTrue(
+                all(message.region.width <= transcript.region.width for message in messages)
+            )
 
     async def test_assistant_markdown_uses_semantic_styles_without_markup_injection(
         self,
@@ -2363,6 +2385,62 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             await app._discard_pending_assistant()
             self.assertFalse(app._model_loading)
 
+    async def test_ultracode_runtime_bar_separates_application_route_and_provider_effort(
+        self,
+    ) -> None:
+        app = NeuroCodeApp(
+            TuiConversation(),
+            reasoning_effort=ReasoningEffort.ULTRACODE,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            primary = app.query_one("#runtime-primary", Static)
+            self.assertIn(
+                "UltraCode · Auto Routing · Provider max",
+                rendered_text(app, primary.renderable),
+            )
+            self.assertNotIn("→", rendered_text(app, primary.renderable))
+
+            await app._handle_event(
+                AgentEvent.create(
+                    1,
+                    AgentEventKind.ULTRACODE_DELEGATION_PROGRESS,
+                    {"decision": "MAIN_MAX", "state": "running"},
+                )
+            )
+            self.assertIn(
+                "UltraCode · MAIN_MAX · Provider max",
+                rendered_text(app, primary.renderable),
+            )
+
+            await app._handle_event(
+                AgentEvent.create(
+                    2,
+                    AgentEventKind.ULTRACODE_DELEGATION_PROGRESS,
+                    {"decision": "BOUNDED_SWARM", "state": "running"},
+                )
+            )
+            self.assertIn(
+                "UltraCode · Swarm · Provider max",
+                rendered_text(app, primary.renderable),
+            )
+
+            await app._handle_event(
+                AgentEvent.create(
+                    3,
+                    AgentEventKind.ULTRACODE_DELEGATION_PROGRESS,
+                    {"decision": "unrecognized", "state": "running"},
+                )
+            )
+            self.assertIn(
+                "UltraCode · Swarm · Provider max",
+                rendered_text(app, primary.renderable),
+            )
+            await pilot.pause()
+
     async def test_ultracode_orchestration_activity_is_localized_in_english(self) -> None:
         app = NeuroCodeApp(
             TuiConversation(),
@@ -2470,6 +2548,77 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIn("供应商", app.entries[-1].text)
             self.assertIn("fixture/fixture-model", app.entries[-1].text)
+
+    async def test_settings_exposes_agent_preferences_through_existing_boundaries(self) -> None:
+        profiles = ProfileTuiController()
+        preferences = UiPreferencesFixture()
+        app = NeuroCodeApp(
+            TuiConversation(),
+            provider_controller=profiles,
+            ui_preferences=preferences,
+            provider_name="first",
+            model_name="first-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(110, 40)) as pilot:
+            await app.action_open_settings()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, SettingsScreen)
+            self.assertEqual(
+                app.focused.id if app.focused is not None else None, "settings-category-language"
+            )
+            reasoning_row = app.screen.query_one("#settings-category-agent-reasoning", Button)
+            mode_row = app.screen.query_one("#settings-category-agent-interaction-mode", Button)
+            self.assertIn("Agent / Reasoning", rendered_text(app, reasoning_row.render()))
+            self.assertIn("high", rendered_text(app, reasoning_row.render()))
+            self.assertIn("Agent / Interaction mode", rendered_text(app, mode_row.render()))
+            self.assertIn("normal", rendered_text(app, mode_row.render()))
+
+            await pilot.press("tab")
+            self.assertEqual(
+                app.focused.id if app.focused is not None else None,
+                "settings-category-agent-reasoning",
+            )
+            await pilot.press("enter")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, ReasoningEffortScreen):
+                    break
+            self.assertIsInstance(app.screen, ReasoningEffortScreen)
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertNotIsInstance(app.screen, ReasoningEffortScreen)
+
+            await app.action_open_settings()
+            await pilot.pause()
+            await pilot.click("#settings-category-agent-reasoning")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, ReasoningEffortScreen):
+                    break
+            self.assertIsInstance(app.screen, ReasoningEffortScreen)
+            self.assertTrue(await pilot.click("#effort-choice-0"))
+            await pilot.pause()
+            self.assertEqual(profiles.effort_selections, [ReasoningEffort.LOW])
+            self.assertEqual(preferences.saved_efforts, [ReasoningEffort.LOW])
+
+            await app.action_open_settings()
+            await pilot.pause()
+            self.assertTrue(await pilot.click("#settings-category-agent-interaction-mode"))
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, InteractionModeScreen):
+                    break
+            self.assertIsInstance(app.screen, InteractionModeScreen)
+            self.assertTrue(await pilot.click("#interaction-mode-choice-2"))
+            await pilot.pause()
+            self.assertEqual(profiles.mode_selections, [InteractionMode.PLAN])
+            self.assertEqual(preferences.saved_modes, [InteractionMode.PLAN])
+            self.assertIn(
+                "plan",
+                rendered_text(app, app.query_one("#runtime-primary", Static).renderable),
+            )
 
     async def test_first_run_settings_save_a_provider_without_echoing_its_key(self) -> None:
         self.assertEqual(
@@ -3598,14 +3747,14 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(profiles.effort_selections[-1], ReasoningEffort.ULTRACODE)
             self.assertIn("one durable MAIN_MAX", app.entries[-1].text)
             self.assertIn(
-                "ultracode → max",
+                "UltraCode · Auto Routing · Provider max",
                 rendered_text(app, app.query_one("#runtime-primary", Static).renderable),
             )
 
             prompt.value = "/status"
             await pilot.press("enter")
             await pilot.pause()
-            self.assertIn("Effort: ⚡ ultracode → ◆ max", app.entries[-1].text)
+            self.assertIn("Effort: UltraCode · Auto Routing · Provider max", app.entries[-1].text)
 
     async def test_tui_effort_switch_reaches_the_dormant_ultracode_entry(self) -> None:
         runner = SwitchingTuiConversation()

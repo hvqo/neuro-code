@@ -20,6 +20,7 @@ from neuro_code.application.permissions.contracts import PermissionApproval, Per
 from neuro_code.application.permissions.scopes import PermissionScopeCandidate, PermissionScopeKind
 from neuro_code.application.providers.contracts import ProviderOption
 from neuro_code.application.sessions.contracts import SessionOption
+from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.sandbox.models import SandboxProfile
 from neuro_code.interfaces.tui.contracts import SessionSearchCallback
@@ -124,6 +125,106 @@ class ReasoningEffortScreen(ModalScreen[ReasoningEffort | None]):
         effort = self._choice_ids.get(event.button.id or "")
         if effort is not None:
             self.dismiss(effort)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class InteractionModeScreen(ModalScreen[InteractionMode | None]):
+    """Select the application-owned interaction mode.
+
+    选择由应用层拥有的交互模式.
+    """
+
+    CSS = """
+    InteractionModeScreen {
+        align: center middle;
+        background: $background 85%;
+    }
+
+    #interaction-mode-dialog {
+        width: 82%;
+        max-width: 88;
+        height: auto;
+        max-height: 90%;
+        padding: $space-2 $space-3;
+        border: solid $border;
+        background: $surface;
+    }
+
+    #interaction-mode-title {
+        text-style: bold;
+        color: $text-primary;
+        margin-bottom: 1;
+    }
+
+    #interaction-mode-options {
+        height: auto;
+        max-height: 16;
+    }
+
+    #interaction-mode-options MenuOptionButton {
+        width: 100%;
+        height: 3;
+        margin-bottom: $space-0;
+        content-align: left middle;
+    }
+
+    #interaction-mode-help {
+        color: $text-muted;
+        margin-top: 1;
+    }
+    """
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "cancel", "Cancel", show=False),
+    ]
+
+    def __init__(
+        self,
+        selected: InteractionMode,
+        *,
+        language: UiLanguage = UiLanguage.ENGLISH,
+    ) -> None:
+        super().__init__()
+        self.selected = selected
+        self.language = language
+        self._choice_ids = {
+            f"interaction-mode-choice-{index}": mode for index, mode in enumerate(InteractionMode)
+        }
+
+    def compose(self) -> ComposeResult:
+        buttons = [
+            MenuOptionButton(
+                mode.value,
+                secondary=ui_text(
+                    self.language,
+                    f"interaction_mode.description.{mode.value}",
+                ),
+                selected=mode is self.selected,
+                muted=False,
+                primary_width=16,
+                secondary_justify="left",
+                id=f"interaction-mode-choice-{index}",
+            )
+            for index, mode in enumerate(InteractionMode)
+        ]
+        yield Vertical(
+            Label(ui_text(self.language, "interaction_mode.title"), id="interaction-mode-title"),
+            VerticalScroll(*buttons, id="interaction-mode-options"),
+            Static(ui_text(self.language, "interaction_mode.help"), id="interaction-mode-help"),
+            id="interaction-mode-dialog",
+            classes="modal-dialog modal-m",
+        )
+
+    def on_mount(self) -> None:
+        index = tuple(InteractionMode).index(self.selected)
+        self.query_one(f"#interaction-mode-choice-{index}", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        mode = self._choice_ids.get(event.button.id or "")
+        if mode is not None:
+            self.dismiss(mode)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -671,6 +772,7 @@ class SessionSelectionScreen(ModalScreen[str | None]):
 
 
 __all__ = [
+    "InteractionModeScreen",
     "PermissionApprovalScreen",
     "ProviderSelectionScreen",
     "ReasoningEffortScreen",

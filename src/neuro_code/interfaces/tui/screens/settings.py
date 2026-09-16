@@ -11,7 +11,7 @@ from typing import ClassVar
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
@@ -22,6 +22,8 @@ from neuro_code.application.ports.provider_settings import (
     ProviderSettingsStore,
 )
 from neuro_code.domain.background_tasks.models import BackgroundTaskWakePolicy
+from neuro_code.domain.conversation.interaction_mode import InteractionMode
+from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.interfaces.tui.state import _ERROR_MARK
 from neuro_code.interfaces.tui.text import language_name, ui_text
 from neuro_code.interfaces.tui.theme import ERROR_TEXT_STYLE
@@ -63,6 +65,7 @@ class SettingsScreen(ModalScreen[str | None]):
 
     #settings-categories {
         height: auto;
+        max-height: 18;
     }
 
     #settings-categories MenuOptionButton {
@@ -87,22 +90,44 @@ class SettingsScreen(ModalScreen[str | None]):
         *,
         language: UiLanguage,
         provider_settings_available: bool,
+        reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH,
+        interaction_mode: InteractionMode = InteractionMode.NORMAL,
     ) -> None:
         super().__init__()
         self.selected = selected
         self.language = language
         self.provider_settings_available = provider_settings_available
+        self.reasoning_effort = reasoning_effort
+        self.interaction_mode = interaction_mode
 
     def compose(self) -> ComposeResult:
         language_summary = language_name(self.selected, in_language=self.language)
         yield Vertical(
             Label(ui_text(self.language, "settings.title"), id="settings-title"),
             Static(ui_text(self.language, "settings.description"), id="settings-description"),
-            Vertical(
+            VerticalScroll(
                 MenuOptionButton(
                     ui_text(self.language, "settings.category.language.label"),
                     secondary=language_summary,
                     id="settings-category-language",
+                ),
+                MenuOptionButton(
+                    ui_text(self.language, "settings.category.agent_reasoning.label"),
+                    secondary=ui_text(
+                        self.language,
+                        "settings.category.agent_reasoning.value",
+                        effort=self.reasoning_effort.value,
+                    ),
+                    id="settings-category-agent-reasoning",
+                ),
+                MenuOptionButton(
+                    ui_text(self.language, "settings.category.agent_interaction_mode.label"),
+                    secondary=ui_text(
+                        self.language,
+                        "settings.category.agent_interaction_mode.value",
+                        mode=self.interaction_mode.value,
+                    ),
+                    id="settings-category-agent-interaction-mode",
                 ),
                 MenuOptionButton(
                     ui_text(self.language, "settings.category.providers.label"),
@@ -138,6 +163,8 @@ class SettingsScreen(ModalScreen[str | None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         categories = {
             "settings-category-language": "language",
+            "settings-category-agent-reasoning": "agent-reasoning",
+            "settings-category-agent-interaction-mode": "agent-interaction-mode",
             "settings-category-providers": "providers",
             "settings-category-network": "network",
             "settings-category-background-wake": "background-wake",

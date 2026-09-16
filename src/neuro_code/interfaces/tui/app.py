@@ -298,7 +298,7 @@ class NeuroCodeApp(
 
     .conversation-message {
         width: 100%;
-        max-width: 116;
+        max-width: 100%;
         height: auto;
         min-height: 1;
         margin-bottom: $space-1;
@@ -307,6 +307,7 @@ class NeuroCodeApp(
     }
 
     .message-user {
+        max-width: 120;
         margin-bottom: $space-2;
         background: $surface;
         color: $text-primary;
@@ -370,7 +371,7 @@ class NeuroCodeApp(
     #turn-activity {
         display: none;
         width: 100%;
-        max-width: 116;
+        max-width: 100%;
         height: 1;
         padding: $space-0 $space-1;
         background: $background;
@@ -665,6 +666,7 @@ class NeuroCodeApp(
             if interaction_mode_controller is not None
             else interaction_mode
         )
+        self._ultracode_decision = None
         self._auto_mode_unrestricted = (
             interaction_mode_controller.auto_mode_unrestricted
             if interaction_mode_controller is not None
