@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from neuro_code.application.ports.tools import ToolContext
 from neuro_code.domain.conversation.messages import Message, Role, SyntheticReason
 from neuro_code.domain.workspace.skills import (
     MAX_NAME_LEN,
@@ -919,7 +920,7 @@ class TestAgentRuntimeSkillInjection:
         provider = MagicMock(spec=ModelProvider)
         permissions = PermissionManager(mode=PermissionMode.BYPASS)
         tools = ToolRegistry()
-        tool_context = MagicMock()
+        tool_context = ToolContext(Path.cwd())
         runtime = AgentRuntime(
             provider=provider,
             tools=tools,
@@ -954,7 +955,7 @@ class TestAgentRuntimeSkillInjection:
         provider = MagicMock(spec=ModelProvider)
         permissions = PermissionManager(mode=PermissionMode.BYPASS)
         tools = ToolRegistry()
-        tool_context = MagicMock()
+        tool_context = ToolContext(Path.cwd())
         runtime = AgentRuntime(
             provider=provider,
             tools=tools,
@@ -981,7 +982,7 @@ class TestAgentRuntimeSkillInjection:
         provider = MagicMock(spec=ModelProvider)
         permissions = PermissionManager(mode=PermissionMode.BYPASS)
         tools = ToolRegistry()
-        tool_context = MagicMock()
+        tool_context = ToolContext(Path.cwd())
         runtime = AgentRuntime(
             provider=provider,
             tools=tools,
