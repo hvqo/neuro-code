@@ -53,6 +53,7 @@ from neuro_code.infrastructure.sandbox.local_process import ProcessTreeOwnedLoca
 from neuro_code.infrastructure.sandbox.posix_workspace_inode import PosixWorkspaceInodeAudit
 from neuro_code.infrastructure.sandbox.process_tree import ProcessTree
 from neuro_code.infrastructure.sandbox.sandbox import _trusted_system_executable, _within
+from neuro_code.infrastructure.sandbox.shell_contract import POSIX_SYSTEM_SHELL
 from neuro_code.shared.errors import SandboxError
 
 if TYPE_CHECKING:
@@ -397,7 +398,7 @@ class LinuxBubblewrapLocalProcessSandbox(LocalProcessSandbox):
         args.extend(("--chdir", str(request.cwd), "--"))
         if request.uses_shell:
             assert request.shell_command is not None
-            args.extend(("/bin/sh", "-c", request.shell_command))
+            args.extend((str(POSIX_SYSTEM_SHELL), "-c", request.shell_command))
         else:
             assert request.executable is not None
             args.extend((request.executable, *request.arguments))

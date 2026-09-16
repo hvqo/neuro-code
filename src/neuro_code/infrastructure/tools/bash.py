@@ -38,6 +38,7 @@ from neuro_code.domain.background_tasks.models import BackgroundTaskSnapshot, Ba
 from neuro_code.domain.sandbox.models import SandboxProfile
 from neuro_code.domain.tools import ToolDefinition, ToolResult
 from neuro_code.infrastructure.sandbox.local_process import ProcessTreeLocalProcessSandbox
+from neuro_code.infrastructure.sandbox.shell_contract import model_shell_guidance
 from neuro_code.shared.errors import BackgroundTaskCapacityError, ToolError
 
 LOGGER = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ class BashTool:
             "command": {"type": "string"},
             "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
         }
-        description = "Run a shell command in the current workspace."
+        description = f"Run a shell command in the current workspace. {model_shell_guidance()}"
         if background_enabled:
             properties["is_background"] = {
                 "type": "boolean",

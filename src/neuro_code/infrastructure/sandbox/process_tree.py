@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from neuro_code.infrastructure.sandbox.shell_contract import posix_system_shell_executable
 from neuro_code.infrastructure.sandbox.windows_job import WindowsJobObject
 from neuro_code.infrastructure.sandbox.windows_job_process import WindowsJobProcess
 
@@ -148,7 +149,11 @@ class ProcessTree:
                         pipe_stdin=pipe_stdin,
                     )
             elif shell:
-                process = await asyncio.create_subprocess_shell(executable, **options)
+                process = await asyncio.create_subprocess_shell(
+                    executable,
+                    executable=posix_system_shell_executable(),
+                    **options,
+                )
             else:
                 process = await asyncio.create_subprocess_exec(executable, *arguments, **options)
             process_group = cls._validated_unix_group(process.pid) if os.name == "posix" else None

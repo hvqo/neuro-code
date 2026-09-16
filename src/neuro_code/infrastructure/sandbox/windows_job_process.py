@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn, Protocol, Self, cast
 
+from neuro_code.infrastructure.sandbox.shell_contract import WINDOWS_SYSTEM_SHELL_NAME
 from neuro_code.infrastructure.sandbox.windows_process import (
     windows_environment_block as _environment_block,
 )
@@ -860,7 +861,7 @@ def _windows_shell(host_environment: Mapping[str, str] | None = None) -> str:
         raise FileNotFoundError(
             "shell not found: neither an absolute %ComSpec% nor %SystemRoot% is set"
         )
-    if ntpath.basename(comspec).casefold() != "cmd.exe":
+    if ntpath.basename(comspec).casefold() != WINDOWS_SYSTEM_SHELL_NAME:
         raise FileNotFoundError("shell not found: trusted shell must be cmd.exe")
     return comspec
 

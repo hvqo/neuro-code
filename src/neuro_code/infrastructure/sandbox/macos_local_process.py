@@ -43,6 +43,7 @@ from neuro_code.infrastructure.sandbox.local_process import ProcessTreeOwnedLoca
 from neuro_code.infrastructure.sandbox.posix_workspace_inode import PosixWorkspaceInodeAudit
 from neuro_code.infrastructure.sandbox.process_tree import ProcessTree
 from neuro_code.infrastructure.sandbox.sandbox import _within
+from neuro_code.infrastructure.sandbox.shell_contract import POSIX_SYSTEM_SHELL
 from neuro_code.shared.errors import SandboxError
 
 if TYPE_CHECKING:
@@ -55,7 +56,7 @@ if TYPE_CHECKING:
     )
 
 _SANDBOX_EXEC: Final = Path("/usr/bin/sandbox-exec")
-_TRUSTED_SHELL: Final = Path("/bin/sh")
+_TRUSTED_SHELL: Final = POSIX_SYSTEM_SHELL
 _SYSTEM_READ_ROOTS: Final = (
     Path("/System"),
     Path("/usr"),

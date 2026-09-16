@@ -139,6 +139,7 @@ class BashCommandAnalysisTests(unittest.TestCase):
             "git status > status.txt",
             "python -c 'pytest'",
             "uv run python -m pytest --rootdir=/tmp/outside",
+            "set -o pipefail; pytest -q",
         )
         for command in commands:
             with self.subTest(command=command):

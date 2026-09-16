@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import json
 import os
+import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -126,6 +128,7 @@ from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionSt
 from neuro_code.infrastructure.providers.failover import FailoverModelProvider, ProviderCandidate
 from neuro_code.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
 from neuro_code.infrastructure.tools.background_tasks import TaskOutputTool
+from neuro_code.infrastructure.tools.bash import BashTool
 from neuro_code.infrastructure.tools.plans import UpdatePlanTool
 from neuro_code.infrastructure.tools.registry import ToolRegistry, default_tool_registry
 from neuro_code.infrastructure.workspace.changes import FilesystemWorkspaceChangeObserver
@@ -2436,6 +2439,51 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failed.data["name"], "missing")
         self.assertEqual(failed.data["content"], "unknown tool: missing")
         self.assertEqual(observer.capture_roots, [])
+
+    async def test_nonzero_bash_result_is_recoverable_without_reexecution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "invocations.txt"
+            code = (
+                "from pathlib import Path;import sys;"
+                "p=Path(sys.argv[1]);p.write_text(p.read_text()+'x' if p.exists() else 'x');"
+                "print('recoverable stderr',file=sys.stderr);sys.exit(7)"
+            )
+            argv = [sys.executable, "-c", code, str(marker)]
+            command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+            provider = ScriptedProvider(
+                (
+                    (
+                        ModelToolCall(ToolCall("failed-bash", "bash", {"command": command})),
+                        ModelCompleted("tool_calls"),
+                    ),
+                    (ModelTextDelta("recovered"), ModelCompleted("stop")),
+                )
+            )
+            runtime = AgentRuntime(
+                provider=provider,
+                tools=MinimalToolCollection((BashTool(),)),
+                workspace_change_observer=EmptyWorkspaceChangeObserver(),
+                permissions=PermissionManager(mode=PermissionMode.BYPASS),
+                tool_context=ToolContext(Path(directory)),
+            )
+
+            result = await runtime.run("run a command and recover if it fails")
+
+            self.assertEqual(result.response, "recovered")
+            self.assertEqual(len(provider.calls), 2)
+            failed = next(
+                event for event in result.events if event.kind is AgentEventKind.TOOL_FAILED
+            )
+            self.assertEqual(failed.data["name"], "bash")
+            self.assertTrue(failed.data["is_error"])
+            metadata = failed.data["metadata"]
+            assert isinstance(metadata, dict)
+            self.assertEqual(metadata["exit_code"], 7)
+            self.assertEqual(marker.read_text(), "x")
+            tool_message = next(
+                message for message in provider.calls[1].messages if message.role is Role.TOOL
+            )
+            self.assertIn("recoverable stderr", tool_message.content)
 
     async def test_workspace_observer_preserves_side_effect_timing_and_payload(self) -> None:
         event_log: list[str] = []
