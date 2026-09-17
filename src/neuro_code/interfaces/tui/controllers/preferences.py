@@ -198,9 +198,14 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
         if not result.changed:
             self._write_ui_entry(
                 "status",
-                "effort.already_selected",
+                (
+                    "effort.already_selected_ultracode"
+                    if result.requested is ReasoningEffort.ULTRACODE
+                    else "effort.already_selected"
+                ),
                 glyph=result.requested.glyph,
                 effort=result.requested.value,
+                requested=result.requested.value,
             )
             return
         if result.requested is ReasoningEffort.ULTRACODE:
@@ -208,7 +213,6 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                 "status",
                 "effort.changed_ultracode",
                 requested=result.requested.value,
-                effective=result.effective.value,
             )
         else:
             self._write_ui_entry(

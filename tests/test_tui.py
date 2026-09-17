@@ -164,6 +164,7 @@ from neuro_code.interfaces.tui.widgets import (
     ConversationMessage,
     PromptInput,
     ToolFeedbackMessage,
+    TranscriptScroll,
 )
 from neuro_code.shared.errors import ProviderError
 from neuro_code.shared.ui_language import UiLanguage
@@ -2385,7 +2386,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             await app._discard_pending_assistant()
             self.assertFalse(app._model_loading)
 
-    async def test_ultracode_runtime_bar_separates_application_route_and_provider_effort(
+    async def test_ultracode_runtime_bar_shows_only_product_route(
         self,
     ) -> None:
         app = NeuroCodeApp(
@@ -2399,9 +2400,10 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(120, 30)) as pilot:
             primary = app.query_one("#runtime-primary", Static)
             self.assertIn(
-                "UltraCode · Auto Routing · Provider max",
+                "UltraCode · Auto",
                 rendered_text(app, primary.renderable),
             )
+            self.assertNotIn("Provider max", rendered_text(app, primary.renderable))
             self.assertNotIn("→", rendered_text(app, primary.renderable))
 
             await app._handle_event(
@@ -2412,9 +2414,10 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             self.assertIn(
-                "UltraCode · MAIN_MAX · Provider max",
+                "UltraCode · MAIN_MAX",
                 rendered_text(app, primary.renderable),
             )
+            self.assertNotIn("Provider max", rendered_text(app, primary.renderable))
 
             await app._handle_event(
                 AgentEvent.create(
@@ -2424,9 +2427,10 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             self.assertIn(
-                "UltraCode · Swarm · Provider max",
+                "UltraCode · Swarm",
                 rendered_text(app, primary.renderable),
             )
+            self.assertNotIn("Provider max", rendered_text(app, primary.renderable))
 
             await app._handle_event(
                 AgentEvent.create(
@@ -2436,7 +2440,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             self.assertIn(
-                "UltraCode · Swarm · Provider max",
+                "UltraCode · Swarm",
                 rendered_text(app, primary.renderable),
             )
             await pilot.pause()
@@ -3745,16 +3749,65 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(profiles.effort_selections[-1], ReasoningEffort.ULTRACODE)
-            self.assertIn("one durable MAIN_MAX", app.entries[-1].text)
+            self.assertEqual(
+                app.entries[-1].text,
+                "Reasoning effort changed to ultracode; it applies from the next model step.",
+            )
             self.assertIn(
-                "UltraCode · Auto Routing · Provider max",
+                "UltraCode · Auto",
                 rendered_text(app, app.query_one("#runtime-primary", Static).renderable),
             )
+            self.assertNotIn(
+                "Provider max",
+                rendered_text(app, app.query_one("#runtime-primary", Static).renderable),
+            )
+
+            prompt.value = "/effort ultracode"
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertEqual(app.entries[-1].text, "Reasoning effort is already ultracode.")
 
             prompt.value = "/status"
             await pilot.press("enter")
             await pilot.pause()
             self.assertIn("Effort: UltraCode · Auto Routing · Provider max", app.entries[-1].text)
+
+    async def test_transcript_scrollbar_is_hidden_until_scrolling_then_hides_when_idle(
+        self,
+    ) -> None:
+        app = NeuroCodeApp(
+            TuiConversation(),
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(80, 18)) as pilot:
+            transcript = app.query_one("#transcript", TranscriptScroll)
+            self.assertFalse(transcript.show_vertical_scrollbar)
+
+            for index in range(40):
+                app._write_entry("assistant", f"transcript line {index}")
+            await pilot.pause()
+            self.assertTrue(transcript.show_vertical_scrollbar)
+            width_with_hidden_scrollbar = transcript.region.width
+            await pilot.pause(TranscriptScroll.SCROLLBAR_HIDE_DELAY_SECONDS + 0.1)
+            self.assertFalse(transcript.vertical_scrollbar.display)
+
+            transcript.action_page_up()
+            await pilot.pause()
+            self.assertTrue(transcript.vertical_scrollbar.display)
+            self.assertEqual(transcript.region.width, width_with_hidden_scrollbar)
+            self.assertLess(transcript.scroll_y, transcript.max_scroll_y)
+
+            await pilot.pause(TranscriptScroll.SCROLLBAR_HIDE_DELAY_SECONDS + 0.1)
+            self.assertFalse(transcript.vertical_scrollbar.display)
+            previous_scroll = transcript.scroll_y
+            transcript.action_page_down()
+            await pilot.pause()
+            self.assertGreater(transcript.scroll_y, previous_scroll)
+
+        self.assertIsNone(transcript._scrollbar_hide_timer)
 
     async def test_tui_effort_switch_reaches_the_dormant_ultracode_entry(self) -> None:
         runner = SwitchingTuiConversation()
@@ -3809,6 +3862,26 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(
                 "delegated after runtime switch", "\n".join(entry.text for entry in app.entries)
             )
+
+    async def test_ultracode_switch_feedback_is_concise_in_simplified_chinese(self) -> None:
+        profiles = ProfileTuiController()
+        app = NeuroCodeApp(
+            TuiConversation(),
+            provider_controller=profiles,
+            language=UiLanguage.SIMPLIFIED_CHINESE,
+            provider_name="first",
+            model_name="first-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(80, 24)):
+            await app._apply_reasoning_effort(ReasoningEffort.ULTRACODE)
+            self.assertEqual(
+                app.entries[-1].text,
+                "思考强度已切换为 ultracode\N{FULLWIDTH SEMICOLON}从下一次模型步骤开始生效。",
+            )
+            await app._apply_reasoning_effort(ReasoningEffort.ULTRACODE)
+            self.assertEqual(app.entries[-1].text, "思考强度已经是 ultracode。")
 
     async def test_effort_validation_and_running_turn_guard_do_not_change_policy(self) -> None:
         runner = CancellableTuiConversation()
@@ -3875,6 +3948,22 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 str(Path("/workspace")),
                 rendered_text(app, secondary.renderable, width=secondary.region.width),
             )
+
+    async def test_wide_runtime_layout_uses_the_full_transcript_width(self) -> None:
+        for width in (160, 220):
+            with self.subTest(width=width):
+                app = NeuroCodeApp(
+                    TuiConversation(),
+                    provider_name="fixture",
+                    model_name="fixture-model",
+                    cwd=Path("/workspace"),
+                )
+
+                async with app.run_test(size=(width, 24)):
+                    transcript = app.query_one("#transcript", TranscriptScroll)
+                    runtime_bar = app.query_one("#runtime-bar")
+                    self.assertGreater(transcript.region.width, 116)
+                    self.assertLessEqual(runtime_bar.region.right, width)
 
     async def test_terminal_size_fallback_expands_the_full_screen_layout(self) -> None:
         app = NeuroCodeApp(

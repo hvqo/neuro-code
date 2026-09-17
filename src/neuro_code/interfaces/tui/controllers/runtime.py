@@ -232,19 +232,24 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         self._ultracode_decision = decision
         self._refresh_runtime_bar()
 
-    def _ultracode_route_label(self) -> str:
+    def _ultracode_route_label(self, *, detailed: bool = False) -> str:
         decision = self._ultracode_decision
         if decision is UltracodeDelegationDecision.MAIN_MAX:
             return ui_text(self._language, "runtime.ultracode.main_max")
         if decision is UltracodeDelegationDecision.BOUNDED_SWARM:
             return ui_text(self._language, "runtime.ultracode.swarm")
-        return ui_text(self._language, "runtime.ultracode.auto_routing")
+        return ui_text(
+            self._language,
+            "runtime.ultracode.auto_routing_detail"
+            if detailed
+            else "runtime.ultracode.auto_routing",
+        )
 
     def _ultracode_status_summary(self) -> str:
         return " · ".join(
             (
                 ui_text(self._language, "runtime.ultracode"),
-                self._ultracode_route_label(),
+                self._ultracode_route_label(detailed=True),
                 ui_text(
                     self._language,
                     "runtime.ultracode.provider_effort",
@@ -265,15 +270,6 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
             )
             effort.append(" · ", style=TEXT_DIM)
             effort.append(self._ultracode_route_label(), style=TEXT_SECONDARY)
-            effort.append(" · ", style=TEXT_DIM)
-            effort.append(
-                ui_text(
-                    self._language,
-                    "runtime.ultracode.provider_effort",
-                    effort=effective.value,
-                ),
-                style=TEXT_SECONDARY,
-            )
             return effort
         effort.append(requested.value, style=TEXT_SECONDARY)
         if effective is not requested:

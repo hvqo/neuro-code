@@ -15,8 +15,10 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding, BindingType
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
+from textual.timer import Timer
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static, TextArea
 
 from neuro_code.interfaces.tui.state import (
@@ -158,6 +160,101 @@ class AttachedTerminalPanel(Vertical):
 
     def blur_input(self) -> None:
         self.query_one("#attached-terminal-input", Input).blur()
+
+
+class TranscriptScroll(VerticalScroll):
+    """Conversation scroll container with an idle-hidden scrollbar.
+
+    The scrollbar remains a Textual-owned layout gutter while its visual
+    widget is hidden.  Scrolling still uses the inherited scroll actions and
+    the existing transcript follow logic.
+
+    带有空闲自动隐藏滚动条的会话滚动容器. 滚动条始终保留 Textual 所有的布局槽位,
+    只隐藏视觉组件; 滚动动作与现有会话跟随逻辑保持不变.
+    """
+
+    SCROLLBAR_HIDE_DELAY_SECONDS = 0.8
+
+    def __init__(
+        self,
+        *children: Widget,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
+        disabled: bool = False,
+        can_focus: bool | None = None,
+        can_focus_children: bool | None = None,
+        can_maximize: bool | None = None,
+    ) -> None:
+        self._scrollbar_hide_timer: Timer | None = None
+        self._scrollbar_visible = False
+        super().__init__(
+            *children,
+            name=name,
+            id=id,
+            classes=classes,
+            disabled=disabled,
+            can_focus=can_focus,
+            can_focus_children=can_focus_children,
+            can_maximize=can_maximize,
+        )
+
+    def on_unmount(self) -> None:
+        timer = self._scrollbar_hide_timer
+        self._scrollbar_hide_timer = None
+        if timer is not None:
+            timer.stop()
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if old_value != new_value:
+            self._show_scrollbar_temporarily()
+
+    def _refresh_scrollbars(self) -> None:
+        super()._refresh_scrollbars()
+        if not self.show_vertical_scrollbar:
+            self._scrollbar_visible = False
+        if self._vertical_scrollbar is not None:
+            self._vertical_scrollbar.display = (
+                self._scrollbar_visible and self.show_vertical_scrollbar
+            )
+
+    def _show_scrollbar_temporarily(self) -> None:
+        if not self.show_vertical_scrollbar:
+            self._scrollbar_visible = False
+            return
+        self._scrollbar_visible = True
+        self.vertical_scrollbar.display = True
+        timer = self._scrollbar_hide_timer
+        if timer is not None:
+            timer.stop()
+        self._scrollbar_hide_timer = self.set_timer(
+            self.SCROLLBAR_HIDE_DELAY_SECONDS,
+            self._hide_scrollbar,
+            name="transcript-scrollbar-hide",
+        )
+
+    def _hide_scrollbar(self) -> None:
+        self._scrollbar_hide_timer = None
+        self._scrollbar_visible = False
+        if self._vertical_scrollbar is not None:
+            self._vertical_scrollbar.display = False
+
+    def action_scroll_up(self) -> None:
+        self._show_scrollbar_temporarily()
+        super().action_scroll_up()
+
+    def action_scroll_down(self) -> None:
+        self._show_scrollbar_temporarily()
+        super().action_scroll_down()
+
+    def action_page_up(self) -> None:
+        self._show_scrollbar_temporarily()
+        super().action_page_up()
+
+    def action_page_down(self) -> None:
+        self._show_scrollbar_temporarily()
+        super().action_page_down()
 
 
 class ConversationMessage(Static):
@@ -418,4 +515,5 @@ __all__ = [
     "MenuOptionButton",
     "PromptInput",
     "ToolFeedbackMessage",
+    "TranscriptScroll",
 ]
