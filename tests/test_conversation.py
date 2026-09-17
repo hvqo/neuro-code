@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from collections.abc import AsyncIterator, Sequence
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -1599,10 +1600,19 @@ class AgentConversationTests(unittest.IsolatedAsyncioTestCase):
                     cancellation_policy=TurnCancellationPolicy.REWIND_PRISTINE,
                 )
             )
-            await asyncio.wait_for(provider.started.wait(), timeout=5)
-            turn.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await turn
+            turn_drained = False
+            try:
+                await asyncio.wait_for(provider.started.wait(), timeout=5)
+                turn.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await turn
+                turn_drained = True
+            finally:
+                if not turn_drained:
+                    if not turn.done():
+                        turn.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await turn
 
             session_id = conversation.session_id
             self.assertIsNotNone(session_id)
