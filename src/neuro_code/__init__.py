@@ -1,7 +1,8 @@
 """Neuro Code public package metadata.
 
-Neuro Code 的公开包元数据."""
+Neuro Code 的公开包元数据.
+"""
 
-from typing import Final
+from neuro_code._version import __version__
 
-__version__: Final = "0.1.0.dev0"
+__all__ = ["__version__"]

@@ -47,6 +47,10 @@ uv run neuro-code -p "Explain this repository"
 - **Sessions** — SQLite-backed sessions support resume, workspace-scoped search, titles, fork, export/import, and durable plan/task metadata.
 - **TUI** — A Textual interface provides streaming conversation, provider and session selectors, approval prompts, slash commands, Markdown rendering, and persisted UI preferences.
 
+For a local `0.1.0a1` wheel/sdist build and clean-install check, follow the
+[preview release candidate procedure](docs/en/release-candidate.md). No public
+package has been published yet.
+
 ## Safety & Control
 
 - **Workspace boundary** — Structured filesystem operations resolve targets inside the launch workspace and any explicitly configured roots; link-like escapes are rejected.
@@ -77,6 +81,7 @@ Provider/model compatibility, platform sandbox coverage, and protocol surface ar
 | Roadmap | [Development plan](docs/en/rewrite-plan.md) | [开发计划](docs/zh-CN/rewrite-plan.md) |
 | Contributing | [Contributing](docs/en/CONTRIBUTING.md) | [贡献指南](docs/zh-CN/CONTRIBUTING.md) |
 | Architecture decisions | [ADRs](docs/en/adr/) | [ADR](docs/zh-CN/adr/) |
+| Preview candidate | [Release candidate](docs/en/release-candidate.md) | [预览候选](docs/zh-CN/release-candidate.md) |
 
 ## Contributing
 
