@@ -41,6 +41,7 @@ _ALLOWED_TARGET_LAYERS = {
 
 _EXACT_LAYERS = {
     "neuro_code": _SHARED,
+    "neuro_code._version": _SHARED,
     "neuro_code.__main__": _INTERFACES,
     "neuro_code.application.permissions.broker": _APPLICATION,
     "neuro_code.application.permissions.service": _APPLICATION,
@@ -1087,7 +1088,7 @@ def test_source_package_top_level_is_architecture_only() -> None:
         for path in _PACKAGE_ROOT.iterdir()
         if path.is_dir() and path.name != "__pycache__" and any(path.rglob("*.py"))
     }
-    assert source_files == {"__init__.py", "__main__.py"}
+    assert source_files == {"__init__.py", "__main__.py", "_version.py"}
     assert source_packages == {
         "application",
         "bootstrap",

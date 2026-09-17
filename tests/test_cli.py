@@ -1454,7 +1454,7 @@ api_key_env = "FIXTURE_KEY"
             exit_code = main(("version", "--json"))
         self.assertEqual(exit_code, 0)
         payload = json.loads(output.getvalue())
-        self.assertEqual(payload, {"name": "neuro-code", "version": "0.1.0.dev0"})
+        self.assertEqual(payload, {"name": "neuro-code", "version": "0.1.0a1"})
 
     def test_inspect_redacts_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -929,7 +929,6 @@ wheels = [
 
 [[package]]
 name = "neuro-code"
-version = "0.1.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol" },
@@ -944,6 +943,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "packaging" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -963,6 +963,7 @@ requires-dist = [
     { name = "httpx", extras = ["socks"], marker = "extra == 'socks'", specifier = ">=0.28,<1" },
     { name = "mcp", specifier = ">=1.28.1,<2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.14" },
+    { name = "packaging", marker = "extra == 'dev'", specifier = ">=24" },
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25" },
@@ -973,7 +974,7 @@ requires-dist = [
     { name = "types-pygments", marker = "extra == 'dev'", specifier = ">=2.19" },
     { name = "websockets", specifier = ">=13,<16" },
 ]
-provides-extras = ["tui", "socks", "dev"]
+provides-extras = ["dev", "socks", "tui"]
 
 [[package]]
 name = "packaging"

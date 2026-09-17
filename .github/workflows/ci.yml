@@ -484,3 +484,24 @@ jobs:
           unexpected = [name for name in removed if exists(name)]
           assert not unexpected, f"unexpected compatibility modules: {unexpected}"
           PY
+
+  release-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - name: Build and verify preview candidate
+        run: uv run python scripts/release_candidate.py
+      - name: Upload preview candidate bundle
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: neuro-code-preview-candidate
+          path: dist/*
+          if-no-files-found: warn

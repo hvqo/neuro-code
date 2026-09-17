@@ -39,6 +39,16 @@ uv run neuro
 uv run neuro-code -p "Explain this repository"
 ```
 
+### 构建的预览候选产物
+
+R1 可以在不发布包的情况下构建并验证本地 `0.1.0a1` wheel 和 sdist。请参阅[预览版候选构建流程](release-candidate.md)，
+然后在 checkout 外的新环境中安装生成的 wheel。
+
+### 未来的公开安装
+
+目前尚未发布公开包。`uv tool install neuro-code`、`pipx install neuro-code` 以及
+PyPI/TestPyPI 安装属于未来发布流程，不是当前支持声明。
+
 ### 显式执行验证
 
 可以通过显式启动参数，为普通用户回合指定一个有界的验证命令：
@@ -91,6 +101,7 @@ Provider/model 兼容性、平台 sandbox 覆盖范围和协议能力仍在演�
 |---|---|---|
 | 架构 | [架构](architecture.md) | [Architecture](../en/architecture.md) |
 | 兼容性 | [兼容性矩阵](compatibility-matrix.md) | [Compatibility matrix](../en/compatibility-matrix.md) |
+| 预览候选 | [预览候选](release-candidate.md) | [Release candidate](../en/release-candidate.md) |
 | 路线图 | [开发计划](rewrite-plan.md) | [Development plan](../en/rewrite-plan.md) |
 | 贡献 | [贡献指南](CONTRIBUTING.md) | [Contributing](../en/CONTRIBUTING.md) |
 | 架构决策 | [ADR](adr/) | [ADRs](../en/adr/) |

@@ -13,25 +13,28 @@ slices; remaining interface and protocol work is tracked in the
 
 ## Install and launch
 
-Install the released package once with a tool that exposes Python console
-scripts globally, without activating a virtual environment for each use:
+### Source development
+
+The current supported workflow is a source checkout:
 
 ```bash
-uv tool install neuro-code
-# or: pipx install neuro-code
+git clone https://github.com/hvqo/neuro-code.git
+cd neuro-code
+uv sync --extra dev
+uv run neuro
 ```
 
-Then open a terminal in any directory and use any equivalent TUI launch form;
-that directory becomes the workspace:
+### Built preview candidate
 
-```bash
-neuro
-neuro code
-neuro-code
-```
+R1 can build and verify a local `0.1.0a1` wheel and sdist without publishing
+them. Follow the [preview release candidate procedure](release-candidate.md),
+then install a produced wheel from outside the checkout in a fresh environment.
 
-Textual is a normal package dependency, so a standard installation includes
-the TUI. During source development, use `uv run neuro` instead.
+### Future public installation
+
+No public package has been published yet. `uv tool install neuro-code`,
+`pipx install neuro-code`, and PyPI/TestPyPI installation are future release
+paths rather than current support claims.
 
 ## Development
 
