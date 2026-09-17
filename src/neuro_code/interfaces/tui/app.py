@@ -12,7 +12,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.geometry import Size
 from textual.widget import Widget
 from textual.widgets import Static
@@ -126,6 +126,7 @@ from neuro_code.interfaces.tui.widgets import (
     AttachedTerminalPanel,
     ConversationMessage,
     PromptInput,
+    TranscriptScroll,
 )
 from neuro_code.shared.ui_language import UiLanguage
 
@@ -294,6 +295,7 @@ class NeuroCodeApp(
         padding: $space-2 $space-4;
         background: $background;
         color: $text-body;
+        scrollbar-size-vertical: 1;
     }
 
     .conversation-message {
@@ -785,7 +787,7 @@ class NeuroCodeApp(
             yield Static(id="brand")
             yield Static(id="header-space")
             yield Static(id="clock")
-        yield VerticalScroll(id="transcript")
+        yield TranscriptScroll(id="transcript")
         yield AttachedTerminalPanel(id="attached-terminal-panel")
         with Vertical(id="composer"):
             yield Static(id="turn-activity")
