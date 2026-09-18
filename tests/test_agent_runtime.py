@@ -665,6 +665,43 @@ def observing_supervisor_factory(
     return factory
 
 
+_AGENT_RUNTIME_CHECKPOINT_TIMEOUT_SECONDS = 20.0
+
+
+async def _wait_for_runtime_checkpoint(
+    checkpoint: asyncio.Event,
+    turn: asyncio.Task[Any],
+    *,
+    checkpoint_name: str,
+) -> None:
+    """Wait for a fixture checkpoint without orphaning an event waiter."""
+
+    checkpoint_wait = asyncio.create_task(checkpoint.wait())
+    try:
+        done, _pending = await asyncio.wait(
+            (checkpoint_wait, turn),
+            timeout=_AGENT_RUNTIME_CHECKPOINT_TIMEOUT_SECONDS,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if checkpoint_wait in done:
+            await checkpoint_wait
+            return
+        if turn in done:
+            result = turn.result()
+            raise AssertionError(
+                f"runtime turn completed before {checkpoint_name} checkpoint "
+                f"with result type {type(result).__name__}"
+            )
+        raise TimeoutError(
+            f"timed out waiting for {checkpoint_name} checkpoint within "
+            f"{_AGENT_RUNTIME_CHECKPOINT_TIMEOUT_SECONDS:.0f}s"
+        )
+    finally:
+        if not checkpoint_wait.done():
+            checkpoint_wait.cancel()
+        await asyncio.gather(checkpoint_wait, return_exceptions=True)
+
+
 class DecisionInjectingSupervisor(AgentExecutionSupervisor):
     """Return one explicit decision while preserving normal observation counters.
 
@@ -680,6 +717,37 @@ class DecisionInjectingSupervisor(AgentExecutionSupervisor):
 
 
 class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_runtime_checkpoint_surfaces_an_early_turn_failure(self) -> None:
+        checkpoint = asyncio.Event()
+
+        async def fail_before_checkpoint() -> None:
+            raise RuntimeError("fixture turn failed before checkpoint")
+
+        turn = asyncio.create_task(fail_before_checkpoint())
+        with self.assertRaisesRegex(RuntimeError, "fixture turn failed before checkpoint"):
+            await _wait_for_runtime_checkpoint(
+                checkpoint,
+                turn,
+                checkpoint_name="fixture",
+            )
+
+    async def test_runtime_checkpoint_rejects_an_early_successful_turn(self) -> None:
+        checkpoint = asyncio.Event()
+
+        async def complete_before_checkpoint() -> str:
+            return "completed before checkpoint"
+
+        turn = asyncio.create_task(complete_before_checkpoint())
+        with self.assertRaisesRegex(
+            AssertionError,
+            "runtime turn completed before fixture checkpoint",
+        ):
+            await _wait_for_runtime_checkpoint(
+                checkpoint,
+                turn,
+                checkpoint_name="fixture",
+            )
+
     def test_runtime_budget_guidance_has_distinct_bounded_pressure_actions(self) -> None:
         budget = observation_budget(
             max_model_calls=100,
@@ -3500,7 +3568,11 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
             turn = asyncio.create_task(runtime.run("Edit note.txt"))
             try:
-                await asyncio.wait_for(approver.requested.wait(), timeout=5)
+                await _wait_for_runtime_checkpoint(
+                    approver.requested,
+                    turn,
+                    checkpoint_name="approval request",
+                )
                 self.assertEqual(target.read_text(encoding="utf-8"), "original")
                 self.assertNotIn("changed", approver.requests[0].summary)
 
@@ -3619,7 +3691,11 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 runtime.run("Edit note.txt", sink=lambda event: observed.append(event.kind))
             )
             try:
-                await asyncio.wait_for(approver.requested.wait(), timeout=5)
+                await _wait_for_runtime_checkpoint(
+                    approver.requested,
+                    turn,
+                    checkpoint_name="approval request",
+                )
                 turn.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await turn
@@ -3693,14 +3769,19 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
             turn = asyncio.create_task(runtime.run("Run both tools"))
-            # Persisted turn/tool write-ahead markers add a bounded SQLite
-            # boundary before the tool body. Keep this synchronization timeout
-            # independent of normal local scheduling variance across Python
-            # versions and hosted CI runners.
-            await asyncio.wait_for(blocking.started.wait(), timeout=5)
-            turn.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await turn
+            try:
+                await _wait_for_runtime_checkpoint(
+                    blocking.started,
+                    turn,
+                    checkpoint_name="blocking tool start",
+                )
+                turn.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await turn
+            finally:
+                if not turn.done():
+                    turn.cancel()
+                await asyncio.gather(turn, return_exceptions=True)
 
             self.assertTrue(blocking.cancelled)
             self.assertFalse(pending.executed)
@@ -4272,10 +4353,19 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 ),
             )
             turn = asyncio.create_task(cancellation_runtime.run("cancel"))
-            await asyncio.wait_for(provider.started.wait(), timeout=1)
-            turn.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await turn
+            try:
+                await _wait_for_runtime_checkpoint(
+                    provider.started,
+                    turn,
+                    checkpoint_name="provider start",
+                )
+                turn.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await turn
+            finally:
+                if not turn.done():
+                    turn.cancel()
+                await asyncio.gather(turn, return_exceptions=True)
 
     async def test_supervision_isolated_for_each_runtime_turn(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
