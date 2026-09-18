@@ -755,8 +755,9 @@ def run_golden_path(wheel: Path, *, report_path: Path | None = None) -> dict[str
         "wheel": wheel.name,
         "wheel_sha256": _sha256(wheel),
         "build_backend_drift_note": (
-            "R1 observed Hatchling 1.32.0 to 1.32.3 metadata drift; R2 records this "
-            "as release-readiness hardening and does not pin the backend."
+            "R1 observed Hatchling 1.32.0 to 1.32.3 metadata drift; release readiness "
+            "freezes the validated R2 backend at Hatchling 1.32.3 and records it in "
+            "release-manifest.json."
         ),
     }
     try:
