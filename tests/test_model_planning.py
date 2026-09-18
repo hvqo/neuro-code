@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 from collections.abc import AsyncIterator
-from contextlib import closing, suppress
+from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -159,6 +159,81 @@ async def _store_with_sessions(
     parent = await store.create_session(directory, "fixture", "fixture-model")
     planner = await store.create_session(directory, "fixture", "fixture-model")
     return store, parent, planner
+
+
+_PLANNING_CHECKPOINT_TIMEOUT_SECONDS = 20.0
+
+
+async def _wait_for_planning_checkpoint(
+    checkpoint: asyncio.Event,
+    owning_task: asyncio.Task[Any],
+    *,
+    checkpoint_name: str,
+) -> None:
+    """Wait for a planning fixture checkpoint without orphaning its waiter."""
+
+    checkpoint_wait = asyncio.create_task(checkpoint.wait())
+    try:
+        done, _pending = await asyncio.wait(
+            (checkpoint_wait, owning_task),
+            timeout=_PLANNING_CHECKPOINT_TIMEOUT_SECONDS,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if checkpoint_wait in done:
+            await checkpoint_wait
+            return
+        if owning_task in done:
+            result = owning_task.result()
+            raise AssertionError(
+                f"planning task completed before {checkpoint_name} checkpoint "
+                f"with result type {type(result).__name__}"
+            )
+        raise TimeoutError(
+            f"timed out waiting for {checkpoint_name} checkpoint within "
+            f"{_PLANNING_CHECKPOINT_TIMEOUT_SECONDS:.0f}s"
+        )
+    finally:
+        if not checkpoint_wait.done():
+            checkpoint_wait.cancel()
+        await asyncio.gather(checkpoint_wait, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_planning_checkpoint_surfaces_an_early_task_failure() -> None:
+    checkpoint = asyncio.Event()
+
+    async def fail_before_checkpoint() -> None:
+        raise RuntimeError("fixture planning task failed before checkpoint")
+
+    task = asyncio.create_task(fail_before_checkpoint())
+    with pytest.raises(
+        RuntimeError,
+        match="fixture planning task failed before checkpoint",
+    ):
+        await _wait_for_planning_checkpoint(
+            checkpoint,
+            task,
+            checkpoint_name="fixture",
+        )
+
+
+@pytest.mark.asyncio
+async def test_planning_checkpoint_rejects_an_early_successful_task() -> None:
+    checkpoint = asyncio.Event()
+
+    async def complete_before_checkpoint() -> str:
+        return "completed before checkpoint"
+
+    task = asyncio.create_task(complete_before_checkpoint())
+    with pytest.raises(
+        AssertionError,
+        match="planning task completed before fixture checkpoint",
+    ):
+        await _wait_for_planning_checkpoint(
+            checkpoint,
+            task,
+            checkpoint_name="fixture",
+        )
 
 
 def test_model_dag_proposal_is_strict_and_canonical() -> None:
@@ -974,18 +1049,37 @@ async def test_two_planning_controllers_share_one_durable_identity() -> None:
             session_store=store,
             owner_id="owner-second",
         )
-        first_task = asyncio.create_task(first.run(RunModelDagPlanningRequest("race", "objective")))
-        await asyncio.wait_for(first_started.wait(), timeout=1)
-        second_task = asyncio.create_task(
-            second.run(RunModelDagPlanningRequest("race", "objective"))
-        )
-        second_result = await asyncio.gather(second_task, return_exceptions=True)
-        release.set()
-        first_result = await first_task
-        assert first_runner.calls == 1
-        assert second_runner.calls == 0
-        assert isinstance(second_result[0], Exception)
-        assert first_result.dag.dag_id == first_result.attempt.intended_dag_id
+        first_task: asyncio.Task[Any] | None = None
+        second_task: asyncio.Task[Any] | None = None
+        try:
+            first_task = asyncio.create_task(
+                first.run(RunModelDagPlanningRequest("race", "objective"))
+            )
+            await _wait_for_planning_checkpoint(
+                first_started,
+                first_task,
+                checkpoint_name="first planner start",
+            )
+            second_task = asyncio.create_task(
+                second.run(RunModelDagPlanningRequest("race", "objective"))
+            )
+            second_result = await asyncio.gather(second_task, return_exceptions=True)
+            second_task = None
+            release.set()
+            first_result = await first_task
+            first_task = None
+            assert first_runner.calls == 1
+            assert second_runner.calls == 0
+            assert isinstance(second_result[0], Exception)
+            assert first_result.dag.dag_id == first_result.attempt.intended_dag_id
+        finally:
+            release.set()
+            tasks = tuple(task for task in (first_task, second_task) if task is not None)
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -2579,6 +2673,7 @@ async def test_real_planner_to_parallel_leader_to_writable_workers() -> None:
             planner = None
             leader = None
             parent_binding = None
+            running: asyncio.Task[Any] | None = None
             try:
                 parent_session_id = await application.store.create_session(
                     str(repository),
@@ -2634,6 +2729,10 @@ async def test_real_planner_to_parallel_leader_to_writable_workers() -> None:
                 assert _run_git(repository, "rev-parse", "HEAD") == before_head
                 assert dirty_file.read_text(encoding="utf-8") == "parent remains dirty\n"
             finally:
+                if running is not None and not running.done():
+                    running.cancel()
+                if running is not None:
+                    await asyncio.gather(running, return_exceptions=True)
                 if leader is not None:
                     await leader.close()
                 if planner is not None:
@@ -2772,8 +2871,8 @@ async def test_real_agent_swarm_composes_planner_leader_and_parallel_workers() -
                 state.release_fanout.set()
                 if running is not None and not running.done():
                     running.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await running
+                if running is not None:
+                    await asyncio.gather(running, return_exceptions=True)
                 if replay is not None:
                     await replay.close()
                 if swarm is not None:
@@ -2813,6 +2912,7 @@ async def test_real_agent_swarm_controller_race_has_one_owner_and_provider_call(
             first = None
             second = None
             parent_binding = None
+            first_task: asyncio.Task[Any] | None = None
             try:
                 parent_session_id = await application.store.create_session(
                     str(repository),
@@ -2855,6 +2955,10 @@ async def test_real_agent_swarm_controller_race_has_one_owner_and_provider_call(
                 assert persisted == result.run
             finally:
                 provider_release.set()
+                if first_task is not None and not first_task.done():
+                    first_task.cancel()
+                if first_task is not None:
+                    await asyncio.gather(first_task, return_exceptions=True)
                 if second is not None:
                     await second.close()
                 if first is not None:
