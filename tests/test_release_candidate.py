@@ -17,6 +17,7 @@ from packaging.version import Version
 from scripts.release_candidate import (
     audit_artifact,
     create_manifest,
+    read_build_backend,
     sha256_file,
     validate_pep440_version,
     validate_tag_version,
@@ -69,13 +70,35 @@ class ReleaseCandidateTests(unittest.TestCase):
                 requires_python=">=3.12",
                 wheel=wheel,
                 sdist=sdist,
+                build_backend={"name": "hatchling", "version": "1.32.3"},
             )
             manifest_path = root / "release-manifest.json"
             write_manifest(manifest_path, manifest)
             written = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(written["source_commit_sha"], "a" * 40)
+            self.assertEqual(written["build_backend"], {"name": "hatchling", "version": "1.32.3"})
             self.assertEqual(written["wheel"]["sha256"], sha256_file(wheel))
             self.assertEqual(written["sdist"]["sha256"], sha256_file(sdist))
+
+    def test_release_build_backend_requires_exact_hatchling_pin(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        self.assertEqual(
+            read_build_backend(root),
+            {"name": "hatchling", "version": "1.32.3"},
+        )
+
+        with TemporaryDirectory() as raw:
+            temporary_root = Path(raw)
+            pyproject = temporary_root / "pyproject.toml"
+            for requirement in ("hatchling>=1.27", "hatchling"):
+                pyproject.write_text(
+                    "[build-system]\n"
+                    f'requires = ["{requirement}"]\n'
+                    'build-backend = "hatchling.build"\n',
+                    encoding="utf-8",
+                )
+                with self.assertRaises(ValueError):
+                    read_build_backend(temporary_root)
 
     def test_artifact_audit_rejects_local_files_and_redacts_secret_matches(self) -> None:
         with TemporaryDirectory() as raw:

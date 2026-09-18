@@ -1,0 +1,98 @@
+name: Release readiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reproducibility:
+    name: Reproducible release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - name: Build two independent candidates
+        run: >-
+          uv run python scripts/release_readiness.py
+          --report "${{ runner.temp }}/neuro-code-release-readiness.json"
+      - name: Upload reproducibility report
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: neuro-code-release-readiness-reproducibility
+          path: ${{ runner.temp }}/neuro-code-release-readiness.json
+          if-no-files-found: error
+
+  windows-worktree-stress:
+    name: Windows worktree stress (Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.14"]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - name: Fail-fast worktree concurrency stress
+        shell: pwsh
+        run: |
+          $cases = @(
+            @{ Name = "same-id creation"; Test = "tests/test_worktrees.py::WorktreeApplicationTests::test_cross_process_same_id_creation_has_one_insert_only_owner"; Repetitions = 30 },
+            @{ Name = "same-path claim"; Test = "tests/test_worktrees.py::WorktreeApplicationTests::test_cross_process_same_path_claim_is_unique"; Repetitions = 30 },
+            @{ Name = "simultaneous remove"; Test = "tests/test_worktrees.py::WorktreeApplicationTests::test_cross_process_simultaneous_remove_never_leaves_failed_regression"; Repetitions = 30 },
+            @{ Name = "bounded writable DAG"; Test = "tests/test_writable_subagent.py::WritableApplicationTests::test_independent_compositions_never_oversubscribe_bounded_dag"; Repetitions = 10 }
+          )
+          foreach ($case in $cases) {
+            for ($iteration = 1; $iteration -le [int]$case.Repetitions; $iteration++) {
+              Write-Host "[$($case.Name)] iteration $iteration/$($case.Repetitions)"
+              uv run pytest -q $case.Test
+              if ($LASTEXITCODE -ne 0) {
+                throw "first failure in $($case.Name) at iteration $iteration"
+              }
+            }
+          }
+
+  macos-worktree-stress:
+    name: macOS worktree stress (Python 3.12)
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - name: Fail-fast worktree concurrency stress
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            local name="$1"
+            local repetitions="$2"
+            local selector="$3"
+            for ((iteration = 1; iteration <= repetitions; iteration++)); do
+              echo "[$name] iteration $iteration/$repetitions"
+              uv run pytest -q "$selector"
+            done
+          }
+
+          run_case "same-id creation" 20 "tests/test_worktrees.py::WorktreeApplicationTests::test_cross_process_same_id_creation_has_one_insert_only_owner"
+          run_case "same-path claim" 20 "tests/test_worktrees.py::WorktreeApplicationTests::test_cross_process_same_path_claim_is_unique"
+          run_case "simultaneous remove" 20 "tests/test_worktrees.py::WorktreeApplicationTests::test_cross_process_simultaneous_remove_never_leaves_failed_regression"
+          run_case "bounded writable DAG" 3 "tests/test_writable_subagent.py::WritableApplicationTests::test_independent_compositions_never_oversubscribe_bounded_dag"

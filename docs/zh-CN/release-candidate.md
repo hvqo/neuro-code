@@ -2,8 +2,8 @@
 
 [English](../en/release-candidate.md) · **简体中文**
 
-R1 为 `0.1.0a1` 定义可复现的本地预览版候选构建。它不会发布包、创建 Git tag
-或创建 GitHub Release。
+R1 为 `0.1.0a1` 定义可复现的本地预览版候选构建。该发布线固定使用
+`hatchling==1.32.3` 构建后端。它不会发布包、创建 Git tag 或创建 GitHub Release。
 
 ## 源码开发
 
@@ -27,8 +27,8 @@ uv run python scripts/release_candidate.py
 
 该命令使用 `uv build` 构建一个 wheel 和一个 sdist，检查实际归档成员，分别将两者安装到
 checkout 之外的临时虚拟环境，执行 `python -m neuro_code`、`neuro` 和 `neuro-code`，并写入
-`dist/release-manifest.json`。manifest 记录精确的源码 commit、文件名、SHA-256、Python 要求
-和版本。`dist/` 已被忽略，不得提交。
+`dist/release-manifest.json`。manifest 记录精确的源码 commit、文件名、SHA-256、Python 要求、
+版本和构建后端 provenance。`dist/` 已被忽略，不得提交。
 
 干净安装检查会移除 checkout 的 `PYTHONPATH`/环境泄漏，并证明导入的模块属于临时环境。
 它不会读取 `~/.neuro-code` 或任何用户凭据目录。
@@ -46,6 +46,13 @@ cd /tmp
 
 Windows 使用 `Scripts/python.exe` 和 `Scripts/neuro-code.exe` 路径。需要验证源码构建时，
 可以用同样方法安装 sdist。
+
+## 最终工程门禁
+
+在人类验收测试前，应从已审阅的 main commit 手动触发
+`.github/workflows/release-readiness.yml`。该工作流执行聚焦的 Windows/macOS worktree 压力
+测试和两次独立的候选构建，并在可复现性报告中记录构建后端。门禁通过只表示工程证据完备：
+不会创建 tag、发布包或创建 GitHub Release。
 
 ## 未来的公开安装
 

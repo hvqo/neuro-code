@@ -18,11 +18,12 @@ import tarfile
 import tempfile
 import tomllib
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from email.parser import Parser
 from pathlib import Path, PurePosixPath
 
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 
 PROJECT_NAME = "neuro-code"
@@ -335,14 +336,20 @@ def create_manifest(
     requires_python: str,
     wheel: Path,
     sdist: Path,
+    build_backend: Mapping[str, str],
 ) -> dict[str, object]:
     """Create the deterministic candidate provenance manifest."""
 
+    backend_name = build_backend.get("name")
+    backend_version = build_backend.get("version")
+    if not backend_name or not backend_version:
+        raise ValueError("build backend provenance must include name and version")
     return {
         "project": PROJECT_NAME,
         "version": version,
         "source_commit_sha": source_commit_sha,
         "requires_python": requires_python,
+        "build_backend": {"name": backend_name, "version": backend_version},
         "wheel": {"filename": wheel.name, "sha256": sha256_file(wheel)},
         "sdist": {"filename": sdist.name, "sha256": sha256_file(sdist)},
     }
@@ -463,6 +470,46 @@ def _project_metadata(source_root: Path) -> tuple[str, str]:
     return str(project["requires-python"]), str(project["name"])
 
 
+def read_build_backend(source_root: Path) -> dict[str, str]:
+    """Read and validate the exact Hatchling pin used for release builds."""
+
+    with (source_root / "pyproject.toml").open("rb") as handle:
+        document = tomllib.load(handle)
+    build_system = document.get("build-system")
+    if not isinstance(build_system, dict):
+        raise ValueError("pyproject.toml has no build-system table")
+    if build_system.get("build-backend") != "hatchling.build":
+        raise ValueError("release candidates require the hatchling.build backend")
+
+    raw_requirements = build_system.get("requires")
+    if not isinstance(raw_requirements, list) or not all(
+        isinstance(requirement, str) for requirement in raw_requirements
+    ):
+        raise ValueError("build-system.requires must be a list of requirement strings")
+
+    hatchling_requirements: list[Requirement] = []
+    for raw_requirement in raw_requirements:
+        try:
+            requirement = Requirement(raw_requirement)
+        except InvalidRequirement as error:
+            raise ValueError(f"invalid build-system requirement: {raw_requirement!r}") from error
+        if requirement.name.lower() == "hatchling":
+            hatchling_requirements.append(requirement)
+
+    if len(hatchling_requirements) != 1:
+        raise ValueError("release candidates require exactly one Hatchling requirement")
+    requirement = hatchling_requirements[0]
+    if requirement.extras or requirement.marker is not None:
+        raise ValueError("Hatchling release provenance does not support extras or markers")
+
+    specifiers = tuple(requirement.specifier)
+    if len(specifiers) != 1 or specifiers[0].operator != "==":
+        raise ValueError("release candidates require an exact Hatchling pin")
+    version = specifiers[0].version
+    validate_pep440_version(version)
+    return {"name": requirement.name.lower(), "version": version}
+
+
 def _build_artifacts(source_root: Path, output_dir: Path, version: str) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="neuro-code-release-build-") as raw:
@@ -493,6 +540,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     source_root = Path(__file__).resolve().parents[1]
     version = validate_pep440_version(canonical_version(source_root))
     requires_python, project_name = _project_metadata(source_root)
+    build_backend = read_build_backend(source_root)
     if project_name != PROJECT_NAME:
         raise RuntimeError(f"unexpected project name: {project_name}")
     tag = args.tag
@@ -524,6 +572,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         requires_python=requires_python,
         wheel=wheel,
         sdist=sdist,
+        build_backend=build_backend,
     )
     manifest_path = output_dir / "release-manifest.json"
     write_manifest(manifest_path, manifest)
