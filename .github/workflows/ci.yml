@@ -505,3 +505,36 @@ jobs:
           name: neuro-code-preview-candidate
           path: dist/*
           if-no-files-found: warn
+
+  installed-artifact-golden-path:
+    needs: release-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          python-version: "3.12"
+          enable-cache: true
+      - name: Download the exact release-candidate wheel
+        uses: actions/download-artifact@v5.0.0
+        with:
+          name: neuro-code-preview-candidate
+          path: ${{ runner.temp }}/neuro-code-preview-candidate
+      - name: Run the external installed-artifact golden path
+        run: >-
+          uv run --no-project --python 3.12 python scripts/installed_artifact_golden_path.py
+          --wheel
+          "${{ runner.temp }}/neuro-code-preview-candidate/neuro_code-0.1.0a1-py3-none-any.whl"
+          --report
+          "${{ runner.temp }}/neuro-code-r2-installed-artifact.json"
+      - name: Upload installed-artifact golden-path evidence
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: neuro-code-installed-artifact-golden-path
+          path: ${{ runner.temp }}/neuro-code-r2-installed-artifact.json
+          if-no-files-found: error
