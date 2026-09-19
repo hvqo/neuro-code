@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import multiprocessing
 import os
+import queue
 import sqlite3
 import subprocess
 import tempfile
@@ -11,6 +13,7 @@ from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from unittest.mock import AsyncMock, Mock
 
 from neuro_code.application.ports.sandbox import LocalProcessNetworkPolicy, LocalProcessPurpose
@@ -89,6 +92,146 @@ def _run(coroutine: object) -> object:
     return asyncio.run(coroutine)  # type: ignore[arg-type]
 
 
+def _bounded_diagnostic_text(value: object, *, limit: int = 512) -> str:
+    rendered = str(value)
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[: limit - 1] + "…"
+
+
+def _worktree_error_boundary(error: WorktreeError) -> str | None:
+    message = str(error)
+    if message == "managed worktree ownership conflicts with an existing record":
+        return "durable_ownership_claim"
+    if message.startswith("git worktree add "):
+        return "git_worktree_add"
+    if message == "created worktree identity does not match durable intent":
+        return "post_add_identity"
+    if message == "new worktree is unexpectedly dirty":
+        return "post_add_status"
+    if message == "Git worktree is not registered":
+        return "post_add_status"
+    return None
+
+
+def _snapshot_diagnostic(snapshot: WorktreeSnapshot) -> dict[str, object]:
+    status = snapshot.status
+    return {
+        "worktree_id": snapshot.worktree_id.value,
+        "state": snapshot.state.value,
+        "version": snapshot.version,
+        "canonical_path": str(snapshot.canonical_path),
+        "base_revision": snapshot.base_revision,
+        "base_commit_sha": snapshot.base_commit_sha,
+        "status": None
+        if status is None
+        else {
+            "head_sha": status.head_sha,
+            "dirty": status.dirty,
+            "changed_file_count": status.changed_file_count,
+            "exists": status.exists,
+        },
+    }
+
+
+def _diagnostic_path_facts(path: Path, *, include_entries: bool = False) -> dict[str, object]:
+    facts: dict[str, object] = {
+        "path": str(path),
+        "exists": path.exists(),
+        "is_dir": path.is_dir(),
+        "is_file": path.is_file(),
+        "is_symlink": path.is_symlink(),
+    }
+    if include_entries and facts["is_dir"]:
+        try:
+            facts["entries"] = sorted(
+                _bounded_diagnostic_text(entry.name, limit=128) for entry in path.iterdir()
+            )[:32]
+        except OSError as error:
+            facts["entries_error"] = _bounded_diagnostic_text(error)
+    return facts
+
+
+def _read_only_git_diagnostic(repository: Path, *arguments: str) -> dict[str, object]:
+    command = "git " + " ".join(arguments)
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return {
+            "command": command,
+            "exception_type": type(error).__name__,
+            "message": _bounded_diagnostic_text(error),
+        }
+    return {
+        "command": command,
+        "returncode": result.returncode,
+        "stdout": _bounded_diagnostic_text(result.stdout.decode("utf-8", "replace"), limit=2_048),
+        "stderr": _bounded_diagnostic_text(result.stderr.decode("utf-8", "replace"), limit=2_048),
+    }
+
+
+def _same_id_parent_diagnostics(
+    *,
+    database: Path,
+    repository: Path,
+    managed_root: Path,
+    hooks_directory: Path,
+    worktree_id: WorktreeId,
+) -> dict[str, object]:
+    rows: tuple[WorktreeSnapshot, ...] = ()
+    try:
+        rows = cast(
+            tuple[WorktreeSnapshot, ...],
+            _run(SqliteManagedWorktreeStore(database).list(include_removed=True)),
+        )
+        durable_rows = [_snapshot_diagnostic(row) for row in rows]
+    except BaseException as error:
+        durable_rows = {
+            "diagnostic_error": {
+                "exception_type": type(error).__name__,
+                "message": _bounded_diagnostic_text(error),
+            }
+        }
+
+    git_worktrees = _read_only_git_diagnostic(repository, "worktree", "list", "--porcelain")
+    git_status = _read_only_git_diagnostic(repository, "status", "--porcelain")
+    target: Path | None = None
+    if rows:
+        target = (managed_root / rows[0].repository.repository_id / worktree_id.value).resolve(
+            strict=False
+        )
+        target_facts: dict[str, object] = _diagnostic_path_facts(target)
+    else:
+        candidates = sorted(managed_root.glob(f"*/{worktree_id.value}"))[:8]
+        target_facts = {
+            "expected_path": None,
+            "candidates": [_diagnostic_path_facts(candidate) for candidate in candidates],
+        }
+    git_worktree_output = git_worktrees.get("stdout")
+    if target is not None and isinstance(git_worktree_output, str):
+        expected = os.path.normcase(os.path.normpath(str(target)))
+        target_facts["registered"] = any(
+            os.path.normcase(os.path.normpath(line.removeprefix("worktree "))) == expected
+            for line in git_worktree_output.splitlines()
+            if line.startswith("worktree ")
+        )
+    else:
+        target_facts["registered"] = None
+    return {
+        "durable_rows": durable_rows,
+        "git_worktrees": git_worktrees,
+        "git_status": git_status,
+        "target": target_facts,
+        "hooks": _diagnostic_path_facts(hooks_directory, include_entries=True),
+    }
+
+
 def _crash_child_add(repository: str, target: str, commit: str) -> None:
     try:
         asyncio.run(
@@ -121,21 +264,59 @@ def _cross_process_create(
     barrier: multiprocessing.Barrier,
     results: object,
 ) -> None:
-    service = WorktreeApplicationService(
-        git=LocalGitWorktreeAdapter(hooks_directory=Path(hooks_directory)),
-        store=SqliteManagedWorktreeStore(Path(database)),
-        managed_root=Path(managed_root),
-        id_factory=lambda: WorktreeId(worktree_id),
-    )
+    pid = os.getpid()
+    stage = "service_constructing"
     try:
+        service = WorktreeApplicationService(
+            git=LocalGitWorktreeAdapter(hooks_directory=Path(hooks_directory)),
+            store=SqliteManagedWorktreeStore(Path(database)),
+            managed_root=Path(managed_root),
+            id_factory=lambda: WorktreeId(worktree_id),
+        )
+        stage = "service_constructed"
+        stage = "initialize_started"
         asyncio.run(service.initialize())
+        stage = "initialize_completed"
+        stage = "barrier_wait_started"
         barrier.wait(timeout=30)
+        stage = "barrier_released"
+        stage = "create_started"
         snapshot = asyncio.run(service.create(WorktreeCreateRequest(Path(repository), "HEAD")))
-        results.put(("ok", snapshot.state.value, snapshot.version))  # type: ignore[attr-defined]
+        stage = "create_completed"
+        results.put(
+            {
+                "outcome": "ok",
+                "pid": pid,
+                "stage": stage,
+                "state": snapshot.state.value,
+                "version": snapshot.version,
+                "canonical_path": str(snapshot.canonical_path),
+            }
+        )  # type: ignore[attr-defined]
     except WorktreeError as error:
-        results.put(("error", error.kind.value))  # type: ignore[attr-defined]
+        cause = error.__cause__
+        results.put(
+            {
+                "outcome": "worktree_error",
+                "pid": pid,
+                "stage": stage,
+                "kind": error.kind.value,
+                "message": _bounded_diagnostic_text(str(error)),
+                "cause_type": None if cause is None else type(cause).__name__,
+                "cause": None if cause is None else _bounded_diagnostic_text(repr(cause)),
+                "observed_boundary": _worktree_error_boundary(error),
+            }
+        )  # type: ignore[attr-defined]
     except BaseException as error:
-        results.put(("unexpected", repr(error)))  # type: ignore[attr-defined]
+        results.put(
+            {
+                "outcome": "unexpected",
+                "pid": pid,
+                "stage": stage,
+                "exception_type": type(error).__name__,
+                "message": _bounded_diagnostic_text(repr(error)),
+            }
+        )  # type: ignore[attr-defined]
 
 
 def _cross_process_store_insert(
@@ -862,6 +1043,7 @@ class WorktreeApplicationTests(unittest.TestCase):
             database = root / "state" / "worktrees.db"
             managed_root = root / "state" / "worktrees"
             hooks_directory = root / "git-hooks"
+            worktree_id = WorktreeId("wt-cross-process")
             barrier = multiprocessing.Barrier(2)
             results = multiprocessing.Queue()
             children = [
@@ -872,41 +1054,110 @@ class WorktreeApplicationTests(unittest.TestCase):
                         str(database),
                         str(managed_root),
                         str(hooks_directory),
-                        "wt-cross-process",
+                        worktree_id.value,
                         barrier,
                         results,
                     ),
                 )
                 for _ in range(2)
             ]
+            child_lifecycle: list[dict[str, object]] = []
             for child in children:
                 child.start()
             for child in children:
                 child.join(timeout=45)
-                self.assertFalse(child.is_alive())
-                self.assertEqual(child.exitcode, 0)
-            outcomes = [results.get(timeout=5) for _ in children]
-            self.assertEqual(sum(outcome[0] == "ok" for outcome in outcomes), 1)
-            self.assertEqual(
-                sum(
-                    outcome[0] == "error" and outcome[1] == WorktreeFailureKind.PATH_CONFLICT.value
+                alive_after_join = child.is_alive()
+                lifecycle: dict[str, object] = {
+                    "pid": child.pid,
+                    "join_timed_out": alive_after_join,
+                    "exitcode": child.exitcode,
+                }
+                if alive_after_join:
+                    child.terminate()
+                    child.join(timeout=5)
+                lifecycle["alive_after_cleanup"] = child.is_alive()
+                lifecycle["exitcode_after_cleanup"] = child.exitcode
+                child_lifecycle.append(lifecycle)
+
+            outcomes_by_pid: dict[int, dict[str, object]] = {}
+            unmatched_outcomes: list[dict[str, object]] = []
+            for _ in children:
+                try:
+                    raw_outcome = results.get(timeout=5)
+                except queue.Empty:
+                    continue
+                raw_pid = raw_outcome.get("pid") if isinstance(raw_outcome, dict) else None
+                if isinstance(raw_outcome, dict) and isinstance(raw_pid, int):
+                    outcomes_by_pid[raw_pid] = raw_outcome
+                    continue
+                unmatched_outcomes.append(
+                    {
+                        "outcome": "invalid_diagnostic",
+                        "message": _bounded_diagnostic_text(repr(raw_outcome)),
+                    }
+                )
+            outcomes = [
+                outcomes_by_pid.get(
+                    child.pid if isinstance(child.pid, int) else -1,
+                    {
+                        "outcome": "missing_diagnostic",
+                        "pid": child.pid,
+                        "stage": "unknown",
+                    },
+                )
+                for child in children
+            ] + unmatched_outcomes
+            outcome_message = json.dumps(outcomes, sort_keys=True, default=str)
+            contract_ok = (
+                sum(outcome.get("outcome") == "ok" for outcome in outcomes) == 1
+                and sum(
+                    outcome.get("outcome") == "worktree_error"
+                    and outcome.get("kind") == WorktreeFailureKind.PATH_CONFLICT.value
                     for outcome in outcomes
-                ),
-                1,
+                )
+                == 1
+                and all(outcome.get("outcome") != "unexpected" for outcome in outcomes)
+                and all(
+                    not lifecycle["join_timed_out"] and lifecycle["exitcode"] == 0
+                    for lifecycle in child_lifecycle
+                )
             )
-            self.assertNotIn("unexpected", {outcome[0] for outcome in outcomes})
+            if not contract_ok:
+                parent_diagnostics = _same_id_parent_diagnostics(
+                    database=database,
+                    repository=repository,
+                    managed_root=managed_root,
+                    hooks_directory=hooks_directory,
+                    worktree_id=worktree_id,
+                )
+                failure_diagnostics = {
+                    "child_lifecycle": child_lifecycle,
+                    "outcomes": outcomes,
+                    **parent_diagnostics,
+                }
+                self.fail(
+                    "same-ID ownership contract violated; "
+                    + _bounded_diagnostic_text(
+                        json.dumps(failure_diagnostics, sort_keys=True, default=str),
+                        limit=12_000,
+                    )
+                )
             service = WorktreeApplicationService(
                 git=LocalGitWorktreeAdapter(hooks_directory=hooks_directory),
                 store=SqliteManagedWorktreeStore(database),
                 managed_root=managed_root,
-                id_factory=lambda: WorktreeId("wt-cross-process"),
+                id_factory=lambda: worktree_id,
             )
             _run(service.initialize())
             owned = _run(service.list_managed(reconcile=False))
-            self.assertEqual(len(owned), 1)
-            self.assertEqual(owned[0].state, WorktreeState.READY)
-            self.assertGreaterEqual(owned[0].version, 1)
-            self.assertEqual((repository / "tracked.txt").read_bytes(), source_before)
+            self.assertEqual(len(owned), 1, msg=f"outcomes={outcome_message}")
+            self.assertEqual(owned[0].state, WorktreeState.READY, msg=outcome_message)
+            self.assertGreaterEqual(owned[0].version, 1, msg=outcome_message)
+            self.assertEqual(
+                (repository / "tracked.txt").read_bytes(),
+                source_before,
+                msg=outcome_message,
+            )
             _run(service.remove(WorktreeRemoveRequest(owned[0].worktree_id)))
 
     def test_cross_process_same_path_claim_is_unique(self) -> None:
