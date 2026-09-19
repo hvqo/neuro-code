@@ -3795,8 +3795,9 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(transcript.vertical_scrollbar.display)
 
             transcript.action_page_up()
-            await pilot.wait_for_scheduled_animations()
             self.assertTrue(transcript.vertical_scrollbar.display)
+            self.assertIsNotNone(transcript._scrollbar_hide_timer)
+            await pilot.wait_for_scheduled_animations()
             self.assertEqual(transcript.region.width, width_with_hidden_scrollbar)
             self.assertLess(transcript.scroll_y, transcript.max_scroll_y)
 
@@ -3804,10 +3805,11 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(transcript.vertical_scrollbar.display)
             previous_scroll = transcript.scroll_y
             transcript.action_page_down()
+            hide_timer = transcript._scrollbar_hide_timer
+            self.assertTrue(transcript.vertical_scrollbar.display)
+            self.assertIsNotNone(hide_timer)
             await pilot.wait_for_scheduled_animations()
             self.assertGreater(transcript.scroll_y, previous_scroll)
-            hide_timer = transcript._scrollbar_hide_timer
-            self.assertIsNotNone(hide_timer)
 
         assert hide_timer is not None
         self.assertIsNone(hide_timer._task)
