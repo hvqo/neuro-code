@@ -471,7 +471,7 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
                 connection.execute(
                     "SELECT version FROM schema_meta WHERE singleton = 1"
                 ).fetchone(),
-                (33,),
+                (34,),
             )
         finally:
             connection.close()
