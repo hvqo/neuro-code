@@ -9,6 +9,7 @@ from neuro_code.application.execution_policy import (
     DEEP_EXECUTION_BUDGET,
     NORMAL_EXECUTION_BUDGET,
     ExecutionBudgetPolicy,
+    ExecutionBudgetSource,
     ExecutionProfile,
     ExecutionSegmentPolicy,
 )
@@ -257,6 +258,29 @@ class ExecutionSupervisionTests(unittest.TestCase):
         self.assertEqual(normal.limit_for_tool("bash"), 16)
         self.assertEqual(normal.limit_for_tool("apply_patch"), 16)
         self.assertEqual(normal.limit_for_tool("search_replace"), 16)
+        self.assertEqual(normal.limit_for_tool("update_plan"), 24)
+        self.assertIs(
+            ExecutionBudgetPolicy.for_ultracode_main_max(
+                NORMAL_EXECUTION_BUDGET,
+                ExecutionBudgetSource.IMPLICIT_PROFILE,
+            ),
+            DEEP_EXECUTION_BUDGET,
+        )
+        self.assertIs(
+            ExecutionBudgetPolicy.for_ultracode_main_max(
+                NORMAL_EXECUTION_BUDGET,
+                ExecutionBudgetSource.EXPLICIT_PROFILE,
+            ),
+            NORMAL_EXECUTION_BUDGET,
+        )
+        explicit_steps = ExecutionBudgetPolicy.from_max_steps(60)
+        self.assertIs(
+            ExecutionBudgetPolicy.for_ultracode_main_max(
+                explicit_steps,
+                ExecutionBudgetSource.EXPLICIT_MAX_STEPS,
+            ),
+            explicit_steps,
+        )
 
     def test_segment_policy_validates_boundaries_and_tracks_each_counter(self) -> None:
         with self.assertRaisesRegex(ValueError, "model_calls"):

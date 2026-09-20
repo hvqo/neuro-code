@@ -16,6 +16,8 @@ from neuro_code.application.ports.agent_swarm import ProcessLivenessProbe
 from neuro_code.application.ports.ultracode import UltracodeExecutionClaim, UltracodeStoreError
 from neuro_code.domain.execution import (
     MAX_REQUIREMENT_SNAPSHOT_BYTES,
+    ExecutionBudget,
+    ToolCallBudget,
     VerificationRequirementsSnapshot,
 )
 from neuro_code.domain.ultracode import (
@@ -29,6 +31,7 @@ from neuro_code.infrastructure.persistence.sqlite_session_connection import (
 from neuro_code.shared.async_utils import run_blocking
 
 _MAX_ULTRACODE_REQUIREMENTS_JSON_BYTES = MAX_REQUIREMENT_SNAPSHOT_BYTES + 128
+_MAX_ULTRACODE_BUDGET_JSON_BYTES = 8 * 1024
 
 
 class UltracodeMixin(_SqliteSessionPersistenceContext):
@@ -300,7 +303,8 @@ _ULTRACODE_EXECUTION_SELECT = """
            provider_name, model_name, context_affinity, state, generation,
            owner_id, owner_pid, owner_token, lease_expires_at,
            final_response, final_result_fingerprint, created_at, updated_at,
-           verification_requirements_json, verification_requirements_fingerprint
+           verification_requirements_json, verification_requirements_fingerprint,
+           main_max_execution_budget_json
     FROM orchestration_ultracode_executions
 """
 
@@ -311,8 +315,9 @@ _ULTRACODE_EXECUTION_INSERT = """
         provider_name, model_name, context_affinity, state, generation,
         owner_id, owner_pid, owner_token, lease_expires_at,
         final_response, final_result_fingerprint, created_at, updated_at,
-        verification_requirements_json, verification_requirements_fingerprint
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        verification_requirements_json, verification_requirements_fingerprint,
+        main_max_execution_budget_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -337,6 +342,7 @@ def _ultracode_execution_values(execution: UltracodeExecution) -> tuple[object, 
     requirements_json, requirements_fingerprint = _ultracode_verification_requirements_values(
         execution.verification_requirements
     )
+    budget_json = _ultracode_execution_budget_value(execution.main_max_execution_budget)
     return (
         execution.execution_id,
         execution.parent_session_id,
@@ -360,6 +366,7 @@ def _ultracode_execution_values(execution: UltracodeExecution) -> tuple[object, 
         execution.updated_at.astimezone(UTC).isoformat(),
         requirements_json,
         requirements_fingerprint,
+        budget_json,
     )
 
 
@@ -375,7 +382,7 @@ def _load_ultracode_execution(
 
 
 def _ultracode_execution_from_row(row: Sequence[object]) -> UltracodeExecution:
-    if len(row) != 22:
+    if len(row) != 23:
         raise ValueError("Ultracode execution record is malformed")
     (
         execution_id,
@@ -400,6 +407,7 @@ def _ultracode_execution_from_row(row: Sequence[object]) -> UltracodeExecution:
         updated_at,
         verification_requirements_json,
         verification_requirements_fingerprint,
+        main_max_execution_budget_json,
     ) = row
     if not isinstance(owner_pid, int) or isinstance(owner_pid, bool):
         raise ValueError("Ultracode owner PID is invalid")
@@ -432,7 +440,82 @@ def _ultracode_execution_from_row(row: Sequence[object]) -> UltracodeExecution:
             verification_requirements_json,
             verification_requirements_fingerprint,
         ),
+        main_max_execution_budget=_ultracode_execution_budget_from_value(
+            main_max_execution_budget_json
+        ),
     )
+
+
+def _ultracode_execution_budget_value(budget: ExecutionBudget | None) -> str | None:
+    if budget is None:
+        return None
+    if not isinstance(budget, ExecutionBudget):
+        raise TypeError("Ultracode execution budget is not canonical")
+    payload = {
+        "max_model_calls": budget.max_model_calls,
+        "max_tool_rounds": budget.max_tool_rounds,
+        "max_tool_calls": budget.max_tool_calls,
+        "max_calls_per_tool": budget.max_calls_per_tool,
+        "max_wall_seconds": budget.max_wall_seconds,
+        "max_input_tokens": budget.max_input_tokens,
+        "max_output_tokens": budget.max_output_tokens,
+        "max_total_tokens": budget.max_total_tokens,
+        "per_tool_limits": [
+            {"tool_name": limit.tool_name, "max_calls": limit.max_calls}
+            for limit in budget.per_tool_limits
+        ],
+    }
+    value = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if len(value.encode("utf-8")) > _MAX_ULTRACODE_BUDGET_JSON_BYTES:
+        raise ValueError("Ultracode execution budget exceeds its byte bound")
+    return value
+
+
+def _ultracode_execution_budget_from_value(raw_value: object) -> ExecutionBudget | None:
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, str):
+        raise ValueError("Ultracode execution budget projection is invalid")
+    if len(raw_value.encode("utf-8")) > _MAX_ULTRACODE_BUDGET_JSON_BYTES:
+        raise ValueError("Ultracode execution budget exceeds its byte bound")
+    payload = json.loads(raw_value)
+    if not isinstance(payload, dict):
+        raise ValueError("Ultracode execution budget JSON must be an object")
+    expected_keys = {
+        "max_model_calls",
+        "max_tool_rounds",
+        "max_tool_calls",
+        "max_calls_per_tool",
+        "max_wall_seconds",
+        "max_input_tokens",
+        "max_output_tokens",
+        "max_total_tokens",
+        "per_tool_limits",
+    }
+    if set(payload) != expected_keys:
+        raise ValueError("Ultracode execution budget JSON shape is invalid")
+    raw_limits = payload["per_tool_limits"]
+    if not isinstance(raw_limits, list):
+        raise ValueError("Ultracode execution budget per-tool limits are invalid")
+    limits: list[ToolCallBudget] = []
+    for raw_limit in raw_limits:
+        if not isinstance(raw_limit, dict) or set(raw_limit) != {"tool_name", "max_calls"}:
+            raise ValueError("Ultracode execution budget per-tool limit is invalid")
+        limits.append(ToolCallBudget(raw_limit["tool_name"], raw_limit["max_calls"]))
+    budget = ExecutionBudget(
+        max_model_calls=payload["max_model_calls"],
+        max_tool_rounds=payload["max_tool_rounds"],
+        max_tool_calls=payload["max_tool_calls"],
+        max_calls_per_tool=payload["max_calls_per_tool"],
+        max_wall_seconds=payload["max_wall_seconds"],
+        max_input_tokens=payload["max_input_tokens"],
+        max_output_tokens=payload["max_output_tokens"],
+        max_total_tokens=payload["max_total_tokens"],
+        per_tool_limits=tuple(limits),
+    )
+    if _ultracode_execution_budget_value(budget) != raw_value:
+        raise ValueError("Ultracode execution budget JSON is not canonical")
+    return budget
 
 
 def _ultracode_verification_requirements_values(

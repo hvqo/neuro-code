@@ -29,6 +29,23 @@ class ExecutionProfile(StrEnum):
     DEEP = "deep"
 
 
+class ExecutionBudgetSource(StrEnum):
+    """Record how the effective ordinary-turn budget was selected.
+
+    Ultracode uses this provenance to distinguish an omitted profile from an
+    explicitly selected ``normal`` profile.  The distinction is deliberately
+    kept alongside the resolved value instead of being inferred later from
+    the normalized step count.
+
+    记录普通回合预算的选择来源。Ultracode 依赖此来源区分省略档位与显式选择
+    ``normal``; 该区别随解析后的值保存, 而不是事后从归一化步骤数推断。
+    """
+
+    IMPLICIT_PROFILE = "implicit_profile"
+    EXPLICIT_PROFILE = "explicit_profile"
+    EXPLICIT_MAX_STEPS = "explicit_max_steps"
+
+
 def _budget_for_model_calls(max_model_calls: int) -> ExecutionBudget:
     if (
         not isinstance(max_model_calls, int)
@@ -148,6 +165,26 @@ class ExecutionBudgetPolicy:
         return NORMAL_EXECUTION_BUDGET
 
     @staticmethod
+    def for_ultracode_main_max(
+        budget: ExecutionBudget,
+        source: ExecutionBudgetSource,
+    ) -> ExecutionBudget:
+        """Resolve the request budget for an Ultracode ``MAIN_MAX`` turn.
+
+        Only an omitted profile receives the deeper Ultracode budget.  An
+        explicit profile or ``--max-steps`` remains authoritative.
+
+        解析 Ultracode ``MAIN_MAX`` 回合的请求预算。只有省略档位时才使用更深
+        的 Ultracode 预算; 显式档位或 ``--max-steps`` 始终保持其权威性。
+        """
+
+        if not isinstance(budget, ExecutionBudget):
+            raise TypeError("budget must be an ExecutionBudget")
+        if not isinstance(source, ExecutionBudgetSource):
+            raise TypeError("source must be an ExecutionBudgetSource")
+        return DEEP_EXECUTION_BUDGET if source is ExecutionBudgetSource.IMPLICIT_PROFILE else budget
+
+    @staticmethod
     def from_max_steps(max_steps: int) -> ExecutionBudget:
         """Map the legacy step option to the complete ordinary budget.
 
@@ -172,6 +209,7 @@ __all__ = [
     "DEEP_EXECUTION_BUDGET",
     "NORMAL_EXECUTION_BUDGET",
     "ExecutionBudgetPolicy",
+    "ExecutionBudgetSource",
     "ExecutionProfile",
     "ExecutionSegmentPolicy",
 ]

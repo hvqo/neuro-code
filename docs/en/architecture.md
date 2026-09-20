@@ -2287,7 +2287,9 @@ deepest ordinary single-agent reasoning/review policy. Only an explicit
 
 The entry uses a bounded deterministic local policy rather than a second model
 classifier call. In this slice the policy is a fixed marker heuristic for
-parallel/decomposition, cross-file, and research wording; it is not semantic
+parallel/decomposition, cross-file, research, and repository-wide improvement
+wording; repository/project-wide scope is paired with explicit improvement
+intent rather than treated as a standalone broad marker. It is not semantic
 task classification or model-level routing intelligence. It makes only the
 typed choice `MAIN_MAX` or `BOUNDED_SWARM`. It cannot choose tools, worker
 count, DAG definitions, sandbox, workspace roots, network, MCP, retry, merge,
@@ -2311,11 +2313,26 @@ Marker-bearing prompts over the boundary select `MAIN_MAX` before the durable
 Ultracode branch claim. This is a pre-decision bound, not a post-claim
 fallback, and recovery continues to reuse an existing durable decision.
 
+The ordinary `normal` profile remains 48 model calls, 48 tool rounds, and 192
+tool calls. When no execution profile was supplied, an Ultracode `MAIN_MAX`
+request receives the canonical deep 96/96/384 budget. An explicit
+`--execution-profile normal`, explicit `deep`, or `--max-steps N` is preserved
+as provenance and wins over that implicit Ultracode upgrade. The effective
+budget is passed as an immutable request-scoped override through the parent
+runtime, so switching `max` and `ultracode` in a long-lived TUI binding cannot
+leak the deep budget into later ordinary turns. A MAIN_MAX durable record
+stores the budget snapshot; a non-terminal legacy record without one fails
+closed, while completed replay retains its prior behavior. The TUI derives a
+recoverable `BUDGET_LIMITED` notice from typed `execution_reason` and the
+latest typed budget telemetry, including used/limit when available; `STUCK`
+uses its existing notice.
+
 Session schema 28 added the insert-once
-`orchestration_ultracode_executions` projection; current schema 30 retains it.
+`orchestration_ultracode_executions` projection; current schema 34 retains it.
 Schema 30 adds two nullable columns to that existing projection:
 `verification_requirements_json` and
-`verification_requirements_fingerprint`. Both NULL values preserve the
+`verification_requirements_fingerprint`; schema 34 also adds the nullable
+`main_max_execution_budget_json` snapshot. Both NULL requirement values preserve the
 legacy absence of a structured parent requirement forever; a structured row
 must contain both canonical values and the fingerprint must match the
 snapshot. Malformed, partial, oversized, or non-canonical values fail closed.

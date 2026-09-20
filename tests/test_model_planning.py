@@ -1101,7 +1101,7 @@ async def test_schema_24_to_29_preserves_existing_task_dag() -> None:
             connection.execute("UPDATE schema_meta SET version = 24 WHERE singleton = 1")
             connection.commit()
         await store.initialize()
-        assert SCHEMA_VERSION == 33
+        assert SCHEMA_VERSION == 34
         assert (
             await store.get_task_dag("preexisting")
         ).definition_fingerprint == dag.definition_fingerprint
@@ -1117,7 +1117,7 @@ async def test_schema_24_to_29_preserves_existing_task_dag() -> None:
                 "orchestration_plan_proposals",
                 "orchestration_swarm_runs",
             }.issubset(tables)
-            assert connection.execute("SELECT version FROM schema_meta").fetchone() == (33,)
+            assert connection.execute("SELECT version FROM schema_meta").fetchone() == (34,)
 
 
 @pytest.mark.asyncio

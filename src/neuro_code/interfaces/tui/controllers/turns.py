@@ -16,11 +16,16 @@ from neuro_code.application.workflows.session_task_execution import (
 from neuro_code.domain.conversation.context import estimate_context_tokens, estimate_text_tokens
 from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
 from neuro_code.domain.execution import (
+    SupervisorReasonCode,
     TurnCancellationPolicy,
 )
 from neuro_code.domain.plans import SessionPlan
 from neuro_code.interfaces.tui.controllers.base import TuiAppControllerMixin
-from neuro_code.interfaces.tui.execution import recoverable_terminal_status
+from neuro_code.interfaces.tui.execution import (
+    BudgetUsageProjection,
+    budget_limited_reason,
+    recoverable_terminal_status,
+)
 from neuro_code.interfaces.tui.state import (
     _MAX_QUEUED_INTERJECTIONS,
 )
@@ -28,6 +33,20 @@ from neuro_code.interfaces.tui.text import ui_text
 from neuro_code.interfaces.tui.widgets import PromptInput
 from neuro_code.shared.errors import ProviderError
 from neuro_code.shared.redaction import redact_sensitive_text
+
+_BUDGET_REASON_TEXT_KEYS = {
+    SupervisorReasonCode.MODEL_CALL_RESERVE: "turn.budget_reason.model_call_reserve",
+    SupervisorReasonCode.MODEL_CALL_BUDGET: "turn.budget_reason.model_call_budget",
+    SupervisorReasonCode.MODEL_STEP_LIMIT: "turn.budget_reason.model_step_limit",
+    SupervisorReasonCode.TOOL_ROUND_BUDGET: "turn.budget_reason.tool_round_budget",
+    SupervisorReasonCode.TOOL_CALL_BUDGET: "turn.budget_reason.tool_call_budget",
+    SupervisorReasonCode.PER_TOOL_CALL_BUDGET: "turn.budget_reason.per_tool_call_budget",
+    SupervisorReasonCode.WALL_TIME_BUDGET: "turn.budget_reason.wall_time_budget",
+    SupervisorReasonCode.INPUT_TOKEN_BUDGET: "turn.budget_reason.input_token_budget",
+    SupervisorReasonCode.OUTPUT_TOKEN_BUDGET: "turn.budget_reason.output_token_budget",
+    SupervisorReasonCode.TOTAL_TOKEN_BUDGET: "turn.budget_reason.total_token_budget",
+    SupervisorReasonCode.CONTEXT_WINDOW_BUDGET: "turn.budget_reason.context_window_budget",
+}
 
 
 class TurnControllerMixin(TuiAppControllerMixin):
@@ -78,6 +97,8 @@ class TurnControllerMixin(TuiAppControllerMixin):
         self._turn_completion = None
         self._terminal_execution_status = None
         self._terminal_execution_recoverable = False
+        self._terminal_execution_reason = None
+        self._terminal_budget_usage = None
         self._finalizing = False
         self._turn_usage_reported = False
         self._begin_pending_assistant()
@@ -216,10 +237,33 @@ class TurnControllerMixin(TuiAppControllerMixin):
                 self._refresh_runtime_bar()
             self._finish_streamed_assistant_response(result, fallback=response)
             if self._terminal_execution_recoverable and self._terminal_execution_status is not None:
-                self._write_ui_entry(
-                    "recoverable",
-                    f"turn.{self._terminal_execution_status}_recoverable",
-                )
+                if self._terminal_execution_reason is not None:
+                    reason_key = _BUDGET_REASON_TEXT_KEYS[self._terminal_execution_reason]
+                    reason = ui_text(self._language, reason_key)
+                    usage = (
+                        self._terminal_budget_usage.for_reason(self._terminal_execution_reason)
+                        if self._terminal_budget_usage is not None
+                        else None
+                    )
+                    if usage is None:
+                        self._write_ui_entry(
+                            "recoverable",
+                            "turn.budget_limited_reason",
+                            reason=reason,
+                        )
+                    else:
+                        self._write_ui_entry(
+                            "recoverable",
+                            "turn.budget_limited_reason_usage",
+                            reason=reason,
+                            used=usage[0],
+                            limit=usage[1],
+                        )
+                else:
+                    self._write_ui_entry(
+                        "recoverable",
+                        f"turn.{self._terminal_execution_status}_recoverable",
+                    )
             elif self._turn_completion is not None:
                 duration, steps = self._turn_completion
                 self._write_ui_entry(
@@ -358,6 +402,10 @@ class TurnControllerMixin(TuiAppControllerMixin):
                 self._context_preflight_notice = None
                 self._turn_usage_reported = not self._context_usage_estimated
                 self._refresh_runtime_bar()
+        elif event.kind is AgentEventKind.EXECUTION_BUDGET_UPDATED:
+            usage = BudgetUsageProjection.from_event_data(data)
+            if usage is not None:
+                self._terminal_budget_usage = usage
         elif event.kind is AgentEventKind.CONTEXT_PREFLIGHT:
             status = data.get("status")
             if isinstance(status, str):
@@ -485,9 +533,14 @@ class TurnControllerMixin(TuiAppControllerMixin):
             if execution_status is not None:
                 self._terminal_execution_status = execution_status.value
                 self._terminal_execution_recoverable = True
+                self._terminal_execution_reason = budget_limited_reason(data)
+                if self._terminal_budget_usage is None:
+                    self._terminal_budget_usage = BudgetUsageProjection.from_event_data(data)
             else:
                 self._terminal_execution_status = None
                 self._terminal_execution_recoverable = False
+                self._terminal_execution_reason = None
+                self._terminal_budget_usage = None
         elif event.kind is AgentEventKind.TURN_FAILED:
             self._turn_activity_kind = "failed"
             self._refresh_turn_activity()

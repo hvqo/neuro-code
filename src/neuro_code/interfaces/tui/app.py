@@ -704,6 +704,8 @@ class NeuroCodeApp(
         self._turn_completion: tuple[str, int] | None = None
         self._terminal_execution_status: str | None = None
         self._terminal_execution_recoverable = False
+        self._terminal_execution_reason = None
+        self._terminal_budget_usage = None
         self._finalizing = False
         self._turn_usage_reported = False
         self._turn_worker: Worker[None] | None = None

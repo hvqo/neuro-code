@@ -254,6 +254,7 @@ class AgentLoopRunner:
 
     __slots__ = (
         "_active_provider_window",
+        "_budgeted_supervisor_factory",
         "_compaction_runtime_gate",
         "_context_builder",
         "_context_rollover",
@@ -291,7 +292,9 @@ class AgentLoopRunner:
         system_prompt: str,
         execution_budget: ExecutionBudget,
         context_builder: ContextBuilder,
-        supervisor_factory: Callable[[], AgentExecutionSupervisor],
+        supervisor_factory: Callable[[], AgentExecutionSupervisor] | None,
+        budgeted_supervisor_factory: Callable[[ExecutionBudget], AgentExecutionSupervisor]
+        | None = None,
         supervision_observer: SupervisionObserver | None,
         execution_control_mode: ExecutionControlMode,
         finalizer_factory: Callable[[ModelProvider, int, tuple[str, ...]], Finalizer],
@@ -337,6 +340,7 @@ class AgentLoopRunner:
         self._segment_policy = ExecutionSegmentPolicy.from_budget(execution_budget)
         self._context_builder = context_builder
         self._supervisor_factory = supervisor_factory
+        self._budgeted_supervisor_factory = budgeted_supervisor_factory
         self._supervision_observer = supervision_observer
         self._execution_control_mode = execution_control_mode
         self._final_output_gate_enabled = final_output_gate_enabled
@@ -380,7 +384,20 @@ class AgentLoopRunner:
         verification_workspace_mutation_id: str | None = None,
         verification_command: str | None = None,
         resume_existing_attempt: bool = False,
+        execution_budget_override: ExecutionBudget | None = None,
     ) -> AgentRunResult:
+        if execution_budget_override is not None and not isinstance(
+            execution_budget_override,
+            ExecutionBudget,
+        ):
+            raise TypeError("execution_budget_override must be an ExecutionBudget or None")
+        effective_budget = (
+            execution_budget_override
+            if execution_budget_override is not None
+            else self._execution_budget
+        )
+        effective_max_steps = effective_budget.max_model_calls
+        effective_segment_policy = ExecutionSegmentPolicy.from_budget(effective_budget)
         prompt_parts = tuple(content_parts)
         verification_command = validate_explicit_verification_command(verification_command)
         if ultracode_execution_id is not None and (
@@ -1410,7 +1427,7 @@ class AgentLoopRunner:
             await maybe_acquire_explicit_verification()
             if (
                 decision.reason_code is SupervisorReasonCode.MODEL_CALL_BUDGET
-                and step >= self._max_steps
+                and step >= effective_max_steps
             ):
                 decision = SupervisorDecision(
                     SupervisorDecisionKind.MARK_BUDGET_LIMITED,
@@ -1595,7 +1612,12 @@ class AgentLoopRunner:
         pending_terminal_decision: SupervisorDecision | None = None
         try:
             try:
-                supervisor = self._supervisor_factory()
+                if self._budgeted_supervisor_factory is not None:
+                    supervisor = self._budgeted_supervisor_factory(effective_budget)
+                elif self._supervisor_factory is not None:
+                    supervisor = self._supervisor_factory()
+                else:
+                    raise TypeError("an execution supervisor factory is required")
                 if not isinstance(supervisor, AgentExecutionSupervisor):
                     raise TypeError("supervisor_factory must return an AgentExecutionSupervisor")
                 supervisor.start_turn()
@@ -1666,7 +1688,7 @@ class AgentLoopRunner:
                         record for record in records if record.compaction_id == selected_id
                     )
 
-            for step in range(1, self._max_steps + 1):
+            for step in range(1, effective_max_steps + 1):
                 if pending_terminal_decision is not None:
                     return await complete_finalized_turn(pending_terminal_decision, step=step - 1)
                 step_started_at = monotonic()
@@ -2008,9 +2030,9 @@ class AgentLoopRunner:
                 if any(
                     limit is not None
                     for limit in (
-                        self._execution_budget.max_input_tokens,
-                        self._execution_budget.max_output_tokens,
-                        self._execution_budget.max_total_tokens,
+                        effective_budget.max_input_tokens,
+                        effective_budget.max_output_tokens,
+                        effective_budget.max_total_tokens,
                     )
                 ):
                     await emit_budget_usage()
@@ -2318,7 +2340,7 @@ class AgentLoopRunner:
                     and current_supervisor is not None
                     and segment_progress_kinds
                     and current_supervisor.snapshot.consecutive_no_progress_rounds == 0
-                    and self._segment_policy.reached(
+                    and effective_segment_policy.reached(
                         current_supervisor.snapshot.counters,
                         segment_start_counters,
                     )
@@ -2372,9 +2394,9 @@ class AgentLoopRunner:
                         False,
                         SupervisorReasonCode.MODEL_STEP_LIMIT,
                     ),
-                    step=self._max_steps,
+                    step=effective_max_steps,
                 )
-            raise ProviderError(f"agent exceeded the maximum of {self._max_steps} model steps")
+            raise ProviderError(f"agent exceeded the maximum of {effective_max_steps} model steps")
         except BaseException as error:
             # Preserve cancellation semantics while still making the session auditable.
             await record_turn_failure(error)

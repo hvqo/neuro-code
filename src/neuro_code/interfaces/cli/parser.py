@@ -59,7 +59,7 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--execution-profile",
         choices=tuple(profile.value for profile in ExecutionProfile),
-        default=ExecutionProfile.NORMAL.value,
+        default=None,
         help="ordinary Agent execution budget profile",
     )
     parser.add_argument(
@@ -121,7 +121,7 @@ def _add_acp_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--execution-profile",
         choices=tuple(profile.value for profile in ExecutionProfile),
-        default=ExecutionProfile.NORMAL.value,
+        default=None,
         help="ordinary Agent execution budget profile",
     )
     parser.add_argument(

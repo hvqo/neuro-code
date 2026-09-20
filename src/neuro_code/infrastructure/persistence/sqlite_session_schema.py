@@ -1001,6 +1001,7 @@ def _ensure_ultracode_schema(connection: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL,
             verification_requirements_json TEXT,
             verification_requirements_fingerprint TEXT,
+            main_max_execution_budget_json TEXT,
             FOREIGN KEY (parent_session_id) REFERENCES sessions(id) ON DELETE RESTRICT
         )
         """
@@ -1031,6 +1032,30 @@ def _ensure_ultracode_verification_schema(connection: sqlite3.Connection) -> Non
         connection.execute(
             "ALTER TABLE orchestration_ultracode_executions "
             "ADD COLUMN verification_requirements_fingerprint TEXT"
+        )
+
+
+def _migrate_ultracode_budget_schema(connection: sqlite3.Connection) -> None:
+    """Add the immutable MAIN_MAX budget snapshot during schema 33 -> 34."""
+
+    _ensure_ultracode_schema(connection)
+    _ensure_ultracode_verification_schema(connection)
+    _ensure_ultracode_budget_schema(connection)
+
+
+def _ensure_ultracode_budget_schema(connection: sqlite3.Connection) -> None:
+    """Ensure the optional durable MAIN_MAX budget snapshot exists."""
+
+    columns = {
+        str(row[1])
+        for row in connection.execute(
+            "PRAGMA table_info(orchestration_ultracode_executions)"
+        ).fetchall()
+    }
+    if "main_max_execution_budget_json" not in columns:
+        connection.execute(
+            "ALTER TABLE orchestration_ultracode_executions "
+            "ADD COLUMN main_max_execution_budget_json TEXT"
         )
 
 

@@ -2269,7 +2269,8 @@ reasoning/review 策略；只有显式的 `ReasoningEffort.ULTRACODE` 用户回�
 `low`、`medium`、`high`、`xhigh` 与 `max` 继续使用普通 ConversationRunner 路径。
 
 该入口使用有界、确定性的本地策略，不增加第二次 model classifier 调用。本切片中的策略是针对
-并行/拆分、跨文件和研究措辞的固定 marker heuristic；它不是语义任务分类，也不具备 model-level
+并行/拆分、跨文件、研究以及“项目范围 + 明确优化意图”措辞的固定 marker heuristic；项目/仓库范围
+必须和明确优化意图组合，不能由单独的宽泛词触发；它不是语义任务分类，也不具备 model-level
 routing intelligence。它只做一个 typed 选择：`MAIN_MAX` 或 `BOUNDED_SWARM`。它不能选择 tool、
 worker 数量、DAG definition、sandbox、workspace root、network、MCP、retry、merge 或 provider
 credential。`MAIN_MAX` 调用现有 parent `ConversationRunner` 并保留普通单智能体的 `max` 语义；
@@ -2287,9 +2288,18 @@ Ultracode marker policy 共用这一边界定义。超过边界且包含 marker 
 Ultracode branch claim 之前选择 `MAIN_MAX`。这是决策前的上限，不是 claim 后的 fallback，恢复仍会
 复用已有的 durable decision。
 
-Session schema 28 增加 insert-once 的 `orchestration_ultracode_executions` projection；当前 schema 30 保留该 projection。
+普通 `normal` 档位仍是 48 次模型调用、48 个工具轮次和 192 次工具调用。省略 execution profile 时，
+Ultracode 的 `MAIN_MAX` 请求使用规范的 deep 96/96/384 预算；显式 `--execution-profile normal`、显式
+`deep` 或 `--max-steps N` 会保留其 provenance，并优先于这次隐式升级。有效预算通过 parent runtime 以不可变的
+请求级覆盖传递，因此长生命周期 TUI 在 `max` 与 `ultracode` 之间切换不会把 deep 预算泄漏给后续普通回合。
+MAIN_MAX durable record 会保存预算 snapshot；没有 snapshot 的非终态 legacy record 会 fail closed，已完成 replay
+仍保持原语义。TUI 根据 typed `execution_reason` 和最近的 typed 预算 telemetry 生成可恢复的 `BUDGET_LIMITED`
+提示，能取得时同时显示 used/limit；`STUCK` 继续使用原有提示。
+
+Session schema 28 增加 insert-once 的 `orchestration_ultracode_executions` projection；当前 schema 34 保留该 projection。
 Schema 30 在该 projection 中增加两个 nullable column：`verification_requirements_json` 与
-`verification_requirements_fingerprint`。两个值均为 NULL 时永久保持 legacy 的无结构化 parent requirement
+`verification_requirements_fingerprint`；schema 34 另外增加 nullable 的 `main_max_execution_budget_json` snapshot。
+两个 requirement 值均为 NULL 时永久保持 legacy 的无结构化 parent requirement
 语义；结构化 row 必须同时包含规范值，且 fingerprint 必须匹配 snapshot。Partial、损坏、超限或非规范值都会
 fail closed。不可变 identity 绑定实际 parent session、精确 parent turn、input/context fingerprint、provider/model/context
 provenance、一个 decision、一个下游 identity，以及存在时精确的 MAIN_MAX parent verification snapshot。`BEGIN IMMEDIATE`、process-liveness ownership

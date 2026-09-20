@@ -53,6 +53,8 @@ class PlanControllerMixin(TuiAppControllerMixin):
         self._turn_completion = None
         self._terminal_execution_status = None
         self._terminal_execution_recoverable = False
+        self._terminal_execution_reason = None
+        self._terminal_budget_usage = None
         self._finalizing = False
         self._turn_usage_reported = False
         self._begin_pending_assistant()

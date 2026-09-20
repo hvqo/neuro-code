@@ -795,7 +795,7 @@ class WorkingSetTests(unittest.IsolatedAsyncioTestCase):
         with closing(sqlite3.connect(self.database)) as connection:
             self.assertEqual(
                 connection.execute("SELECT version FROM schema_meta").fetchone(),
-                (33,),
+                (34,),
             )
             self.assertIsNotNone(
                 connection.execute(

@@ -19,6 +19,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from neuro_code.domain.execution import ExecutionBudget
 from neuro_code.domain.execution.verification_requirements import (
     VerificationRequirementsSnapshot,
 )
@@ -196,6 +197,7 @@ class UltracodeExecution:
     final_response: str | None = None
     final_result_fingerprint: str | None = None
     verification_requirements: VerificationRequirementsSnapshot | None = None
+    main_max_execution_budget: ExecutionBudget | None = None
 
     def __post_init__(self) -> None:
         _safe_identifier(
@@ -268,6 +270,16 @@ class UltracodeExecution:
                 "Ultracode verification requirements must be a "
                 "VerificationRequirementsSnapshot or None"
             )
+        if self.main_max_execution_budget is not None and not isinstance(
+            self.main_max_execution_budget,
+            ExecutionBudget,
+        ):
+            raise TypeError("Ultracode MAIN_MAX execution budget must be an ExecutionBudget")
+        if (
+            self.decision is UltracodeDelegationDecision.BOUNDED_SWARM
+            and self.main_max_execution_budget is not None
+        ):
+            raise ValueError("bounded Swarm executions must not carry a MAIN_MAX budget")
         if self.final_result_fingerprint is not None:
             _fingerprint(
                 self.final_result_fingerprint,
@@ -314,6 +326,11 @@ class UltracodeExecution:
             and self.model_name == other.model_name
             and self.context_affinity == other.context_affinity
             and self.verification_requirements == other.verification_requirements
+            and (
+                self.terminal
+                or other.terminal
+                or self.main_max_execution_budget == other.main_max_execution_budget
+            )
         )
 
 

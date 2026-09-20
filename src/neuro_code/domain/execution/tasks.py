@@ -379,6 +379,19 @@ class ExecutionBudgetUsage:
             "tool_calls_used": self.counters.tool_calls_requested,
             "tool_calls_limit": self.budget.max_tool_calls,
             "tool_calls_remaining": self.tool_calls_remaining,
+            "wall_seconds_used": self.elapsed_seconds,
+            "wall_seconds_limit": self.budget.max_wall_seconds,
+            "input_tokens_used": self.counters.input_tokens,
+            "input_tokens_limit": self.budget.max_input_tokens,
+            "output_tokens_used": self.counters.output_tokens,
+            "output_tokens_limit": self.budget.max_output_tokens,
+            "total_tokens_used": (
+                self.counters.input_tokens + self.counters.output_tokens
+                if self.counters.input_tokens is not None
+                and self.counters.output_tokens is not None
+                else None
+            ),
+            "total_tokens_limit": self.budget.max_total_tokens,
             "pressure": self.pressure.value,
         }
 

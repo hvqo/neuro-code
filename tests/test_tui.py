@@ -732,6 +732,54 @@ class FinalizingTuiConversation:
         )
 
 
+class BudgetLimitedTuiConversation:
+    @property
+    def session_id(self) -> str:
+        return "budget-limited-session"
+
+    async def run(
+        self,
+        prompt: str,
+        *,
+        sink: EventSink | None = None,
+        cancellation_policy: TurnCancellationPolicy = TurnCancellationPolicy.RETAIN,
+    ) -> AgentRunResult:
+        del prompt, cancellation_policy
+        events = (
+            AgentEvent.create(
+                1,
+                AgentEventKind.EXECUTION_BUDGET_UPDATED,
+                {
+                    "model_calls_used": 3,
+                    "model_calls_limit": 48,
+                    "tool_rounds_used": 2,
+                    "tool_rounds_limit": 48,
+                    "tool_calls_used": 7,
+                    "tool_calls_limit": 8,
+                    "pressure": "final_stage",
+                },
+            ),
+            AgentEvent.create(2, AgentEventKind.TEXT_DELTA, {"text": "bounded response"}),
+            AgentEvent.create(
+                3,
+                AgentEventKind.TURN_COMPLETED,
+                {
+                    "step": 3,
+                    "duration_seconds": 0.25,
+                    "execution_status": "budget_limited",
+                    "execution_reason": "tool_call_budget",
+                    "recoverable": True,
+                },
+            ),
+        )
+        if sink is not None:
+            for event in events:
+                outcome = sink(event)
+                if inspect.isawaitable(outcome):
+                    await outcome
+        return AgentRunResult(self.session_id, "bounded response", (), (), events, 3)
+
+
 class GatedTuiConversation:
     """Project the runtime's committed event boundary into the TUI fixture."""
 
@@ -2225,6 +2273,27 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(prompt.disabled)
                     prompt.value = "continue with new instructions"
                     self.assertEqual(prompt.value, "continue with new instructions")
+
+    async def test_budget_limited_notice_uses_typed_reason_and_usage_once(self) -> None:
+        app = NeuroCodeApp(
+            BudgetLimitedTuiConversation(),
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(100, 30)) as pilot:
+            prompt = app.query_one("#prompt", PromptInput)
+            prompt.value = "stop at the bounded limit"
+            await pilot.press("enter")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if any(entry.category == "recoverable" for entry in app.entries):
+                    break
+
+        notices = [entry for entry in app.entries if entry.category == "recoverable"]
+        self.assertEqual(len(notices), 1)
+        self.assertIn("The tool-call budget was reached (7/8)", notices[0].text)
 
     async def test_gated_completion_renders_only_the_committed_response_once(self) -> None:
         app = NeuroCodeApp(

@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from neuro_code.application.checkpoints.turn_undo import TurnWorkspaceCheckpointCoordinator
-from neuro_code.application.execution_policy import ExecutionBudgetPolicy
+from neuro_code.application.execution_policy import ExecutionBudgetPolicy, ExecutionBudgetSource
 from neuro_code.application.memory.compaction import ProviderContextWindow
 from neuro_code.application.memory.compaction_runtime import (
     ContextCompactionRuntimeBoundary,
@@ -103,6 +103,7 @@ class AgentRuntime:
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         max_steps: int | None = None,
         execution_budget: ExecutionBudget | None = None,
+        execution_budget_source: ExecutionBudgetSource = ExecutionBudgetSource.EXPLICIT_PROFILE,
         reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH,
         interaction_mode: InteractionMode | None = None,
         instruction_provider: Callable[[], InstructionDiscoveryResult | None] | None = None,
@@ -138,6 +139,8 @@ class AgentRuntime:
             )
         elif max_steps is not None and max_steps != execution_budget.max_model_calls:
             raise ValueError("max_steps must match execution_budget.max_model_calls")
+        if not isinstance(execution_budget_source, ExecutionBudgetSource):
+            raise TypeError("execution_budget_source must be an ExecutionBudgetSource")
         if not isinstance(execution_control_mode, ExecutionControlMode):
             raise TypeError("execution_control_mode must be an ExecutionControlMode")
         if (
@@ -182,13 +185,21 @@ class AgentRuntime:
         self._session_store = session_store
         self._system_prompt = system_prompt
         self._execution_budget = execution_budget
+        self._execution_budget_source = execution_budget_source
         self._max_steps = execution_budget.max_model_calls
+        self._budgeted_supervisor_factory: (
+            Callable[[ExecutionBudget], AgentExecutionSupervisor] | None
+        )
         if supervisor_factory is None:
             self._supervisor_factory = lambda: create_observing_supervisor(
                 budget=self._execution_budget
             )
+            self._budgeted_supervisor_factory = lambda budget: create_observing_supervisor(
+                budget=budget
+            )
         else:
             self._supervisor_factory = supervisor_factory
+            self._budgeted_supervisor_factory = None
         self._supervision_observer = supervision_observer
         self._execution_control_mode = execution_control_mode
         self._finalizer_factory = finalizer_factory or _create_finalizer
@@ -240,6 +251,7 @@ class AgentRuntime:
             execution_budget=self._execution_budget,
             context_builder=self._context_builder,
             supervisor_factory=self._supervisor_factory,
+            budgeted_supervisor_factory=self._budgeted_supervisor_factory,
             supervision_observer=self._supervision_observer,
             execution_control_mode=self._execution_control_mode,
             finalizer_factory=self._finalizer_factory,
@@ -266,6 +278,18 @@ class AgentRuntime:
     @property
     def model_name(self) -> str:
         return self._provider.model_name
+
+    @property
+    def execution_budget(self) -> ExecutionBudget:
+        """Return the immutable base budget for ordinary turns."""
+
+        return self._execution_budget
+
+    @property
+    def execution_budget_source(self) -> ExecutionBudgetSource:
+        """Return how the base ordinary-turn budget was selected."""
+
+        return self._execution_budget_source
 
     @property
     def context_affinity(self) -> str | None:
@@ -424,6 +448,7 @@ class AgentRuntime:
         verification_workspace_mutation_id: str | None = None,
         verification_command: str | None | object = _USE_CONFIGURED_VERIFICATION_COMMAND,
         resume_existing_attempt: bool = False,
+        execution_budget_override: ExecutionBudget | None = None,
     ) -> AgentRunResult:
         """Run one agent turn through the canonical main loop.
 
@@ -434,6 +459,11 @@ class AgentRuntime:
             if verification_command is _USE_CONFIGURED_VERIFICATION_COMMAND
             else validate_explicit_verification_command(verification_command)
         )
+        if execution_budget_override is not None and not isinstance(
+            execution_budget_override,
+            ExecutionBudget,
+        ):
+            raise TypeError("execution_budget_override must be an ExecutionBudget or None")
         effective_requirements = verification_requirements
         if (
             effective_verification_command is not None
@@ -464,6 +494,7 @@ class AgentRuntime:
             verification_workspace_mutation_id=verification_workspace_mutation_id,
             verification_command=effective_verification_command,
             resume_existing_attempt=resume_existing_attempt,
+            execution_budget_override=execution_budget_override,
         )
 
     async def trigger_context_compaction(

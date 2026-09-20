@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import neuro_code.application.ports.configuration as config_models
 import neuro_code.bootstrap.configuration as config_module
-from neuro_code.application.execution_policy import ExecutionProfile
+from neuro_code.application.execution_policy import ExecutionBudgetSource, ExecutionProfile
 from neuro_code.application.memory.compaction_runtime import ContextCompactionRuntimeGate
 from neuro_code.application.permissions.policy import (
     PermissionEffect,
@@ -473,6 +473,7 @@ proxy_mode = "direct"
 
         self.assertIs(settings.execution_control_mode, ExecutionControlMode.FINALIZE_TERMINAL)
         self.assertIs(settings.execution_profile, ExecutionProfile.NORMAL)
+        self.assertIs(settings.execution_budget_source, ExecutionBudgetSource.IMPLICIT_PROFILE)
         self.assertEqual(settings.max_steps, 48)
         self.assertEqual(settings.execution_budget.max_model_calls, 48)
         self.assertEqual(settings.execution_budget.max_tool_rounds, 48)
@@ -487,9 +488,14 @@ proxy_mode = "direct"
         )
 
         self.assertEqual(deep.max_steps, 96)
+        self.assertIs(deep.execution_budget_source, ExecutionBudgetSource.EXPLICIT_PROFILE)
         self.assertEqual(deep.execution_budget.max_tool_rounds, 96)
         self.assertEqual(deep.execution_budget.max_tool_calls, 384)
         self.assertEqual(compatibility.max_steps, 60)
+        self.assertIs(
+            compatibility.execution_budget_source,
+            ExecutionBudgetSource.EXPLICIT_MAX_STEPS,
+        )
         self.assertEqual(compatibility.execution_budget.max_tool_rounds, 60)
         self.assertEqual(compatibility.execution_budget.max_tool_calls, 240)
 

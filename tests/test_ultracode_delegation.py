@@ -18,6 +18,11 @@ from unittest.mock import patch
 
 import pytest
 
+from neuro_code.application.execution_policy import (
+    DEEP_EXECUTION_BUDGET,
+    NORMAL_EXECUTION_BUDGET,
+    ExecutionBudgetSource,
+)
 from neuro_code.application.permissions.policy import PermissionMode
 from neuro_code.application.ports.model import ModelCapabilitySet, ModelProvider, ModelToolPolicy
 from neuro_code.application.ports.result_adoption import ResultAdoptionRecord
@@ -120,6 +125,8 @@ class _Runtime:
         self.sandbox_profile = SandboxProfile.OFF
         self.system_prompt = "fixture system prompt"
         self.reasoning_effort = ReasoningEffort.ULTRACODE
+        self.execution_budget = NORMAL_EXECUTION_BUDGET
+        self.execution_budget_source = ExecutionBudgetSource.EXPLICIT_PROFILE
         self.interaction_mode = InteractionMode.NORMAL
         self.auto_mode_unrestricted = False
         self.plan = None
@@ -159,6 +166,7 @@ class _ParentRunner:
         self.verification_requirements: VerificationRequirementsSnapshot | None = None
         self.verification_workspace_mutation_id: str | None = None
         self.resume_existing_attempt = False
+        self.execution_budget_overrides = []
         self.fail_main = False
 
     @property
@@ -168,6 +176,14 @@ class _ParentRunner:
     @property
     def reasoning_effort(self) -> ReasoningEffort:
         return self._conversation.reasoning_effort
+
+    @property
+    def execution_budget(self):
+        return self._conversation.execution_budget
+
+    @property
+    def execution_budget_source(self):
+        return self._conversation.execution_budget_source
 
     @property
     def interaction_mode(self) -> InteractionMode:
@@ -203,12 +219,14 @@ class _ParentRunner:
         verification_requirements: VerificationRequirementsSnapshot | None = None,
         verification_workspace_mutation_id: str | None = None,
         resume_existing_attempt: bool = False,
+        execution_budget_override=None,
     ) -> AgentRunResult:
         del cancellation_policy, turn_source
         self.run_calls += 1
         self.verification_requirements = verification_requirements
         self.verification_workspace_mutation_id = verification_workspace_mutation_id
         self.resume_existing_attempt = resume_existing_attempt
+        self.execution_budget_overrides.append(execution_budget_override)
         if self.fail_main:
             raise RuntimeError("fixture main failure")
         if turn_id is None or ultracode_execution_id is None:
@@ -307,6 +325,7 @@ class _DynamicParentRunner(_ParentRunner):
     def __init__(self, store: SqliteSessionStore, cwd: Path) -> None:
         super().__init__(store, cwd)
         self.ordinary_prompts: list[str] = []
+        self.ordinary_budgets = []
 
     async def run(
         self,
@@ -321,6 +340,7 @@ class _DynamicParentRunner(_ParentRunner):
         verification_requirements=None,
         verification_workspace_mutation_id: str | None = None,
         resume_existing_attempt: bool = False,
+        execution_budget_override=None,
     ) -> AgentRunResult:
         if ultracode_execution_id is not None:
             return await super().run(
@@ -334,10 +354,12 @@ class _DynamicParentRunner(_ParentRunner):
                 verification_requirements=verification_requirements,
                 verification_workspace_mutation_id=verification_workspace_mutation_id,
                 resume_existing_attempt=resume_existing_attempt,
+                execution_budget_override=execution_budget_override,
             )
         del sink, content_parts, cancellation_policy, turn_source, turn_id
         del verification_requirements, verification_workspace_mutation_id, resume_existing_attempt
         self.ordinary_prompts.append(prompt)
+        self.ordinary_budgets.append(self._conversation.execution_budget)
         session_id = await self.ensure_persisted_session()
         return AgentRunResult(session_id, f"ordinary:{prompt}", (), (), (), 0)
 
@@ -1085,6 +1107,9 @@ def _fresh_ultracode_candidate(
         created_at=now,
         updated_at=now,
         verification_requirements=verification_requirements,
+        main_max_execution_budget=(
+            NORMAL_EXECUTION_BUDGET if decision is UltracodeDelegationDecision.MAIN_MAX else None
+        ),
     )
 
 
@@ -1262,6 +1287,7 @@ async def test_simple_ultracode_uses_existing_main_path_once_and_replays_exact_r
 
         assert first.response == "main answer"
         assert runner.run_calls == 1
+        assert runner.execution_budget_overrides == [NORMAL_EXECUTION_BUDGET]
         assert factory_calls == 0
         assert progress[0] is AgentEventKind.ULTRACODE_DELEGATION_PROGRESS
         assert progress.count(AgentEventKind.ULTRACODE_DELEGATION_PROGRESS) == 2
@@ -1569,7 +1595,7 @@ async def test_structured_main_max_recovery_reuses_snapshot_without_policy_or_du
 
 
 @pytest.mark.asyncio
-async def test_legacy_main_max_recovery_remains_legacy_without_default_upgrade() -> None:
+async def test_legacy_main_max_recovery_fails_closed_without_a_budget_snapshot() -> None:
     with tempfile.TemporaryDirectory() as directory:
         cwd = Path(directory)
         store = await _store(cwd)
@@ -1584,6 +1610,7 @@ async def test_legacy_main_max_recovery_remains_legacy_without_default_upgrade()
             owner_id="legacy-owner",
             owner_pid=999_999_999,
             owner_token="legacy-token",
+            main_max_execution_budget=None,
         )
         claim = await store.claim_ultracode_execution(
             candidate,
@@ -1600,11 +1627,11 @@ async def test_legacy_main_max_recovery_remains_legacy_without_default_upgrade()
             policy=_UnexpectedPolicy(),
             owner_id="legacy-recovery-owner",
         )
-        result = await service.run_turn(
-            RunTurnRequest("summarize this local file", turn_id="legacy-main")
-        )
-        assert result.response == "main answer"
-        assert runner.verification_requirements is None
+        with pytest.raises(ConfigurationError, match="durable execution budget"):
+            await service.run_turn(
+                RunTurnRequest("summarize this local file", turn_id="legacy-main")
+            )
+        assert runner.run_calls == 0
         restored = await store.get_ultracode_execution(candidate.execution_id)
         assert restored is not None
         assert restored.verification_requirements is None
@@ -1720,12 +1747,12 @@ async def test_schema_27_to_32_migration_creates_ultracode_projection_without_lo
             connection.execute("UPDATE schema_meta SET version = 27 WHERE singleton = 1")
         await store.initialize()
 
-        assert SCHEMA_VERSION == 33
+        assert SCHEMA_VERSION == 34
         assert await store.get_session(session_id) is not None
         with closing(sqlite3.connect(database)) as connection:
             assert connection.execute(
                 "SELECT version FROM schema_meta WHERE singleton = 1"
-            ).fetchone() == (33,)
+            ).fetchone() == (34,)
             assert connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' "
                 "AND name = 'orchestration_ultracode_executions'"
@@ -1738,6 +1765,7 @@ async def test_schema_27_to_32_migration_creates_ultracode_projection_without_lo
             }
             assert "verification_requirements_json" in columns
             assert "verification_requirements_fingerprint" in columns
+            assert "main_max_execution_budget_json" in columns
 
 
 @pytest.mark.asyncio
@@ -1833,6 +1861,9 @@ async def test_long_lived_turn_service_switches_between_max_and_ultracode_withou
         cwd = Path(directory)
         store = await _store(cwd)
         runner = _DynamicParentRunner(store, cwd)
+        runner._conversation._runtime.execution_budget_source = (
+            ExecutionBudgetSource.IMPLICIT_PROFILE
+        )
         binding = _binding(runner, cwd)
         option = ProviderOption(
             "fixture-provider",
@@ -1884,6 +1915,11 @@ async def test_long_lived_turn_service_switches_between_max_and_ultracode_withou
         assert runner.ordinary_prompts == [
             "ordinary before Ultracode",
             "ordinary after Ultracode",
+        ]
+        assert runner.ordinary_budgets == [NORMAL_EXECUTION_BUDGET, NORMAL_EXECUTION_BUDGET]
+        assert runner.execution_budget_overrides == [
+            DEEP_EXECUTION_BUDGET,
+            DEEP_EXECUTION_BUDGET,
         ]
         assert runner.run_calls == 2
         assert runner.commit_calls == 2
@@ -2404,6 +2440,24 @@ async def test_ultracode_transition_and_parent_result_guards_are_fail_closed() -
 def test_policy_is_local_deterministic_and_bounded() -> None:
     policy = UltracodeDelegationPolicy()
     assert policy.decide("fix one local typo") is UltracodeDelegationDecision.MAIN_MAX
+    assert (
+        policy.decide("请你对这个项目的代码进行分析\uff0c告诉我哪里还有需要优化的地方\uff1f")
+        is UltracodeDelegationDecision.BOUNDED_SWARM
+    )
+    assert (
+        policy.decide("Analyze this entire codebase and identify areas that should be improved.")
+        is UltracodeDelegationDecision.BOUNDED_SWARM
+    )
+    assert policy.decide("Describe this entire codebase") is UltracodeDelegationDecision.MAIN_MAX
+    assert policy.decide("分析这个函数为什么失败") is UltracodeDelegationDecision.MAIN_MAX
+    assert policy.decide("优化这个文件") is UltracodeDelegationDecision.MAIN_MAX
+    for prompt in (
+        "Review the entire repository and list the risks.",
+        "Inspect the whole project for issues.",
+        "请检查全代码库还有哪些问题。",
+        "请审查仓库代码并指出风险。",
+    ):
+        assert policy.decide(prompt) is UltracodeDelegationDecision.BOUNDED_SWARM
     assert (
         policy.decide("拆分多个文件并行研究独立任务") is UltracodeDelegationDecision.BOUNDED_SWARM
     )

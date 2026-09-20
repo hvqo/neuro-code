@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     from neuro_code.domain.conversation.interaction_mode import InteractionMode
     from neuro_code.domain.conversation.messages import SessionItem
     from neuro_code.domain.conversation.reasoning import ReasoningEffort
-    from neuro_code.domain.execution import SessionExecutionRecord
+    from neuro_code.domain.execution import SessionExecutionRecord, SupervisorReasonCode
     from neuro_code.domain.plans import PlanComment, SessionPlan
     from neuro_code.domain.ultracode import UltracodeDelegationDecision
     from neuro_code.interfaces.tui.clipboard import (
@@ -83,6 +83,7 @@ if TYPE_CHECKING:
         SessionTaskController,
         TaskController,
     )
+    from neuro_code.interfaces.tui.execution import BudgetUsageProjection
     from neuro_code.interfaces.tui.interaction import TuiUserInteraction
     from neuro_code.interfaces.tui.state import (
         CollapsingPulseAnimation,
@@ -176,6 +177,8 @@ class TuiAppControllerMixin:
         _turn_completion: tuple[str, int] | None
         _terminal_execution_status: str | None
         _terminal_execution_recoverable: bool
+        _terminal_execution_reason: SupervisorReasonCode | None
+        _terminal_budget_usage: BudgetUsageProjection | None
         _finalizing: bool
         _turn_usage_reported: bool
         _turn_worker: Worker[None] | None

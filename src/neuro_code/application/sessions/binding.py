@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Protocol, TypeVar
 
 from neuro_code.application.checkpoints.turn_undo import binding_has_live_mutators
+from neuro_code.application.execution_policy import ExecutionBudgetSource
 from neuro_code.application.memory.compaction import ProviderContextWindow
 from neuro_code.application.memory.compaction_runtime import (
     ContextCompactionCommandResult,
@@ -34,6 +35,7 @@ from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.messages import ContentPart, SessionItem
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.execution import (
+    ExecutionBudget,
     TurnCancellationPolicy,
     TurnSource,
     VerificationRequirementsSnapshot,
@@ -88,6 +90,12 @@ class ConversationRunner(Protocol):
 
     @property
     def reasoning_effort(self) -> ReasoningEffort: ...
+
+    @property
+    def execution_budget(self) -> ExecutionBudget: ...
+
+    @property
+    def execution_budget_source(self) -> ExecutionBudgetSource: ...
 
     @property
     def normal_requirements_enabled(self) -> bool: ...
@@ -148,6 +156,7 @@ class ConversationRunner(Protocol):
         verification_requirements: VerificationRequirementsSnapshot | None = None,
         verification_workspace_mutation_id: str | None = None,
         resume_existing_attempt: bool = False,
+        execution_budget_override: ExecutionBudget | None = None,
     ) -> AgentRunResult: ...
 
     async def ensure_persisted_session(self) -> str: ...

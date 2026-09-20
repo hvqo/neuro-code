@@ -75,6 +75,8 @@ TUI 启动也通过共享的应用设置边界使用该选项；本切片不向 
 - **TUI** — Textual 界面提供流式对话、provider 和 session 选择器、审批提示、斜杠命令、Markdown 渲染以及持久化的 UI 偏好设置。
 - **Bounded orchestration** — 有界、持久化的 Task DAG、Leader、Agent Swarm 和自动 Ultracode 委派可以协调受约束的并行工作；结果采纳和可写 worker 仍受显式能力、工作区和 sandbox 边界控制。
 
+Ultracode 路由还会识别“项目/仓库范围”与明确的优化意图同时出现的请求（例如“请你对这个项目的代码进行分析，告诉我哪里还有需要优化的地方？”），此组合可以选择 `BOUNDED_SWARM`；窄范围的函数/文件排错或优化仍选择 `MAIN_MAX`，现有 Swarm objective 字节上限继续有效。普通执行默认使用 `normal`（48 次模型调用）；省略档位时，Ultracode 的 `MAIN_MAX` 请求使用更深的 96 次预算，而显式 `--execution-profile normal`、`deep` 或 `--max-steps N` 保持显式选择。该预算按请求传递并持久化快照用于恢复；缺少或不兼容预算的 legacy 非终态记录会 fail closed，已完成记录的 replay 语义不变。TUI 的 typed `BUDGET_LIMITED` 提示会在可用时报告原因和用量，`STUCK` 提示保持不变。
+
 ## 安全与控制
 
 - **Workspace boundary** — 结构化文件系统操作会将目标解析到启动工作区和显式配置的根目录内；会拒绝通过链接类路径逃逸。

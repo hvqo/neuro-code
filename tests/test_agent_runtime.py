@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
+from neuro_code.application.execution_policy import (
+    DEEP_EXECUTION_BUDGET,
+    NORMAL_EXECUTION_BUDGET,
+    ExecutionBudgetSource,
+)
 from neuro_code.application.memory.compaction import (
     CompactionContextUsage,
     ContextCompactionPlanner,
@@ -794,6 +799,62 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 (60, 60, 240),
             )
+
+    async def test_per_turn_budget_override_uses_deep_limits_without_mutating_base_runtime(
+        self,
+    ) -> None:
+        scripts = (
+            *(
+                (
+                    ModelToolCall(ToolCall(f"inspect-{step}", "inspect", {})),
+                    ModelCompleted("tool_calls"),
+                )
+                for step in range(49)
+            ),
+            (ModelTextDelta("done"), ModelCompleted("stop")),
+        )
+        provider = ScriptedProvider(scripts)
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = AgentRuntime(
+                provider=provider,
+                tools=MinimalToolCollection(
+                    (IncrementingEvidenceFixtureTool("inspect", "evidence"),)
+                ),
+                workspace_change_observer=EmptyWorkspaceChangeObserver(),
+                permissions=PermissionManager(),
+                tool_context=ToolContext(Path(directory)),
+                execution_budget=NORMAL_EXECUTION_BUDGET,
+                execution_budget_source=ExecutionBudgetSource.IMPLICIT_PROFILE,
+                execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
+                final_output_gate_enabled=False,
+                normal_requirements_enabled=False,
+            )
+
+            result = await runtime.run(
+                "inspect the repository",
+                execution_budget_override=DEEP_EXECUTION_BUDGET,
+            )
+
+        self.assertEqual(result.response, "done")
+        self.assertEqual(result.steps, 50)
+        self.assertEqual(len(provider.calls), 50)
+        usage_events = [
+            event
+            for event in result.events
+            if event.kind is AgentEventKind.EXECUTION_BUDGET_UPDATED
+        ]
+        self.assertTrue(usage_events)
+        self.assertTrue(
+            all(
+                event.data["model_calls_limit"] == 96
+                and event.data["tool_rounds_limit"] == 96
+                and event.data["tool_calls_limit"] == 384
+                for event in usage_events
+            )
+        )
+        self.assertIs(runtime.execution_budget, NORMAL_EXECUTION_BUDGET)
+        self.assertEqual(runtime._loop_runner._max_steps, 48)
+        self.assertEqual(runtime._loop_runner._segment_policy.model_calls, 24)
 
     async def test_batch_first_runtime_guidance_is_request_scoped(self) -> None:
         provider = ScriptedProvider(((ModelTextDelta("done"), ModelCompleted("stop")),))

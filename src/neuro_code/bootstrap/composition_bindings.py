@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import cast
 
 from neuro_code.application.checkpoints import TurnWorkspaceCheckpointCoordinator
-from neuro_code.application.execution_policy import ExecutionBudgetPolicy
+from neuro_code.application.execution_policy import ExecutionBudgetPolicy, ExecutionBudgetSource
 from neuro_code.application.memory.compaction import ProviderContextWindow
 from neuro_code.application.memory.compaction_runtime import ContextCompactionRuntimeGate
 from neuro_code.application.memory.compaction_service import ContextCompactionApplicationService
@@ -756,6 +756,11 @@ class CompositionBindingMixin(CompositionRootMixin):
                 context_rollover=session_context_rollover,
                 workspace_mutation_tool=ExactWorkspaceMutationTool(),
                 execution_budget=selected_execution_budget,
+                execution_budget_source=(
+                    cast(ExecutionBudgetSource, self.settings.execution_budget_source)
+                    if max_steps is None
+                    else ExecutionBudgetSource.EXPLICIT_MAX_STEPS
+                ),
                 reasoning_effort=effective_reasoning_effort,
                 execution_control_mode=self.settings.execution_control_mode,
                 final_output_gate_enabled=final_output_gate_enabled,

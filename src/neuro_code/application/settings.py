@@ -7,7 +7,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from neuro_code.application.execution_policy import ExecutionBudgetPolicy, ExecutionProfile
+from neuro_code.application.execution_policy import (
+    ExecutionBudgetPolicy,
+    ExecutionBudgetSource,
+    ExecutionProfile,
+)
 from neuro_code.application.permissions.policy import PermissionMode, PermissionRule
 from neuro_code.application.runtime.supervision import ExecutionControlMode
 from neuro_code.application.runtime.verification import validate_explicit_verification_command
@@ -36,12 +40,39 @@ class ApplicationSettings:
     execution_control_mode: ExecutionControlMode = ExecutionControlMode.FINALIZE_TERMINAL
     resume_id: str | None = None
     execution_profile: ExecutionProfile = ExecutionProfile.NORMAL
+    execution_budget_source: ExecutionBudgetSource | None = None
     verification_command: str | None = None
     _execution_budget: ExecutionBudget = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.execution_profile, ExecutionProfile):
             raise TypeError("execution_profile must be an ExecutionProfile")
+        source = self.execution_budget_source
+        if source is None:
+            source = (
+                ExecutionBudgetSource.EXPLICIT_MAX_STEPS
+                if self.max_steps is not None
+                else (
+                    ExecutionBudgetSource.EXPLICIT_PROFILE
+                    if self.execution_profile is ExecutionProfile.DEEP
+                    else ExecutionBudgetSource.IMPLICIT_PROFILE
+                )
+            )
+        if not isinstance(source, ExecutionBudgetSource):
+            raise TypeError("execution_budget_source must be an ExecutionBudgetSource or None")
+        if source is ExecutionBudgetSource.IMPLICIT_PROFILE and (
+            self.execution_profile is not ExecutionProfile.NORMAL or self.max_steps is not None
+        ):
+            raise ConfigurationError(
+                "implicit execution budget source requires the default normal profile"
+            )
+        if source is ExecutionBudgetSource.EXPLICIT_PROFILE and self.max_steps is not None:
+            raise ConfigurationError(
+                "explicit execution profile source cannot be combined with max_steps"
+            )
+        if source is ExecutionBudgetSource.EXPLICIT_MAX_STEPS and self.max_steps is None:
+            raise ConfigurationError("explicit max_steps source requires max_steps")
+        object.__setattr__(self, "execution_budget_source", source)
         try:
             verification_command = validate_explicit_verification_command(self.verification_command)
         except (TypeError, ValueError) as error:

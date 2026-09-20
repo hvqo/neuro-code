@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
-from neuro_code.application.execution_policy import ExecutionProfile
+from neuro_code.application.execution_policy import ExecutionBudgetSource, ExecutionProfile
 from neuro_code.application.memory.compaction_runtime import (
     ContextCompactionCommandResult,
     ContextCompactionCommandStatus,
@@ -562,7 +562,16 @@ api_key_env = "FIXTURE_KEY"
 
         self.assertIs(settings.execution_control_mode, ExecutionControlMode.FINALIZE_TERMINAL)
         self.assertIs(settings.execution_profile, ExecutionProfile.NORMAL)
+        self.assertIs(settings.execution_budget_source, ExecutionBudgetSource.IMPLICIT_PROFILE)
         self.assertEqual(settings.max_steps, 48)
+
+    def test_cli_explicit_normal_profile_keeps_explicit_budget_provenance(self) -> None:
+        settings = _application_settings(
+            build_parser().parse_args(("agent", "-p", "answer", "--execution-profile", "normal"))
+        )
+
+        self.assertIs(settings.execution_budget_source, ExecutionBudgetSource.EXPLICIT_PROFILE)
+        self.assertEqual(settings.execution_budget.max_model_calls, 48)
 
     def test_cli_execution_profile_is_shared_by_agent_tui_and_acp(self) -> None:
         parser = build_parser()
@@ -576,6 +585,12 @@ api_key_env = "FIXTURE_KEY"
         )
 
         self.assertTrue(all(item.execution_profile is ExecutionProfile.DEEP for item in settings))
+        self.assertTrue(
+            all(
+                item.execution_budget_source is ExecutionBudgetSource.EXPLICIT_PROFILE
+                for item in settings
+            )
+        )
         self.assertTrue(all(item.execution_budget.max_model_calls == 96 for item in settings))
         self.assertTrue(all(item.execution_budget.max_tool_rounds == 96 for item in settings))
         self.assertTrue(all(item.execution_budget.max_tool_calls == 384 for item in settings))
@@ -648,6 +663,7 @@ api_key_env = "FIXTURE_KEY"
         )
 
         self.assertEqual(settings.max_steps, 60)
+        self.assertIs(settings.execution_budget_source, ExecutionBudgetSource.EXPLICIT_MAX_STEPS)
         self.assertEqual(settings.execution_budget.max_model_calls, 60)
         self.assertEqual(settings.execution_budget.max_tool_rounds, 60)
         self.assertEqual(settings.execution_budget.max_tool_calls, 240)
