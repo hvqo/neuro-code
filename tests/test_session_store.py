@@ -7,6 +7,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1748,18 +1749,17 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
             await store.initialize()
             session_id = await store.create_session("/workspace", "fixture", "model")
             sentinel = "2000-01-01 00:00:00"
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute(
                     "UPDATE sessions SET updated_at = ? WHERE id = ?",
                     (sentinel, session_id),
                 )
-                connection.commit()
 
             state = BackgroundWakeState().record_terminal_task("task-1", enqueue=True)
             await store.save_background_wake_state(session_id, state)
             await store.save_background_wake_state(session_id, state)
 
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 wake_timestamp = connection.execute(
                     "SELECT updated_at FROM sessions WHERE id = ?",
                     (session_id,),
@@ -1767,7 +1767,7 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(wake_timestamp, sentinel)
 
             await store.save_messages(session_id, [Message(Role.USER, "real mutation")])
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 mutation_timestamp = connection.execute(
                     "SELECT updated_at FROM sessions WHERE id = ?",
                     (session_id,),
