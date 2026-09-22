@@ -31,6 +31,7 @@ class StartSessionRequest:
     model: str
     context_affinity: str | None = None
     sandbox_profile: SandboxProfile = SandboxProfile.OFF
+    project_id: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("cwd", "provider", "model"):
@@ -43,6 +44,10 @@ class StartSessionRequest:
             raise ValueError("context_affinity must be non-empty when provided")
         if not isinstance(self.sandbox_profile, SandboxProfile):
             raise ValueError("sandbox_profile must be canonical")
+        if self.project_id is not None and (
+            not isinstance(self.project_id, str) or not self.project_id.strip()
+        ):
+            raise ValueError("project_id must be non-empty when provided")
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,13 +153,23 @@ class SessionLifecycleService:
 
         if not isinstance(request, StartSessionRequest):
             raise ValueError("start session request must be canonical")
-        session_id = await self._store.create_session(
-            request.cwd,
-            request.provider,
-            request.model,
-            request.context_affinity,
-            request.sandbox_profile,
-        )
+        if request.project_id is None:
+            session_id = await self._store.create_session(
+                request.cwd,
+                request.provider,
+                request.model,
+                request.context_affinity,
+                request.sandbox_profile,
+            )
+        else:
+            session_id = await self._store.create_session(
+                request.cwd,
+                request.provider,
+                request.model,
+                request.context_affinity,
+                request.sandbox_profile,
+                request.project_id,
+            )
         return await self._store.get_session(session_id)
 
     async def import_session(self, request: ImportSessionRequest) -> str:

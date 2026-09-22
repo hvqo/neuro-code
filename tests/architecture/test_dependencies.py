@@ -1480,6 +1480,7 @@ def test_canonical_ports_are_the_only_port_modules() -> None:
         "neuro_code.application.ports.provider_dialects",
         "neuro_code.application.ports.provider_services",
         "neuro_code.application.ports.provider_settings",
+        "neuro_code.application.ports.project_memory",
         "neuro_code.application.ports.result_adoption",
         "neuro_code.application.ports.routing",
         "neuro_code.application.ports.sandbox",
@@ -1504,6 +1505,16 @@ def test_canonical_ports_are_the_only_port_modules() -> None:
     assert {
         module for module in modules if module.startswith("neuro_code.application.ports")
     } == canonical_modules
+    project_memory_port = ast.parse(
+        modules["neuro_code.application.ports.project_memory"].read_text(encoding="utf-8")
+    )
+    assert {node.name for node in project_memory_port.body if isinstance(node, ast.ClassDef)} == {
+        "ProjectMemoryExtractionScheduler",
+        "ProjectMemoryLifecycleCoordinator",
+        "ProjectMemoryRecallController",
+        "ProjectMemoryScopeProvider",
+        "ProjectMemoryStore",
+    }
     assert not {
         module
         for module in modules
@@ -1537,6 +1548,7 @@ def test_canonical_persistence_modules_are_the_only_persistence_implementations(
         "neuro_code.infrastructure.persistence.sqlite_session_ultracode",
         "neuro_code.infrastructure.persistence.sqlite_session_working_set",
         "neuro_code.infrastructure.persistence.ui_preferences",
+        "neuro_code.infrastructure.persistence.project_memory_files",
     }
     assert {
         module for module in modules if module.startswith("neuro_code.infrastructure.persistence")
@@ -1652,6 +1664,7 @@ def test_canonical_tool_modules_are_the_only_tool_implementations() -> None:
         "neuro_code.infrastructure.tools.new_context",
         "neuro_code.infrastructure.tools.plans",
         "neuro_code.infrastructure.tools.registry",
+        "neuro_code.infrastructure.tools.project_memory",
         "neuro_code.infrastructure.tools.session_history",
         "neuro_code.infrastructure.tools.session_working_set",
         "neuro_code.infrastructure.tools.skills",
@@ -1866,6 +1879,9 @@ def test_canonical_memory_modules_are_the_only_memory_implementations() -> None:
         "neuro_code.application.memory.compaction_trigger",
         "neuro_code.application.memory.instruction_tracker",
         "neuro_code.application.memory.skill_tracker",
+        "neuro_code.application.memory.project_memory",
+        "neuro_code.application.memory.project_memory_extraction",
+        "neuro_code.application.memory.project_scope",
     }
     assert {
         module for module in modules if module.startswith("neuro_code.application.memory.")
@@ -1923,6 +1939,16 @@ def test_canonical_memory_modules_are_the_only_memory_implementations() -> None:
         },
         "neuro_code.application.memory.instruction_tracker": {"InstructionTracker"},
         "neuro_code.application.memory.skill_tracker": {"SkillTracker"},
+        "neuro_code.application.memory.project_memory": {"ProjectMemoryRecallService"},
+        "neuro_code.application.memory.project_scope": {"ProjectMemoryScope"},
+        "neuro_code.application.memory.project_memory_extraction": {
+            "BoundProjectMemoryExtractionScheduler",
+            "_ExtractionJob",
+            "_ProjectLockState",
+            "ProjectMemoryExtractionManager",
+            "ProjectMemoryExtractionOutcome",
+            "ProjectMemoryExtractionStatus",
+        },
     }
     for module, class_names in expected_classes.items():
         tree = ast.parse(modules[module].read_text(encoding="utf-8"))

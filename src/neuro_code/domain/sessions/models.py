@@ -47,12 +47,14 @@ def normalize_project_name(name: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class SessionProject:
-    """A named group that optional sessions can be organized under.
+    """An optional project context owner for sessions and Project Memory.
 
-    Sessions are never required to belong to a project, and deleting a project
-    only detaches its sessions.
+    Sessions are never required to belong to a project; ``cwd`` binds its
+    workspace without defining project identity. Deleting a project detaches
+    sessions and its owned Project Memory is purged by the application layer.
 
-    可选会话可以归属的具名分组.会话不强制归属项目,删除项目只解除归属."""
+    可选的项目上下文所有者,可关联会话及项目记忆.会话不强制归属项目;``cwd`` 绑定工作区,
+    但不定义项目身份.删除项目时由应用层清理其项目记忆并解除会话归属."""
 
     id: str
     name: str

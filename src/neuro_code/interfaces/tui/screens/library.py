@@ -665,6 +665,10 @@ class SessionLibraryScreen(ModalScreen[SessionLibraryAction | None]):
                     id="library-project-sessions",
                 ),
                 Button(
+                    ui_text(self.language, "library.action.new_session_in_project"),
+                    id="library-project-new-session",
+                ),
+                Button(
                     ui_text(self.language, "library.action.rename"), id="library-rename-project"
                 ),
                 Button(
@@ -697,6 +701,9 @@ class SessionLibraryScreen(ModalScreen[SessionLibraryAction | None]):
             )
         if self.selected_project_id not in {project.id for project in self.projects}:
             self.selected_project_id = self.projects[0].id if self.projects else None
+        self.query_one("#library-project-new-session", Button).disabled = (
+            self.selected_project_id is None
+        )
 
     async def _show_view(self, view: str) -> None:
         self.view = view
@@ -754,6 +761,7 @@ class SessionLibraryScreen(ModalScreen[SessionLibraryAction | None]):
         has_project = self.selected_project_id is not None
         for action_id in (
             "library-project-sessions",
+            "library-project-new-session",
             "library-rename-project",
             "library-delete-project",
         ):
@@ -804,6 +812,13 @@ class SessionLibraryScreen(ModalScreen[SessionLibraryAction | None]):
             return
         if button_id == "library-project-sessions":
             await self._show_view("sessions")
+            return
+        if button_id == "library-project-new-session":
+            if self.selected_project_id is not None:
+                self._request(
+                    LibraryActionKind.NEW_SESSION,
+                    project_id=self.selected_project_id,
+                )
             return
         if button_id == "library-new-project":
             self._prompt_project_name(None)

@@ -27,6 +27,10 @@ from neuro_code.application.memory.compaction_runtime import ContextCompactionRu
 from neuro_code.application.memory.compaction_service import ContextCompactionApplicationService
 from neuro_code.application.memory.compaction_trigger import ContextCompactionTriggerService
 from neuro_code.application.memory.instruction_tracker import InstructionTracker
+from neuro_code.application.memory.project_memory_extraction import (
+    BoundProjectMemoryExtractionScheduler,
+)
+from neuro_code.application.memory.project_scope import ProjectMemoryScope
 from neuro_code.application.memory.skill_tracker import SkillTracker
 from neuro_code.application.permissions.policy import (
     PermissionEffect,
@@ -431,6 +435,14 @@ class CompositionBindingMixin(CompositionRootMixin):
             if capabilities is None and parent_context_relay is None and dag_result_relay is None
             else None
         )
+        project_memory_scope = (
+            ProjectMemoryScope()
+            if capabilities is None and parent_context_relay is None and dag_result_relay is None
+            else None
+        )
+        project_memory_recall = (
+            self.project_memory_recall if project_memory_scope is not None else None
+        )
         preview_tools = default_tool_registry(
             selected_config.sandbox_profile,
             enable_background_tasks=enable_background_tasks,
@@ -443,6 +455,8 @@ class CompositionBindingMixin(CompositionRootMixin):
             session_item_query=session_item_query,
             session_working_set=session_working_set,
             context_rollover=session_context_rollover,
+            project_memory_recall=project_memory_recall,
+            project_memory_scope=project_memory_scope,
         )
         for tool in additional_tools:
             if allowed_tool_names is not None and tool.definition.name not in allowed_tool_names:
@@ -605,6 +619,8 @@ class CompositionBindingMixin(CompositionRootMixin):
                     session_item_query=session_item_query,
                     session_working_set=session_working_set,
                     context_rollover=session_context_rollover,
+                    project_memory_recall=project_memory_recall,
+                    project_memory_scope=project_memory_scope,
                 )
                 if fetch_path is WebFetchExecutionPath.LOCAL and (
                     allowed_tool_names is None or "web_fetch" in allowed_tool_names
@@ -788,6 +804,10 @@ class CompositionBindingMixin(CompositionRootMixin):
                 provider_max_output_tokens=provider_max_output_tokens,
                 instruction_provider=instruction_provider,
                 skill_provider=skill_provider,
+                project_memory_scope=project_memory_scope,
+                project_memory_index_provider=(
+                    project_memory_recall.index_text if project_memory_recall is not None else None
+                ),
                 workspace_undo=workspace_undo,
                 parent_relay_message=(
                     Message(
@@ -814,6 +834,14 @@ class CompositionBindingMixin(CompositionRootMixin):
                 cwd=selected_config.cwd,
                 workspace_identity=FilesystemWorkspaceIdentity(),
                 resume_id=resume_id,
+                project_memory_extraction=(
+                    BoundProjectMemoryExtractionScheduler(
+                        self.project_memory_extractions,
+                        provider,
+                    )
+                    if project_memory_scope is not None
+                    else None
+                ),
             )
             binding_capabilities = SubagentCapabilitySet.from_runtime(
                 tool_names=tools.names(),

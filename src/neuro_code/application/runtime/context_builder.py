@@ -101,6 +101,7 @@ class ContextBuilder:
         "_parent_relay_message",
         "_plan",
         "_plan_comments",
+        "_project_memory_provider",
         "_reasoning_effort",
         "_skill_provider",
     )
@@ -113,6 +114,7 @@ class ContextBuilder:
         plan: SessionPlan | None,
         instruction_provider: Callable[[], InstructionDiscoveryResult | None] | None,
         skill_provider: Callable[[], SkillDiscoveryResult | None] | None,
+        project_memory_provider: Callable[[], str | None] | None = None,
         parent_relay_message: Message | None = None,
         dag_result_relay_message: Message | None = None,
     ) -> None:
@@ -122,6 +124,7 @@ class ContextBuilder:
         self._plan_comments: tuple[PlanComment, ...] = ()
         self._instruction_provider = instruction_provider
         self._skill_provider = skill_provider
+        self._project_memory_provider = project_memory_provider
         if parent_relay_message is not None and (
             not isinstance(parent_relay_message, Message)
             or parent_relay_message.synthetic_reason is not SyntheticReason.PARENT_RELAY
@@ -317,6 +320,7 @@ class ContextBuilder:
                     SyntheticReason.PARENT_RELAY,
                     SyntheticReason.DAG_PREDECESSOR_RESULTS,
                     SyntheticReason.WORKING_SET,
+                    SyntheticReason.PROJECT_MEMORY_INDEX,
                 }
             )
         ]
@@ -363,6 +367,31 @@ class ContextBuilder:
                     break
             rendered.insert(insert_at, skill_msg)
 
+        # Project memory is a bounded index of contextual evidence. It follows
+        # stable project instructions and skills, but precedes conversation
+        # history and never acts as instruction authority.
+        memory_index = self._project_memory_provider() if self._project_memory_provider else None
+        if memory_index:
+            if not isinstance(memory_index, str) or len(memory_index.encode("utf-8")) > 24_576:
+                raise ValueError("project memory index exceeds its context byte limit")
+            insert_at = system_index + 1
+            while insert_at < len(rendered):
+                item = rendered[insert_at]
+                if not isinstance(item, Message) or item.synthetic_reason not in {
+                    SyntheticReason.PROJECT_INSTRUCTIONS,
+                    SyntheticReason.AVAILABLE_SKILLS,
+                }:
+                    break
+                insert_at += 1
+            rendered.insert(
+                insert_at,
+                Message(
+                    Role.USER,
+                    memory_index,
+                    synthetic_reason=SyntheticReason.PROJECT_MEMORY_INDEX,
+                ),
+            )
+
         # The current structured task state is refreshed by the runtime for
         # each request. It remains synthetic and is never added to durable
         # session items.
@@ -373,6 +402,7 @@ class ContextBuilder:
                 if not isinstance(item, Message) or item.synthetic_reason not in {
                     SyntheticReason.PROJECT_INSTRUCTIONS,
                     SyntheticReason.AVAILABLE_SKILLS,
+                    SyntheticReason.PROJECT_MEMORY_INDEX,
                 }:
                     break
                 insert_at += 1
@@ -388,6 +418,7 @@ class ContextBuilder:
                 if not isinstance(item, Message) or item.synthetic_reason not in {
                     SyntheticReason.PROJECT_INSTRUCTIONS,
                     SyntheticReason.AVAILABLE_SKILLS,
+                    SyntheticReason.PROJECT_MEMORY_INDEX,
                     SyntheticReason.WORKING_SET,
                 }:
                     break
@@ -404,6 +435,7 @@ class ContextBuilder:
                 if not isinstance(item, Message) or item.synthetic_reason not in {
                     SyntheticReason.PROJECT_INSTRUCTIONS,
                     SyntheticReason.AVAILABLE_SKILLS,
+                    SyntheticReason.PROJECT_MEMORY_INDEX,
                     SyntheticReason.WORKING_SET,
                     SyntheticReason.PARENT_RELAY,
                 }:

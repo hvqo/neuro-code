@@ -23,6 +23,10 @@ from neuro_code.application.ports.client_terminal import ClientTerminal
 from neuro_code.application.ports.context_rollover import ContextRolloverController
 from neuro_code.application.ports.git_inspection import GitInspectionApplication
 from neuro_code.application.ports.lsp import LanguageServerService
+from neuro_code.application.ports.project_memory import (
+    ProjectMemoryRecallController,
+    ProjectMemoryScopeProvider,
+)
 from neuro_code.application.ports.session_history import SessionHistoryQueryController
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
 from neuro_code.application.ports.tools import Tool
@@ -171,6 +175,8 @@ def default_tool_registry(
     session_item_query: SessionHistoryQueryController | None = None,
     session_working_set: WorkingSetController | None = None,
     context_rollover: ContextRolloverController | None = None,
+    project_memory_recall: ProjectMemoryRecallController | None = None,
+    project_memory_scope: ProjectMemoryScopeProvider | None = None,
 ) -> ToolRegistry:
     from neuro_code.infrastructure.tools.background_tasks import (
         KillTaskTool,
@@ -204,6 +210,7 @@ def default_tool_registry(
     from neuro_code.infrastructure.tools.lsp import LspTool
     from neuro_code.infrastructure.tools.new_context import NewContextTool
     from neuro_code.infrastructure.tools.plans import UpdatePlanTool
+    from neuro_code.infrastructure.tools.project_memory import ProjectMemoryReadTool
     from neuro_code.infrastructure.tools.session_history import SessionHistoryTool
     from neuro_code.infrastructure.tools.session_working_set import SessionWorkingSetTool
     from neuro_code.infrastructure.tools.skills import SkillTool
@@ -216,6 +223,10 @@ def default_tool_registry(
         UpdatePlanTool(),
         LspTool(lsp_service),
     ]
+    if (project_memory_recall is None) != (project_memory_scope is None):
+        raise ValueError("project memory recall and scope must be configured together")
+    if project_memory_recall is not None and project_memory_scope is not None:
+        tools.append(ProjectMemoryReadTool(project_memory_recall, project_memory_scope))
     if user_interaction is not None:
         tools.append(AskUserTool())
     if client_file_system is None:

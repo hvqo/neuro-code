@@ -2429,3 +2429,15 @@ Agent 偏好扩充至 17 项：新增 Enter 行为、输入折行、轮次结束
 设置导航的宽屏初始视图聚焦“外观”，仍可主动选择全部设置或跨分类搜索。分类使用柔和底色，条目之间用细线与留白分隔；详细表单加强字段标题和说明间距。窄屏继续以单列展示全部分类。
 
 文字使用按主题分别定义的语义配色：标题和链接为蓝色，行内代码与工具活动为青色，数字与装饰器为橙色，关键字为紫色，字符串和成功状态为绿色，提醒使用暖黄色。正文保持中性前景色。浅色主题采用较深文字色，深色主题采用柔和亮色；Matrix 保留绿色主调，System 使用 ANSI 色。代码、Markdown 和 diff 在切换主题后使用同一套映射，不修改消息内容。
+
+## 项目记忆 V1
+
+`SessionProject.id` 是唯一的 Project Memory 身份；`cwd` 仍是工作区绑定。每个可选项目在 Neuro Code state root 下拥有独立目录。`FileProjectMemoryStore` 校验规范 UUID、manifest、正文文件名、文件类型、链接、目录包含性以及严格的数量/字节限制。它保存 manifest、生成的有界 `MEMORY.md` index，以及每条记忆独立的正文文件。Session schema v35 保持不变。
+
+应用层通过 `ProjectMemoryRecallService` 提供 index 和按精确 ID 召回。只读 `read_project_memory` 工具只接收当前 binding 的可变项目 scope，不接收路径参数。`ContextBuilder` 仅将有界 index 作为 `PROJECT_MEMORY_INDEX` 注入，在仓库指令与 Skills 之后、普通历史之前。Synthetic Memory Context 不进入持久会话历史。Index 和召回正文都明确指出记忆可能过期，当前仓库、Git 和 `AGENTS.md` 状态优先。
+
+`ProjectMemoryExtractionManager` 拥有一个有界队列 worker，并按项目提供生命周期锁。只有项目绑定 Main Agent 的持久用户 Turn 成功完成后才会安排提取；提取从每会话 cursor 之后读取新增持久对话，并使用已有 manifest 去重或更新记录。它禁用工具，并限制来源对话、prompt、输出、事件数、候选条数、队列和总时长。调用 Provider 和持久化前会脱敏配置中的凭据及可识别凭据。Provider/存储失败、超限和取消都会产生带类型且可观测的结果，不会改变已提交 Turn。关闭时会取消并等待 worker。只有有界输入处理完成后才推进 cursor，因此进程重启后仍可处理尚未完成的 Turn。
+
+`AgentConversation.open()` 从恢复的 Session 还原项目 scope。项目迁移和显式新建会话时，`ProfileConversationController` 在现有 Turn 锁下切换 scope。项目内的新会话会在首次 Turn 时将项目 ID 一并持久化；项目会话的 Fork 会继承其 Project owner，但 Subagent binding 仍不会获得 Project Memory scope。项目删除会与 Turn 和提取串行，清理该项目的 state 文件，再使用现有 Session 项目删除操作解除会话归属。TUI 只增加项目内新会话操作，并明确展示删除记忆的提示。Main Agent 没有 state root 写工具；记忆写入由应用层提取权限完成。
+
+提取器只保留持久决策及原因、目标/约束或期限、项目特有的用户反馈、外部资源入口和非显然的设计理由。它排除可从当前代码恢复的信息、路径、Git 历史、仓库指令、计划、任务进度和普通调试过程。全局用户记忆、向量/图检索、云同步和完整管理界面均不属于本版本。详见 [ADR 0172](adr/0172-project-memory-v1.md)。

@@ -118,6 +118,7 @@ class CompositionLifecycleMixin(CompositionRootMixin):
         if self._closed:
             return
         self._closed = True
+        await self.project_memory_extractions.shutdown()
         binding_scopes = tuple(self._binding_scopes)
         self._binding_scopes.clear()
         await asyncio.gather(

@@ -72,10 +72,14 @@ class FixtureConversation:
         self.reasoning_effort = ReasoningEffort.HIGH
         self.interaction_mode = InteractionMode.NORMAL
         self.auto_mode_unrestricted = False
+        self.project_id: str | None = None
 
     @property
     def session_id(self) -> str | None:
         return self._session_id
+
+    def set_project_id(self, project_id: str | None) -> None:
+        self.project_id = project_id
 
     @property
     def items(self) -> tuple[SessionItem, ...]:
@@ -257,6 +261,49 @@ def summary(
 
 
 class ProfileConversationControllerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_new_session_binds_explicit_project_before_first_turn(self) -> None:
+        previous = FixtureConversation("previous")
+        fresh = FixtureConversation()
+        project_id = "project-owner-id"
+
+        async def bind(name: str) -> ConversationBinding:
+            return ConversationBinding(fresh, FixtureProvider(name, "model"))
+
+        controller = ProfileConversationController(
+            options=(option("first"),),
+            selected_profile="first",
+            binding=ConversationBinding(previous, FixtureProvider("first", "first-model")),
+            binding_factory=bind,
+        )
+
+        result = await controller.start_new_session(project_id)
+
+        self.assertEqual(result.previous_session_id, "previous")
+        self.assertIsNone(fresh.session_id)
+        self.assertEqual(fresh.project_id, project_id)
+        self.assertIs(controller.binding.runner, fresh)
+
+    async def test_session_project_lifecycle_switches_scope_under_turn_lock(self) -> None:
+        runner = FixtureConversation("active")
+
+        async def bind(name: str) -> ConversationBinding:
+            return ConversationBinding(FixtureConversation(), FixtureProvider(name, "model"))
+
+        controller = ProfileConversationController(
+            options=(option("first"),),
+            selected_profile="first",
+            binding=ConversationBinding(runner, FixtureProvider("first", "first-model")),
+            binding_factory=bind,
+        )
+
+        async with controller.session_project_lifecycle("active", "project-a"):
+            self.assertIsNone(runner.project_id)
+        self.assertEqual(runner.project_id, "project-a")
+
+        async with controller.project_lifecycle("project-a"):
+            self.assertEqual(runner.project_id, "project-a")
+        self.assertIsNone(runner.project_id)
+
     async def test_run_forwards_the_structured_requirement_snapshot(self) -> None:
         runner = FixtureConversation()
 
