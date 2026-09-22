@@ -445,6 +445,9 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
                     table,
                 )
             self.assertEqual(remaining.execute("PRAGMA foreign_key_check").fetchall(), [])
+            # Close before the temporary directory is removed: on Windows an
+            # open connection would block unlinking sessions.db.
+            remaining.close()
 
     async def test_message_content_parts_round_trip_through_the_store(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

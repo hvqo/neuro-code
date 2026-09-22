@@ -7695,7 +7695,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 if isinstance(app.screen, SessionLibraryScreen):
                     break
 
-            self.assertEqual(library.created_projects, [("Beta", "/workspace")])
+            self.assertEqual(library.created_projects, [("Beta", str(Path("/workspace")))])
             screen = app.screen
             assert isinstance(screen, SessionLibraryScreen)
             self.assertEqual(screen.view, "projects")

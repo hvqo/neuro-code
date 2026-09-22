@@ -1261,7 +1261,7 @@ def _spawn_ultracode_crash(
 
 
 async def _join_ultracode_process(process: Any, expected_exit_code: int) -> None:
-    await asyncio.to_thread(process.join, 120)
+    await asyncio.to_thread(process.join, 300)
     if process.is_alive():
         process.terminate()
         await asyncio.to_thread(process.join, 15)

@@ -93,7 +93,11 @@ class BuildAttachmentTests(unittest.TestCase):
 
             attachments = build_attachments(["docs/a.txt"], workspace=root)
 
-            self.assertEqual(attachments[0].path, nested / "a.txt")
+            # The workspace is resolved inside build_attachments, so compare
+            # against the resolved path (macOS /var -> /private/var, Windows
+            # short 8.3 runner names).
+            expected = Path(root).expanduser().resolve() / "docs" / "a.txt"
+            self.assertEqual(attachments[0].path, expected)
 
     def test_rejections(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
