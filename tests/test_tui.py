@@ -1515,6 +1515,8 @@ class TaskTuiController:
     def __init__(self, snapshots: tuple[BackgroundTaskSnapshot, ...] = ()) -> None:
         self.snapshots = snapshots
         self.list_calls = 0
+        self.save_calls = 0
+        self.failed_save_attempts = 0
         self.wake_state = BackgroundWakeState()
 
     async def list_background_tasks(self) -> tuple[BackgroundTaskSnapshot, ...]:
@@ -1525,6 +1527,10 @@ class TaskTuiController:
         return self.wake_state
 
     async def save_background_wake_state(self, state: BackgroundWakeState) -> None:
+        self.save_calls += 1
+        if self.failed_save_attempts:
+            self.failed_save_attempts -= 1
+            raise RuntimeError("wake state save failed")
         self.wake_state = state
 
 
@@ -4943,6 +4949,134 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             ]
             self.assertEqual(notifications, ["Background task task-fast completed (exit 0)."])
             self.assertNotIn("private task output", "\n".join(notifications))
+
+    async def test_idle_background_polls_do_not_save_unchanged_wake_state(self) -> None:
+        tasks = TaskTuiController(
+            (background_snapshot("task-running", BackgroundTaskStatus.RUNNING),)
+        )
+        app = NeuroCodeApp(
+            TuiConversation(),
+            task_controller=tasks,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(110, 35)):
+            for _ in range(10):
+                await app._poll_background_tasks()
+
+        self.assertEqual(tasks.save_calls, 0)
+
+    async def test_background_wake_state_transition_is_saved_once(self) -> None:
+        tasks = TaskTuiController((background_snapshot("task-fast", BackgroundTaskStatus.RUNNING),))
+        app = NeuroCodeApp(
+            TuiConversation(),
+            task_controller=tasks,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(110, 35)):
+            await app._poll_background_tasks()
+            tasks.snapshots = (
+                background_snapshot("task-fast", BackgroundTaskStatus.COMPLETED, exit_code=0),
+            )
+            await app._poll_background_tasks()
+            for _ in range(10):
+                await app._poll_background_tasks()
+
+        self.assertEqual(tasks.save_calls, 1)
+
+    async def test_failed_background_wake_state_save_is_retried_on_later_poll(self) -> None:
+        tasks = TaskTuiController((background_snapshot("task-fast", BackgroundTaskStatus.RUNNING),))
+        tasks.failed_save_attempts = 1
+        app = NeuroCodeApp(
+            TuiConversation(),
+            task_controller=tasks,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(110, 35)):
+            await app._poll_background_tasks()
+            tasks.snapshots = (
+                background_snapshot("task-fast", BackgroundTaskStatus.COMPLETED, exit_code=0),
+            )
+            await app._poll_background_tasks()
+            self.assertEqual(tasks.save_calls, 1)
+            self.assertEqual(tasks.wake_state, BackgroundWakeState())
+
+            await app._poll_background_tasks()
+            for _ in range(3):
+                await app._poll_background_tasks()
+
+        self.assertEqual(tasks.save_calls, 2)
+        self.assertEqual(tasks.wake_state.announced_task_ids, ("task-fast",))
+
+    async def test_restart_recovery_saves_only_when_recovery_changes_wake_state(self) -> None:
+        stable = BackgroundWakeState().record_terminal_task("task-retained", enqueue=False)
+        stable_tasks = TaskTuiController()
+        stable_tasks.wake_state = stable
+        stable_app = NeuroCodeApp(
+            TuiConversation(),
+            task_controller=stable_tasks,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+        async with stable_app.run_test(size=(110, 35)):
+            await stable_app._poll_background_tasks()
+        self.assertEqual(stable_tasks.save_calls, 0)
+
+        in_flight = (
+            BackgroundWakeState()
+            .record_terminal_task("task-fast", enqueue=True)
+            .begin_wake(datetime(2026, 7, 18, 9, 30, tzinfo=UTC), limits=BackgroundWakeLimits())
+        )
+        recovering_tasks = TaskTuiController(
+            (background_snapshot("task-fast", BackgroundTaskStatus.COMPLETED, exit_code=0),)
+        )
+        recovering_tasks.wake_state = in_flight
+        recovering_app = NeuroCodeApp(
+            TuiConversation(),
+            task_controller=recovering_tasks,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+        async with recovering_app.run_test(size=(110, 35)):
+            await recovering_app._poll_background_tasks()
+            await recovering_app._poll_background_tasks()
+        self.assertEqual(recovering_tasks.save_calls, 1)
+        self.assertFalse(recovering_tasks.wake_state.wake_in_flight)
+
+    async def test_background_wake_persistence_snapshot_resets_for_a_new_session(self) -> None:
+        first_session_state = BackgroundWakeState().record_terminal_task(
+            "old-session-task",
+            enqueue=False,
+        )
+        tasks = TaskTuiController()
+        tasks.wake_state = first_session_state
+        app = NeuroCodeApp(
+            TuiConversation(),
+            task_controller=tasks,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(110, 35)):
+            await app._poll_background_tasks()
+            tasks.wake_state = BackgroundWakeState()
+            app._reset_background_task_tracking()
+            await app._poll_background_tasks()
+
+        self.assertEqual(tasks.save_calls, 0)
+        self.assertEqual(app._background_wake_state, BackgroundWakeState())
+        self.assertEqual(app._persisted_background_wake_state, BackgroundWakeState())
 
     async def test_background_task_auto_wake_is_disabled_by_default(self) -> None:
         runner = AutoWakeTuiConversation()

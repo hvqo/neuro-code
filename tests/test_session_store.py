@@ -1739,6 +1739,41 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
             await reopened.initialize()
             self.assertEqual(await reopened.load_background_wake_state(source_id), state)
 
+    async def test_background_wake_save_does_not_touch_recency_but_session_mutations_do(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "sessions.db"
+            store = SqliteSessionStore(database)
+            await store.initialize()
+            session_id = await store.create_session("/workspace", "fixture", "model")
+            sentinel = "2000-01-01 00:00:00"
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                    (sentinel, session_id),
+                )
+                connection.commit()
+
+            state = BackgroundWakeState().record_terminal_task("task-1", enqueue=True)
+            await store.save_background_wake_state(session_id, state)
+            await store.save_background_wake_state(session_id, state)
+
+            with sqlite3.connect(database) as connection:
+                wake_timestamp = connection.execute(
+                    "SELECT updated_at FROM sessions WHERE id = ?",
+                    (session_id,),
+                ).fetchone()[0]
+            self.assertEqual(wake_timestamp, sentinel)
+
+            await store.save_messages(session_id, [Message(Role.USER, "real mutation")])
+            with sqlite3.connect(database) as connection:
+                mutation_timestamp = connection.execute(
+                    "SELECT updated_at FROM sessions WHERE id = ?",
+                    (session_id,),
+                ).fetchone()[0]
+            self.assertNotEqual(mutation_timestamp, sentinel)
+
     async def test_current_plan_comment_count_is_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SqliteSessionStore(Path(directory) / "sessions.db")

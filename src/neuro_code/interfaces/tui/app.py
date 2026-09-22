@@ -860,6 +860,7 @@ class NeuroCodeApp(
         self._announced_terminal_tasks: set[str] = set()
         self._pending_auto_wake_tasks: set[str] = set()
         self._background_wake_state = BackgroundWakeState()
+        self._persisted_background_wake_state = None
         self._background_wake_state_loaded = self._task_controller is None
         self._background_wake_active = False
         self._background_wake_task_ids: tuple[str, ...] = ()

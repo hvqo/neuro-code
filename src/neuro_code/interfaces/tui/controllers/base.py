@@ -204,6 +204,7 @@ class TuiAppControllerMixin:
         _announced_terminal_tasks: set[str]
         _pending_auto_wake_tasks: set[str]
         _background_wake_state: BackgroundWakeState
+        _persisted_background_wake_state: BackgroundWakeState | None
         _background_wake_state_loaded: bool
         _background_wake_active: bool
         _background_wake_task_ids: tuple[str, ...]

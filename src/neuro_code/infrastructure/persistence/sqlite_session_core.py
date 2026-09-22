@@ -968,6 +968,24 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                 ).fetchone()
                 if exists is None:
                     raise SessionError(f"unknown session: {session_id}")
+                values = (
+                    json.dumps(state.announced_task_ids, separators=(",", ":")),
+                    json.dumps(state.pending_task_ids, separators=(",", ":")),
+                    state.wake_count,
+                    state.last_wake_at.isoformat() if state.last_wake_at else None,
+                    int(state.wake_in_flight),
+                )
+                current = connection.execute(
+                    """
+                    SELECT announced_task_ids_json, pending_task_ids_json,
+                           wake_count, last_wake_at, wake_in_flight
+                    FROM session_background_wake_state
+                    WHERE session_id = ?
+                    """,
+                    (session_id,),
+                ).fetchone()
+                if current is not None and tuple(current) == values:
+                    return
                 connection.execute(
                     """
                     INSERT INTO session_background_wake_state(
@@ -981,18 +999,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                         last_wake_at = excluded.last_wake_at,
                         wake_in_flight = excluded.wake_in_flight
                     """,
-                    (
-                        session_id,
-                        json.dumps(state.announced_task_ids, separators=(",", ":")),
-                        json.dumps(state.pending_task_ids, separators=(",", ":")),
-                        state.wake_count,
-                        state.last_wake_at.isoformat() if state.last_wake_at else None,
-                        int(state.wake_in_flight),
-                    ),
-                )
-                connection.execute(
-                    "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (session_id,),
+                    (session_id, *values),
                 )
 
         async with self._write_lock:
