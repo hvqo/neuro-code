@@ -88,10 +88,12 @@ class BackgroundControllerMixin(TuiAppControllerMixin):
             state = await controller.load_background_wake_state()
         except Exception:
             self._background_wake_state = BackgroundWakeState()
+            self._persisted_background_wake_state = None
             self._background_wake_state_loaded = True
             return
         recovered = state.recover_after_restart()
         self._background_wake_state = recovered
+        self._persisted_background_wake_state = state
         self._announced_terminal_tasks = set(recovered.announced_task_ids)
         self._pending_auto_wake_tasks.clear()
         self._background_wake_state_loaded = True
@@ -102,16 +104,21 @@ class BackgroundControllerMixin(TuiAppControllerMixin):
         controller = self._task_controller
         if controller is None or not self._background_wake_state_loaded:
             return
+        state = self._background_wake_state
+        if state == self._persisted_background_wake_state:
+            return
         try:
-            await controller.save_background_wake_state(self._background_wake_state)
+            await controller.save_background_wake_state(state)
         except Exception:
             # Wake bookkeeping must never make a task poll or user turn fail.
             return
+        self._persisted_background_wake_state = state
 
     def _reset_background_task_tracking(self) -> None:
         self._announced_terminal_tasks.clear()
         self._pending_auto_wake_tasks.clear()
         self._background_wake_state = BackgroundWakeState()
+        self._persisted_background_wake_state = None
         self._background_wake_state_loaded = self._task_controller is None
         self._background_wake_active = False
         self._background_wake_task_ids = ()
