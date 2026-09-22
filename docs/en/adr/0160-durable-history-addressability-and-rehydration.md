@@ -1,5 +1,7 @@
 # ADR 0160: Durable history addressability and bounded rehydration
 
+[简体中文](../../zh-CN/adr/0160-durable-history-addressability-and-rehydration.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-14
 - Scope: CM1 durable session-history addressability and read-only rehydration

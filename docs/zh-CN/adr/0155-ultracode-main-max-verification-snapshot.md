@@ -1,6 +1,8 @@
 # ADR 0155：持久化 MAIN_MAX 验证 snapshot
 
-- 状态：Accepted
+[English](../../en/adr/0155-ultracode-main-max-verification-snapshot.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-09-07
 - 范围：VF-4a 有界本地 Ultracode 集成
 

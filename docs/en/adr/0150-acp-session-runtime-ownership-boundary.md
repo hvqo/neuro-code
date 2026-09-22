@@ -1,5 +1,7 @@
 # ADR 0150: ACP Session Runtime Ownership Boundary
 
+[简体中文](../../zh-CN/adr/0150-acp-session-runtime-ownership-boundary.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-31
 - Scope: the bounded ACP session-runtime slice stacked on PR #77

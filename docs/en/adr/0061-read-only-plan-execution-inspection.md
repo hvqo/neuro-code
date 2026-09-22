@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0061-read-only-plan-execution-inspection.md) · **English**
 
-## Status
-
-Accepted
+- Status: Accepted
+- Date: 2026-07-29
 
 ## Context
 

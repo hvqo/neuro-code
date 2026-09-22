@@ -1,6 +1,8 @@
 # ADR 0138: Bounded Model-Generated DAG Planning
 
-- Status: implemented as an explicit internal P0 vertical slice; final rating waits for merge-ref CI
+[简体中文](../../zh-CN/adr/0138-bounded-model-generated-dag-planning.md) · **English**
+
+- Status: Accepted; implemented as an explicit internal P0 vertical slice; final rating waits for merge-ref CI
 - Date: 2026-08-26
 - Scope: one explicit parent objective to one immutable bounded Task DAG
 - Depends on: ADR 0134, ADR 0135, ADR 0136, and ADR 0137

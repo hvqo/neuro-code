@@ -1,5 +1,7 @@
 # ADR 0063：有界显式计划任务调度
 
+[English](../../en/adr/0063-bounded-explicit-plan-task-scheduling.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-02
 

@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0029-auditable-in-place-tool-cards.md) · **English**
 
-## Status
-
-Accepted.
+- Status: Accepted
+- Date: 2026-07-18
 
 ## Context
 

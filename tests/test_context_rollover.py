@@ -73,7 +73,7 @@ from neuro_code.domain.execution import (
     TurnSource,
 )
 from neuro_code.domain.tools import ToolDefinition, ToolResult
-from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionStore
+from neuro_code.infrastructure.persistence.sqlite_session import SCHEMA_VERSION, SqliteSessionStore
 from neuro_code.infrastructure.providers.failover import FailoverModelProvider, ProviderCandidate
 from neuro_code.infrastructure.providers.openai_responses import OpenAIResponsesProvider
 from neuro_code.infrastructure.tools.new_context import NewContextTool
@@ -471,7 +471,7 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
                 connection.execute(
                     "SELECT version FROM schema_meta WHERE singleton = 1"
                 ).fetchone(),
-                (34,),
+                (SCHEMA_VERSION,),
             )
         finally:
             connection.close()

@@ -37,7 +37,7 @@ from neuro_code.interfaces.tui.state import (
     ProviderSettingsSubmission,
 )
 from neuro_code.interfaces.tui.text import ui_text
-from neuro_code.interfaces.tui.theme import ERROR_TEXT_STYLE
+from neuro_code.interfaces.tui.theme import ERROR_TEXT_STYLE, theme_style
 from neuro_code.shared.ui_language import UiLanguage
 
 
@@ -55,7 +55,7 @@ class ProviderSettingsScreen(
     CSS = """
     ProviderSettingsScreen {
         align: center middle;
-        background: $background 85%;
+        background: $modal-overlay 25%;
     }
 
     #provider-settings-dialog {
@@ -64,7 +64,7 @@ class ProviderSettingsScreen(
         height: 95%;
         max-height: 95%;
         padding: $space-2 $space-3;
-        border: solid $border;
+        border: round $border;
         background: $surface;
     }
 
@@ -79,10 +79,6 @@ class ProviderSettingsScreen(
     }
 
     #provider-settings-description,
-    #provider-settings-protocol-hint,
-    #provider-settings-proxy-title,
-    #provider-settings-proxy-hint,
-    #provider-settings-context-hint,
     #provider-settings-connection-status,
     #provider-settings-error,
     #provider-settings-empty {
@@ -90,18 +86,23 @@ class ProviderSettingsScreen(
         margin-bottom: 1;
     }
 
-    #provider-settings-protocol-hint {
-        color: $text-secondary;
-    }
-
-    #provider-settings-proxy-title {
-        color: $text;
+    #provider-settings-endpoint-title,
+    #provider-settings-protocol-title,
+    #provider-settings-proxy-title,
+    #provider-settings-background-wake-title {
         text-style: bold;
-        margin-top: 1;
+        color: $text-primary;
+        margin-top: 2;
+        margin-bottom: 1;
     }
 
-    #provider-settings-proxy-hint {
-        color: $text-secondary;
+    #provider-settings-protocol-hint,
+    #provider-settings-proxy-hint,
+    #provider-settings-context-hint,
+    #provider-settings-background-wake-hint {
+        color: $text-muted;
+        margin-top: 1;
+        margin-bottom: 1;
     }
 
     #provider-settings-connection-status {
@@ -110,16 +111,33 @@ class ProviderSettingsScreen(
     }
 
     #provider-settings-error {
+        margin-top: 1;
         padding-left: 1;
         border-left: tall $border-focus;
         color: $text-primary;
         text-style: bold;
     }
 
+    #provider-settings-error.empty {
+        padding-left: 0;
+        border-left: none;
+    }
+
+    #provider-settings-list-view,
+    #provider-settings-edit-view {
+        display: none;
+        height: auto;
+    }
+
     #provider-settings-profiles {
         height: auto;
-        max-height: 8;
+        max-height: 10;
         margin-bottom: 1;
+    }
+
+    #provider-settings-new {
+        width: 100%;
+        margin-top: 1;
     }
 
     #provider-settings-models {
@@ -140,8 +158,6 @@ class ProviderSettingsScreen(
     }
 
     #provider-settings-presets,
-    #provider-settings-presets-row-one,
-    #provider-settings-presets-row-two,
     #provider-settings-endpoints,
     #provider-settings-protocols,
     #provider-settings-proxy-modes,
@@ -151,25 +167,29 @@ class ProviderSettingsScreen(
         height: auto;
     }
 
+    #provider-settings-presets Horizontal {
+        height: auto;
+    }
+
     #provider-settings-presets {
         margin-bottom: 1;
     }
 
-    #provider-settings-presets Button {
-        width: 1fr;
-        margin-right: 1;
-    }
-
+    #provider-settings-presets Button,
     #provider-settings-endpoints Button,
-    #provider-settings-protocols Button {
+    #provider-settings-protocols Button,
+    #provider-settings-proxy-modes Button,
+    #provider-settings-wake-modes Button {
         width: 1fr;
         margin-right: 1;
     }
 
-    #provider-settings-endpoint-title,
-    #provider-settings-protocol-title {
-        color: $text-primary;
-        margin-top: 1;
+    #provider-settings-presets Button:last-of-type,
+    #provider-settings-endpoints Button:last-of-type,
+    #provider-settings-protocols Button:last-of-type,
+    #provider-settings-proxy-modes Button:last-of-type,
+    #provider-settings-wake-modes Button:last-of-type {
+        margin-right: 0;
     }
 
     #provider-settings-presets-row-one {
@@ -180,19 +200,15 @@ class ProviderSettingsScreen(
         margin-bottom: 0;
     }
 
-    #provider-settings-form Label {
-        color: $text-primary;
+    #provider-settings-proxy-env {
         margin-top: 1;
     }
 
-    #provider-settings-proxy-modes Button {
-        width: 1fr;
-        margin-right: 1;
-    }
-
-    #provider-settings-wake-modes Button {
-        width: 1fr;
-        margin-right: 1;
+    #provider-settings-form Label {
+        text-style: bold;
+        color: $text-primary;
+        margin-top: 2;
+        margin-bottom: 1;
     }
 
     #provider-settings-form {
@@ -201,10 +217,38 @@ class ProviderSettingsScreen(
 
     #provider-settings-actions {
         align-horizontal: right;
+        border-top: solid $border;
+        padding-top: 1;
+        margin-top: 1;
     }
 
     #provider-settings-actions Button {
-        margin-left: 1;
+        margin-left: 2;
+    }
+
+    #provider-settings-actions Button:first-of-type {
+        margin-left: 0;
+    }
+
+    #provider-settings-actions Button.-success {
+        background: $text-primary;
+        color: $surface;
+    }
+
+    #provider-settings-actions Button.-success:focus {
+        background: $border-focus;
+    }
+
+    #provider-settings-actions Button.-success:disabled {
+        background: $background;
+        color: $text-disabled;
+    }
+
+    #provider-settings-protocols Button.-primary,
+    #provider-settings-proxy-modes Button.-primary,
+    #provider-settings-wake-modes Button.-primary {
+        background: $surface-selected;
+        color: $border-focus;
     }
     """
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -257,6 +301,7 @@ class ProviderSettingsScreen(
         self._active_background_wake_policy: BackgroundTaskWakePolicy | None = None
         self._delete_confirmation_for: str | None = None
         self._catalog_model_ids: dict[str, str] = {}
+        self._view_mode = "list"
         self._profile_ids = {
             f"provider-settings-profile-{index}": profile.name
             for index, profile in enumerate(provider_settings.profiles)
@@ -345,10 +390,6 @@ class ProviderSettingsScreen(
         actions.extend(
             (
                 Button(
-                    ui_text(self.language, "provider_settings.new"),
-                    id="provider-settings-new",
-                ),
-                Button(
                     ui_text(self.language, "provider_settings.connection.test"),
                     id="provider-settings-test",
                     disabled=self.provider_catalog is None,
@@ -375,146 +416,156 @@ class ProviderSettingsScreen(
                     ui_text(self.language, "provider_settings.description"),
                     id="provider-settings-description",
                 ),
-                VerticalScroll(*profile_widgets, id="provider-settings-profiles"),
                 Vertical(
-                    *preset_rows,
-                    id="provider-settings-presets",
-                ),
-                Static(
-                    ui_text(self.language, "provider_settings.endpoint.title"),
-                    id="provider-settings-endpoint-title",
-                ),
-                Horizontal(*endpoint_buttons, id="provider-settings-endpoints"),
-                Static(
-                    ui_text(self.language, "provider_settings.protocol.title"),
-                    id="provider-settings-protocol-title",
-                ),
-                Horizontal(*protocol_buttons, id="provider-settings-protocols"),
-                Static(
-                    self._service_text(
-                        default_service.protocol_hint_for(self._active_protocol),
-                        f"{default_service.display_name} · {default_service.default_protocol}",
+                    VerticalScroll(*profile_widgets, id="provider-settings-profiles"),
+                    Button(
+                        ui_text(self.language, "provider_settings.new"),
+                        id="provider-settings-new",
                     ),
-                    id="provider-settings-protocol-hint",
+                    id="provider-settings-list-view",
                 ),
                 Vertical(
-                    Label(ui_text(self.language, "provider_settings.field.name")),
-                    Input(
-                        placeholder=ui_text(self.language, "provider_settings.name"),
-                        id="provider-settings-name",
-                    ),
-                    Label(ui_text(self.language, "provider_settings.field.model")),
-                    Input(
-                        placeholder=self._service_text(
-                            default_service.model_placeholder_key,
-                            default_service.display_name,
-                        ),
-                        id="provider-settings-model",
-                    ),
-                    Label(ui_text(self.language, "provider_settings.field.base_url")),
-                    Input(
-                        value=default_service.default_base_url,
-                        placeholder=ui_text(self.language, "provider_settings.base_url"),
-                        id="provider-settings-base-url",
-                    ),
-                    Label(ui_text(self.language, "provider_settings.field.api_key")),
-                    Input(
-                        placeholder=ui_text(self.language, "provider_settings.api_key"),
-                        password=True,
-                        id="provider-settings-api-key",
-                    ),
-                    Label(ui_text(self.language, "provider_settings.field.context_window")),
-                    Input(
-                        placeholder=ui_text(self.language, "provider_settings.context_window"),
-                        id="provider-settings-context-window",
+                    Vertical(
+                        *preset_rows,
+                        id="provider-settings-presets",
                     ),
                     Static(
-                        ui_text(self.language, "provider_settings.context_window_hint"),
-                        id="provider-settings-context-hint",
+                        ui_text(self.language, "provider_settings.endpoint.title"),
+                        id="provider-settings-endpoint-title",
                     ),
+                    Horizontal(*endpoint_buttons, id="provider-settings-endpoints"),
                     Static(
-                        ui_text(self.language, "provider_settings.proxy.title"),
-                        id="provider-settings-proxy-title",
+                        ui_text(self.language, "provider_settings.protocol.title"),
+                        id="provider-settings-protocol-title",
                     ),
-                    Horizontal(
-                        Button(
-                            ui_text(self.language, "provider_settings.proxy.inherit"),
-                            id="provider-settings-proxy-inherit",
-                            variant="primary",
-                        ),
-                        Button(
-                            ui_text(self.language, "provider_settings.proxy.environment"),
-                            id="provider-settings-proxy-environment",
-                        ),
-                        Button(
-                            ui_text(self.language, "provider_settings.proxy.direct"),
-                            id="provider-settings-proxy-direct",
-                        ),
-                        Button(
-                            ui_text(self.language, "provider_settings.proxy.explicit"),
-                            id="provider-settings-proxy-explicit",
-                        ),
-                        id="provider-settings-proxy-modes",
-                    ),
-                    Input(
-                        placeholder=ui_text(
-                            self.language,
-                            "provider_settings.proxy.environment_variable",
-                        ),
-                        id="provider-settings-proxy-env",
-                        disabled=True,
-                    ),
+                    Horizontal(*protocol_buttons, id="provider-settings-protocols"),
                     Static(
-                        ui_text(
-                            self.language,
-                            "provider_settings.proxy.hint.environment",
+                        self._service_text(
+                            default_service.protocol_hint_for(self._active_protocol),
+                            f"{default_service.display_name} · {default_service.default_protocol}",
                         ),
-                        id="provider-settings-proxy-hint",
+                        id="provider-settings-protocol-hint",
                     ),
-                    Static(
-                        ui_text(
-                            self.language,
-                            "provider_settings.background_wake.title",
+                    Vertical(
+                        Label(ui_text(self.language, "provider_settings.field.name")),
+                        Input(
+                            placeholder=ui_text(self.language, "provider_settings.name"),
+                            id="provider-settings-name",
                         ),
-                        id="provider-settings-background-wake-title",
-                    ),
-                    Horizontal(
-                        Button(
+                        Label(ui_text(self.language, "provider_settings.field.model")),
+                        Input(
+                            placeholder=self._service_text(
+                                default_service.model_placeholder_key,
+                                default_service.display_name,
+                            ),
+                            id="provider-settings-model",
+                        ),
+                        Label(ui_text(self.language, "provider_settings.field.base_url")),
+                        Input(
+                            value=default_service.default_base_url,
+                            placeholder=ui_text(self.language, "provider_settings.base_url"),
+                            id="provider-settings-base-url",
+                        ),
+                        Label(ui_text(self.language, "provider_settings.field.api_key")),
+                        Input(
+                            placeholder=ui_text(self.language, "provider_settings.api_key"),
+                            password=True,
+                            id="provider-settings-api-key",
+                        ),
+                        Label(ui_text(self.language, "provider_settings.field.context_window")),
+                        Input(
+                            placeholder=ui_text(self.language, "provider_settings.context_window"),
+                            id="provider-settings-context-window",
+                        ),
+                        Static(
+                            ui_text(self.language, "provider_settings.context_window_hint"),
+                            id="provider-settings-context-hint",
+                        ),
+                        Static(
+                            ui_text(self.language, "provider_settings.proxy.title"),
+                            id="provider-settings-proxy-title",
+                        ),
+                        Horizontal(
+                            Button(
+                                ui_text(self.language, "provider_settings.proxy.inherit"),
+                                id="provider-settings-proxy-inherit",
+                                variant="primary",
+                            ),
+                            Button(
+                                ui_text(self.language, "provider_settings.proxy.environment"),
+                                id="provider-settings-proxy-environment",
+                            ),
+                            Button(
+                                ui_text(self.language, "provider_settings.proxy.direct"),
+                                id="provider-settings-proxy-direct",
+                            ),
+                            Button(
+                                ui_text(self.language, "provider_settings.proxy.explicit"),
+                                id="provider-settings-proxy-explicit",
+                            ),
+                            id="provider-settings-proxy-modes",
+                        ),
+                        Input(
+                            placeholder=ui_text(
+                                self.language,
+                                "provider_settings.proxy.environment_variable",
+                            ),
+                            id="provider-settings-proxy-env",
+                            disabled=True,
+                        ),
+                        Static(
                             ui_text(
                                 self.language,
-                                "provider_settings.background_wake.inherit",
+                                "provider_settings.proxy.hint.environment",
                             ),
-                            id="provider-settings-wake-inherit",
-                            variant="primary",
+                            id="provider-settings-proxy-hint",
                         ),
-                        Button(
+                        Static(
                             ui_text(
                                 self.language,
-                                "provider_settings.background_wake.disabled",
+                                "provider_settings.background_wake.title",
                             ),
-                            id="provider-settings-wake-disabled",
+                            id="provider-settings-background-wake-title",
                         ),
-                        Button(
+                        Horizontal(
+                            Button(
+                                ui_text(
+                                    self.language,
+                                    "provider_settings.background_wake.inherit",
+                                ),
+                                id="provider-settings-wake-inherit",
+                                variant="primary",
+                            ),
+                            Button(
+                                ui_text(
+                                    self.language,
+                                    "provider_settings.background_wake.disabled",
+                                ),
+                                id="provider-settings-wake-disabled",
+                            ),
+                            Button(
+                                ui_text(
+                                    self.language,
+                                    "provider_settings.background_wake.enabled",
+                                ),
+                                id="provider-settings-wake-enabled",
+                            ),
+                            id="provider-settings-wake-modes",
+                        ),
+                        Static(
                             ui_text(
                                 self.language,
-                                "provider_settings.background_wake.enabled",
+                                "provider_settings.background_wake.hint",
                             ),
-                            id="provider-settings-wake-enabled",
+                            id="provider-settings-background-wake-hint",
                         ),
-                        id="provider-settings-wake-modes",
+                        Static("", id="provider-settings-connection-status"),
+                        VerticalScroll(id="provider-settings-models"),
+                        id="provider-settings-form",
                     ),
-                    Static(
-                        ui_text(
-                            self.language,
-                            "provider_settings.background_wake.hint",
-                        ),
-                        id="provider-settings-background-wake-hint",
-                    ),
-                    Static("", id="provider-settings-connection-status"),
-                    VerticalScroll(id="provider-settings-models"),
-                    id="provider-settings-form",
+                    id="provider-settings-edit-view",
                 ),
-                Static("", id="provider-settings-error"),
+                Static("", id="provider-settings-error", classes="empty"),
                 id="provider-settings-content",
             ),
             Horizontal(*actions, id="provider-settings-actions"),
@@ -563,11 +614,57 @@ class ProviderSettingsScreen(
         return fallback
 
     def _show_provider_error(self, message: str) -> None:
-        self.query_one("#provider-settings-error", Static).update(
-            Text(f"{_ERROR_MARK} {message}", style=ERROR_TEXT_STYLE)
-        )
+        error = self.query_one("#provider-settings-error", Static)
+        error.set_class(not message, "empty")
+        if not message:
+            error.update("")
+            return
+        error.update(Text(f"{_ERROR_MARK} {message}", style=theme_style(self, ERROR_TEXT_STYLE)))
+
+    def _show_view(self, mode: str) -> None:
+        """Switch between the profile list and the profile editor.
+
+        在配置列表与配置编辑器之间切换."""
+
+        self._view_mode = mode
+        self.query_one("#provider-settings-list-view").display = mode == "list"
+        self.query_one("#provider-settings-edit-view").display = mode == "edit"
+        for action_id in (
+            "provider-settings-delete",
+            "provider-settings-test",
+            "provider-settings-save",
+        ):
+            for button in self.query(f"#{action_id}"):
+                button.display = mode == "edit"
+        title = self.query_one("#provider-settings-title", Label)
+        description = self.query_one("#provider-settings-description", Static)
+        if mode == "edit":
+            if self.first_run:
+                title_text = ui_text(self.language, "provider_settings.first_run_title")
+            elif self._editing_profile is not None:
+                title_text = ui_text(
+                    self.language,
+                    "provider_settings.edit_title",
+                    profile=self._editing_profile,
+                )
+            else:
+                title_text = ui_text(self.language, "provider_settings.new_title")
+            description.update(ui_text(self.language, "provider_settings.description_edit"))
+        else:
+            title_text = ui_text(self.language, "provider_settings.title")
+            description.update(ui_text(self.language, "provider_settings.description"))
+        title.update(title_text)
+
+    def _show_list_view(self) -> None:
+        self._show_view("list")
+
+    def _show_edit_view(self) -> None:
+        self._show_view("edit")
 
     def action_cancel(self) -> None:
+        if self._view_mode == "edit":
+            self._show_list_view()
+            return
         self.dismiss(None)
 
 

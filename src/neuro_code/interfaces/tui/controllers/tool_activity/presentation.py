@@ -32,6 +32,7 @@ from neuro_code.interfaces.tui.theme import (
     TOOL_META_STYLE,
     TOOL_TEXT_STYLE,
     TOOL_TITLE_STYLE,
+    theme_style,
 )
 from neuro_code.interfaces.tui.tool_activity import (
     TOOL_PEEK_LOGICAL_LINE_BUDGET,
@@ -59,12 +60,12 @@ class ToolActivityPresentationMixin(TuiAppControllerMixin):
         table.add_column(width=1, no_wrap=True)
         table.add_column(ratio=1, overflow="ellipsis", no_wrap=True)
         table.add_column(width=8, justify="right", no_wrap=True)
-        table.add_row("", Text(title, style=f"bold {TEXT_EMPHASIS}"), "")
+        table.add_row("", Text(title, style=f"bold {theme_style(self, TEXT_EMPHASIS)}"), "")
         for marker, marker_style, summary, duration in self._tool_activity_rows(group):
             table.add_row(
                 Text(marker, style=marker_style),
-                Text(summary, style=TOOL_DETAIL_STYLE),
-                Text(duration, style=TOOL_META_STYLE),
+                Text(summary, style=theme_style(self, TOOL_DETAIL_STYLE)),
+                Text(duration, style=theme_style(self, TOOL_META_STYLE)),
             )
         return table
 
@@ -125,38 +126,37 @@ class ToolActivityPresentationMixin(TuiAppControllerMixin):
     ) -> Text:
         peek = self._tool_activity_peek_presentation(group, title=title)
         rendered = Text(overflow="fold")
-        rendered.append(peek.title, style=f"bold {TEXT_EMPHASIS}")
+        rendered.append(peek.title, style=f"bold {theme_style(self, TEXT_EMPHASIS)}")
         rendered.append("\n")
-        rendered.append(peek.help, style=TOOL_META_STYLE)
+        rendered.append(peek.help, style=theme_style(self, TOOL_META_STYLE))
         rendered.append("\n")
         marker_style = (
-            ERROR_TEXT_STYLE
+            theme_style(self, ERROR_TEXT_STYLE)
             if peek.marker == _ERROR_MARK
-            else TOOL_COMPLETE_STYLE
+            else theme_style(self, TOOL_COMPLETE_STYLE)
             if peek.marker == _SUCCESS_MARK
-            else TOOL_ACTIVE_STYLE
+            else theme_style(self, TOOL_ACTIVE_STYLE)
         )
         rendered.append(f"{peek.marker} ", style=marker_style)
-        rendered.append(f"{peek.position}  ", style=TOOL_META_STYLE)
-        rendered.append(peek.selected_summary, style=TOOL_TITLE_STYLE)
+        rendered.append(f"{peek.position}  ", style=theme_style(self, TOOL_META_STYLE))
+        rendered.append(peek.selected_summary, style=theme_style(self, TOOL_TITLE_STYLE))
         if peek.duration:
-            rendered.append(f"  {peek.duration}", style=TOOL_META_STYLE)
+            rendered.append(f"  {peek.duration}", style=theme_style(self, TOOL_META_STYLE))
         for line in peek.lines:
-            rendered.append("\n  ", style=TOOL_GUIDE_STYLE)
+            rendered.append("\n  ", style=theme_style(self, TOOL_GUIDE_STYLE))
             rendered.append(line.text, style=self._tool_peek_line_style(line))
         return rendered
 
-    @staticmethod
-    def _tool_peek_line_style(line: ToolPeekLine) -> str:
+    def _tool_peek_line_style(self, line: ToolPeekLine) -> str:
         if line.tone == "error":
-            return ERROR_TEXT_STYLE
+            return theme_style(self, ERROR_TEXT_STYLE)
         if line.tone == "warning":
-            return ACCENT_WARNING
+            return theme_style(self, ACCENT_WARNING)
         if line.tone == "primary":
-            return TOOL_DETAIL_STYLE
+            return theme_style(self, TOOL_DETAIL_STYLE)
         if line.tone == "output":
-            return TOOL_TEXT_STYLE
-        return TOOL_META_STYLE
+            return theme_style(self, TOOL_TEXT_STYLE)
+        return theme_style(self, TOOL_META_STYLE)
 
     def _tool_inspector_presentation(
         self,
@@ -226,7 +226,7 @@ class ToolActivityPresentationMixin(TuiAppControllerMixin):
             rows.append(
                 (
                     _ERROR_MARK,
-                    ERROR_TEXT_STYLE,
+                    theme_style(self, ERROR_TEXT_STYLE),
                     f"{state.name} · {self._bounded_inline(reason, limit=96)}",
                     state.duration or "",
                 )
@@ -304,14 +304,13 @@ class ToolActivityPresentationMixin(TuiAppControllerMixin):
                 available = True
         return self._event_duration({"duration_seconds": total}) if available else ""
 
-    @staticmethod
-    def _tool_status_marker(states: Sequence[ToolFeedbackState]) -> tuple[str, str]:
+    def _tool_status_marker(self, states: Sequence[ToolFeedbackState]) -> tuple[str, str]:
         phases = {state.phase for state in states}
         if phases & {"failed", "permission_denied", "approval_denied"}:
-            return _ERROR_MARK, ERROR_TEXT_STYLE
+            return _ERROR_MARK, theme_style(self, ERROR_TEXT_STYLE)
         if phases <= {"completed"}:
-            return _SUCCESS_MARK, TOOL_COMPLETE_STYLE
-        return "…", TOOL_ACTIVE_STYLE
+            return _SUCCESS_MARK, theme_style(self, TOOL_COMPLETE_STYLE)
+        return "…", theme_style(self, TOOL_ACTIVE_STYLE)
 
     def _field(self, data: Mapping[str, Any], name: str) -> str:
         value = data.get(name)

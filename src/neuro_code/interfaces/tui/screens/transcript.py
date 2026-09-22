@@ -41,7 +41,7 @@ class TranscriptCopyScreen(ModalScreen[None]):
     CSS = """
     TranscriptCopyScreen {
         align: center middle;
-        background: $background 80%;
+        background: $modal-overlay 25%;
     }
 
     #transcript-copy-dialog {
@@ -50,7 +50,7 @@ class TranscriptCopyScreen(ModalScreen[None]):
         height: 88%;
         padding: $space-2 $space-3;
         background: $surface;
-        border: solid $border;
+        border: round $border;
     }
 
     #transcript-copy-title {

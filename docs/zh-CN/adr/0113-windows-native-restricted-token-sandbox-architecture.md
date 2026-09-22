@@ -1,10 +1,11 @@
 # ADR 0113：Windows 原生 restricted-token 沙箱架构
 
-## 状态
+[English](../../en/adr/0113-windows-native-restricted-token-sandbox-architecture.md) · **简体中文**
 
-作为 W1 foundation 和 W2 setup-authority 记录接受。本 ADR 建立类型化 capability、
-restricted-token、installation setup 以及文件系统/防火墙 authority 原语；它不把这些
-原语接入 runtime child creation，也不宣称完整的 Windows 沙箱。
+- 状态：已接受（作为 W1 foundation 和 W2 setup-authority 记录）
+- 日期：2026-08-13
+
+本 ADR 建立类型化 capability、 restricted-token、installation setup 以及文件系统/防火墙 authority 原语；它不把这些 原语接入 runtime child creation，也不宣称完整的 Windows 沙箱。
 
 ## 背景
 
@@ -67,8 +68,7 @@ Object 或 ConPTY 代码。现有 Linux Bubblewrap、macOS Seatbelt 和 Windows 
 Object/ConPTY guarantee 保持不变。在后续完整 authority composition 接入前，Windows
 启用 profile 仍然不支持并失败关闭。
 
-## W2 setup authority
-
+## W2 setup 权威
 W2 实现 installation-time setup boundary，同时把 runtime child creation 留给 W3。该
 authority 具有以下属性：
 

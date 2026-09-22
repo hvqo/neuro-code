@@ -2,9 +2,8 @@
 
 [English](../../en/adr/0125-subagent-capability-closure.md) · **简体中文**
 
-## 状态
-
-已接受，适用于当前 pre-alpha Runtime。
+- 状态：已接受，适用于当前 pre-alpha Runtime
+- 日期：2026-08-21
 
 ## 背景
 

@@ -1,6 +1,8 @@
 # ADR 0134: Durable bounded-parallel Task DAG
 
-- Status: PROVEN within current vertical-slice scope
+[简体中文](../../zh-CN/adr/0134-durable-serialized-task-dag.md) · **English**
+
+- Status: Accepted; pROVEN within current vertical-slice scope
 - Date: 2026-08-24
 - Scope: one bounded, caller-defined DAG whose nodes reuse the existing Writable Subagent pipeline; `max_parallel` is 1..4
 

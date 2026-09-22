@@ -1,5 +1,7 @@
 # ADR 0093：强制执行上下文压缩墙钟超时
 
+[English](../../en/adr/0093-enforced-context-compaction-timeout.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：未来 Runtime 接入的应用层记忆边界

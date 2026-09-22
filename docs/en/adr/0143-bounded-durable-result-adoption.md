@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0143-bounded-durable-result-adoption.md) · **English**
 
-## Status
-
-Accepted for the bounded internal vertical slice.
+- Status: Accepted for the bounded internal vertical slice
+- Date: 2026-08-29
 
 ## Context
 

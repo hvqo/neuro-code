@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0141-automatic-ultracode-delegation.md) · **English**
 
-## Status
-
-Accepted for the first bounded vertical slice.
+- Status: Accepted for the first bounded vertical slice
+- Date: 2026-08-28
 
 ## Context
 

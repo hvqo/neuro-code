@@ -11,6 +11,7 @@ from typing import Any
 from textual.worker import Worker
 
 from neuro_code.domain.background_tasks.models import BackgroundWakeLimits
+from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.interfaces.tui.tool_activity import ToolDisclosureLevel, ToolInspectorScreen
 
 _RESTORED_MESSAGE_LIMIT = 20_000
@@ -186,6 +187,19 @@ class ProviderSettingsSubmission:
     operation: str = "saved"
 
 
+def permission_level_key(mode: InteractionMode, *, auto_unrestricted: bool) -> str:
+    """Project an interaction mode onto the three-level permission vocabulary.
+
+    将交互模式投影为三级权限词汇."""
+    if mode is InteractionMode.NORMAL:
+        return "ask"
+    if mode is InteractionMode.AUTO:
+        return "full" if auto_unrestricted else "auto"
+    if mode is InteractionMode.ACCEPT_EDITS:
+        return "auto"
+    return "plan"
+
+
 __all__ = [
     "TUI_RELOAD_PROVIDER_SETTINGS",
     "CollapsingPulseAnimation",
@@ -193,4 +207,5 @@ __all__ = [
     "ToolActivityGroupState",
     "ToolFeedbackState",
     "TranscriptEntry",
+    "permission_level_key",
 ]

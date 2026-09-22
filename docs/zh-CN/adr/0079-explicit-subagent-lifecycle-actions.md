@@ -1,5 +1,7 @@
 # ADR 0079：显式子代理生命周期操作
 
+[English](../../en/adr/0079-explicit-subagent-lifecycle-actions.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-07
 - 范围：Stage5CY

@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0008-xai-responses-native-replay.md) · **English**
 
-## Status
-
-Accepted.
+- Status: Accepted
+- Date: 2026-07-17
 
 Amended by [ADR 0010](0010-provider-profiles-and-cc-switch.md): the adapter is
 now generic Responses with xAI as an optional dialect; this ADR still governs

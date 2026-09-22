@@ -18,7 +18,11 @@ from typing import cast
 
 from neuro_code.application.checkpoints import TurnWorkspaceCheckpointCoordinator
 from neuro_code.application.execution_policy import ExecutionBudgetPolicy, ExecutionBudgetSource
-from neuro_code.application.memory.compaction import ProviderContextWindow
+from neuro_code.application.memory.compaction import (
+    ContextCompactionPlanner,
+    ContextCompactionPolicy,
+    ProviderContextWindow,
+)
 from neuro_code.application.memory.compaction_runtime import ContextCompactionRuntimeGate
 from neuro_code.application.memory.compaction_service import ContextCompactionApplicationService
 from neuro_code.application.memory.compaction_trigger import ContextCompactionTriggerService
@@ -672,8 +676,19 @@ class CompositionBindingMixin(CompositionRootMixin):
                 provider,
                 redaction_values=selected_config.redaction_values(os.environ),
             )
+            compaction_policy = ContextCompactionPolicy()
+            preferences = self.settings.interactive_preferences
+            if preferences is not None:
+                compaction_policy = ContextCompactionPolicy(
+                    minimum_recent_items=preferences.compaction_recent_items
+                    or compaction_policy.minimum_recent_items,
+                    max_summary_tokens=preferences.compaction_summary_tokens
+                    or compaction_policy.max_summary_tokens,
+                )
             compaction_gate = ContextCompactionRuntimeGate(
-                ContextCompactionTriggerService(compaction_persistence)
+                ContextCompactionTriggerService(
+                    compaction_persistence, planner=ContextCompactionPlanner(compaction_policy)
+                )
             )
             # Build a per-binding instruction tracker that re-discovers
             # AGENTS.md files from the workspace root toward the current

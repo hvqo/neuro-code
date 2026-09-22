@@ -1,5 +1,7 @@
 # ADR 0151: ACP Transport Boundary
 
+[简体中文](../../zh-CN/adr/0151-acp-transport-boundary.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-31
 - Scope: the ACP transport structural slice stacked on PR #78

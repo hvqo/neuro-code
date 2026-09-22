@@ -1,6 +1,8 @@
 # ADR 0133：有界父上下文中继
 
-- 状态：已实现为显式内部纵向切片；最终评级等待 merge-ref CI
+[English](../../en/adr/0133-bounded-parent-context-relay.md) · **简体中文**
+
+- 状态：已接受；已实现为显式内部纵向切片；最终评级等待 merge-ref CI
 - 日期：2026-08-24
 - 范围：一个串行可写 worker 与一个不可变 parent→child 上下文快照
 

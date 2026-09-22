@@ -2,7 +2,7 @@
 
 [简体中文](../../zh-CN/adr/0050-acp-session-lifecycle.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-07-28
 
 ## Context

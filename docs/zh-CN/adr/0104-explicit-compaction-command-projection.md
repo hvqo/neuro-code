@@ -1,5 +1,7 @@
 # ADR 0104：显式压缩命令投影
 
+[English](../../en/adr/0104-explicit-compaction-command-projection.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：应用层记忆与接口序列化

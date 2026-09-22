@@ -1,6 +1,8 @@
 # ADR 0131: Serialized managed writable-subagent workspace
 
-- Status: accepted; proven within the serialized writable-workspace vertical slice
+[简体中文](../../zh-CN/adr/0131-managed-writable-subagent-workspace.md) · **English**
+
+- Status: Accepted; proven within the serialized writable-workspace vertical slice
 - Date: 2026-08-23
 - Scope: one bounded writable child, one Neuro-owned managed worktree, and one preserved baseline
 

@@ -1,6 +1,8 @@
 # ADR 0098: Turn recorder owns opt-in compaction finalization
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0098-turn-recorder-compaction-finalization-owner.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: `TurnEventRecorder`
 

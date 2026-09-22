@@ -1,6 +1,8 @@
 # ADR 0132：Worker-scoped LSP Runtime 集成
 
-- 状态：已实现为显式内部纵向切片；最终评级等待 exact-head CI
+[English](../../en/adr/0132-worker-scoped-lsp-runtime-integration.md) · **简体中文**
+
+- 状态：已接受；已实现为显式内部纵向切片；最终评级等待 exact-head CI
 - 日期：2026-08-23
 - 范围：串行 writable worker、managed child worktree 和临时只读 LSP runtime
 

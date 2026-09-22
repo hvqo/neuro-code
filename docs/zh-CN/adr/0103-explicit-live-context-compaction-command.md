@@ -1,5 +1,7 @@
 # ADR 0103：显式实时上下文压缩命令
 
+[English](../../en/adr/0103-explicit-live-context-compaction-command.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：`AgentRuntime` 与 `AgentConversation`

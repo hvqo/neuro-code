@@ -1,6 +1,8 @@
 # ADR 0089: Explicit context-compaction persistence service
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0089-explicit-context-compaction-persistence-service.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: application memory and SessionStore boundary
 

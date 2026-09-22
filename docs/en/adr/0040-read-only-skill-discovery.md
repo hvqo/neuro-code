@@ -2,7 +2,7 @@
 
 [简体中文](../../zh-CN/adr/0040-read-only-skill-discovery.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-07-22
 
 ## Context

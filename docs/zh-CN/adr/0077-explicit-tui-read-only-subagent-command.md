@@ -1,8 +1,9 @@
 # ADR 0077：显式 TUI 只读子代理命令
 
-## 状态
+[English](../../en/adr/0077-explicit-tui-read-only-subagent-command.md) · **简体中文**
 
-Stage5CW 已接受。
+- 状态：已接受（Stage5CW）
+- 日期：2026-08-08
 
 ## 背景
 

@@ -1,5 +1,7 @@
 # ADR 0164: Model-facing tool-result guard
 
+[简体中文](../../zh-CN/adr/0164-model-facing-tool-result-guard.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-16
 - Scope: CM4a bounded normal-agent tool-result context projection

@@ -1,5 +1,7 @@
 # ADR 0146: ACP Update and Event Projection Boundary
 
+[简体中文](../../zh-CN/adr/0146-acp-update-and-event-projection-boundary.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-30
 - Scope: second structural slice of V1 Interface Boundary Consolidation

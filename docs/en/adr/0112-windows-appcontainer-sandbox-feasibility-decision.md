@@ -1,8 +1,11 @@
 # ADR 0112: Windows local-process sandbox AppContainer feasibility decision
 
-## Status
+[简体中文](../../zh-CN/adr/0112-windows-appcontainer-sandbox-feasibility-decision.md) · **English**
 
-Accepted. The investigated classic stable unpackaged Windows AppContainer
+- Status: Accepted
+- Date: 2026-08-13
+
+The investigated classic stable unpackaged Windows AppContainer
 architecture is deferred and is not a production sandbox adapter. Explicit
 Windows filesystem/network profiles remain unsupported and fail closed. The
 existing `off` path and its Windows Job Object/ConPTY lifecycle contract are

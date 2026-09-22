@@ -138,6 +138,39 @@ def _ensure_session_plan_schema(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE sessions ADD COLUMN plan_json TEXT NOT NULL DEFAULT ''")
 
 
+def _ensure_session_project_schema(connection: sqlite3.Connection) -> None:
+    """Create the optional project grouping without requiring membership.
+
+    创建可选的会话项目分组;会话不强制归属项目."""
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            cwd TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS session_projects_by_name
+        ON session_projects(name)
+        """
+    )
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(sessions)").fetchall()}
+    if "project_id" not in columns:
+        connection.execute("ALTER TABLE sessions ADD COLUMN project_id TEXT")
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS sessions_by_project
+        ON sessions(project_id, updated_at DESC, id DESC)
+        """
+    )
+
+
 def _ensure_session_task_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         """

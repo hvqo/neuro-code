@@ -1,9 +1,11 @@
 # ADR 0110：跨平台本地进程生命周期能力契约
 
-## 状态
+[English](../../en/adr/0110-cross-platform-lifecycle-capability-contract.md) · **简体中文**
 
-已接受。Phase 1–3 为规范本地进程端口增加显式生命周期能力契约。本 ADR 不实现 macOS
-Seatbelt 适配器，也不改变现有 Linux 或 Windows 安全边界。
+- 状态：已接受
+- 日期：2026-08-12
+
+Phase 1–3 为规范本地进程端口增加显式生命周期能力契约。本 ADR 不实现 macOS Seatbelt 适配器，也不改变现有 Linux 或 Windows 安全边界。
 
 ## 背景
 

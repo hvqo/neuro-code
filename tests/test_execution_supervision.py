@@ -255,9 +255,9 @@ class ExecutionSupervisionTests(unittest.TestCase):
         )
         self.assertEqual(normal.limit_for_tool("read_file"), 48)
         self.assertEqual(normal.limit_for_tool("grep"), 48)
-        self.assertEqual(normal.limit_for_tool("bash"), 16)
-        self.assertEqual(normal.limit_for_tool("apply_patch"), 16)
-        self.assertEqual(normal.limit_for_tool("search_replace"), 16)
+        self.assertEqual(normal.limit_for_tool("bash"), 48)
+        self.assertEqual(normal.limit_for_tool("apply_patch"), 48)
+        self.assertEqual(normal.limit_for_tool("search_replace"), 48)
         self.assertEqual(normal.limit_for_tool("update_plan"), 24)
         self.assertIs(
             ExecutionBudgetPolicy.for_ultracode_main_max(
@@ -331,7 +331,7 @@ class ExecutionSupervisionTests(unittest.TestCase):
             (60, 60, 240, 60),
         )
         self.assertEqual(budget.limit_for_tool("read_file"), 60)
-        self.assertEqual(budget.limit_for_tool("bash"), 20)
+        self.assertEqual(budget.limit_for_tool("bash"), 60)
         self.assertNotIn("finalizer", repr(budget))
 
     def test_execution_budget_policy_rejects_invalid_inputs(self) -> None:
@@ -649,6 +649,20 @@ class ExecutionSupervisionTests(unittest.TestCase):
         self.assertIs(execute_tool(supervisor, tool_observation), SupervisorDecisionKind.MARK_STUCK)
         self.assertIs(supervisor.snapshot.status, AgentExecutionStatus.STUCK)
 
+    def test_novel_evidence_rounds_never_accumulate_no_progress(self) -> None:
+        supervisor = self.supervisor()
+        for index in range(8):
+            item = observation(
+                "bash",
+                {"command": f"grep -n pattern-{index} docs"},
+                f"match {index}",
+                progress_kind=ProgressKind.EVIDENCE,
+            )
+            self.assertIs(execute_tool(supervisor, item), SupervisorDecisionKind.CONTINUE)
+
+        self.assertEqual(supervisor.snapshot.consecutive_no_progress_rounds, 0)
+        self.assertIs(supervisor.snapshot.status, AgentExecutionStatus.RUNNING)
+
     def test_repeated_action_error_replans_then_marks_stuck(self) -> None:
         supervisor = self.supervisor()
         failed = observation(content="exit code 1", is_error=True, progress_kind=ProgressKind.NONE)
@@ -823,6 +837,29 @@ class ExecutionSupervisionTests(unittest.TestCase):
 
         self.assertIs(decision.kind, SupervisorDecisionKind.MARK_BUDGET_LIMITED)
         self.assertEqual(supervisor.snapshot.counters.tool_calls_requested, 0)
+
+    def test_per_tool_budget_decision_reports_the_offending_tool_usage(self) -> None:
+        supervisor = self.supervisor(
+            budget=execution_budget(
+                max_calls_per_tool=4, per_tool_limits=(ToolCallBudget("bash", 1),)
+            )
+        )
+        self.assertIs(supervisor.authorize_model_request().kind, SupervisorDecisionKind.CONTINUE)
+        self.assertIs(
+            supervisor.observe_model_completion(input_tokens=1, output_tokens=1).kind,
+            SupervisorDecisionKind.CONTINUE,
+        )
+        decision = supervisor.assess_tool_batch(("bash", "bash"))
+
+        self.assertIs(decision.kind, SupervisorDecisionKind.MARK_BUDGET_LIMITED)
+        self.assertIs(decision.reason_code, SupervisorReasonCode.PER_TOOL_CALL_BUDGET)
+        assert decision.detail is not None
+        self.assertEqual(decision.detail.tool_name, "bash")
+        self.assertEqual(decision.detail.used, 2)
+        self.assertEqual(decision.detail.limit, 1)
+        self.assertEqual(
+            decision.detail.to_event_data(), {"tool_name": "bash", "used": 2, "limit": 1}
+        )
 
     def test_valid_multi_tool_batch_counts_one_round_and_all_calls(self) -> None:
         supervisor = self.supervisor()

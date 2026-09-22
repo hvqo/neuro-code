@@ -1,5 +1,7 @@
 # ADR 0144: Automatic Ultracode result adoption integration
 
+[简体中文](../../zh-CN/adr/0144-automatic-ultracode-result-adoption-integration.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-29
 - Scope: Neuro Code v1 bounded local vertical slice

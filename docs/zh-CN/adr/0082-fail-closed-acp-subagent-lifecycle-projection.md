@@ -1,5 +1,7 @@
 # ADR 0082：ACP 子代理生命周期投影失败关闭
 
+[English](../../en/adr/0082-fail-closed-acp-subagent-lifecycle-projection.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：Stage5DB

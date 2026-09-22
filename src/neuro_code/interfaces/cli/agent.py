@@ -13,9 +13,15 @@ import argparse
 import asyncio
 import json
 import sys
+from pathlib import Path
 from typing import cast
 
 from neuro_code.application.runtime.agent import AgentRunResult, EventSink
+from neuro_code.application.sessions.attachments import (
+    AttachmentError,
+    build_attachments,
+    compose_turn_input,
+)
 from neuro_code.application.sessions.service import ResumeSessionRequest
 from neuro_code.application.sessions.turns import RunTurnRequest
 from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
@@ -90,9 +96,18 @@ async def run_agent(args: argparse.Namespace, services: CliServices) -> int:
             )
         else:
             turn_service = application.session_service.bind_runner(binding.runner)
+        try:
+            attachments = build_attachments(
+                args.attach or (),
+                workspace=Path(args.cwd) if args.cwd else Path.cwd(),
+            )
+        except AttachmentError as error:
+            raise ConfigurationError(f"invalid attachment: {error}") from error
+        composed_prompt, content_parts = compose_turn_input(args.prompt, attachments)
         result = await turn_service.run_turn(
             RunTurnRequest(
-                args.prompt,
+                composed_prompt,
+                content_parts=content_parts,
                 expected_session_id=args.resume,
             ),
             sink=stream_event,

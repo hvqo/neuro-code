@@ -268,7 +268,11 @@ class ToolObservationBuilder:
             progress_kind = ProgressKind.EXTERNAL_STATE
         elif verification is not None:
             progress_kind = ProgressKind.VERIFICATION
-        elif not result.is_error and tool is not None and not tool.side_effecting:
+        elif not result.is_error and result.content and tool is not None:
+            # A successful non-empty result is evidence even from a
+            # side-effecting tool: shell inspection (grep/cat/python -c) makes
+            # no workspace change, but novel output is real progress. Exact
+            # repeats stay caught by the repetition detectors.
             progress_kind = ProgressKind.EVIDENCE
         else:
             progress_kind = ProgressKind.NONE
@@ -506,7 +510,10 @@ class ToolExecutor:
         verification_requirements: VerificationRequirementsSnapshot | None = None,
         model_result_byte_limit: int | None = None,
         model_result_estimated_token_limit: int | None = None,
+        intent: str | None = None,
     ) -> ToolExecutionObservation | None:
+        call, model_intent = _split_tool_intent(call)
+        intent = model_intent or intent
         resolved = False
         tool_requested_at = monotonic()
         workspace_before: WorkspaceChangeCheckpoint | None = None
@@ -719,6 +726,7 @@ class ToolExecutor:
                     decision.reason,
                     scope_candidates=scope_candidates,
                     scope_context=scope_context,
+                    intent=intent,
                 )
                 await emit(
                     AgentEventKind.TOOL_APPROVAL_REQUESTED,
@@ -1251,6 +1259,28 @@ def _record_external_observation(
             "workspace journal external observation unavailable error_type=%s",
             type(error).__name__,
         )
+
+
+_MAX_TOOL_INTENT_CHARS = 400
+
+
+def _split_tool_intent(call: ToolCall) -> tuple[ToolCall, str | None]:
+    """Remove the provider-facing intent field from one tool call.
+
+    The model may send an explicit ``intent`` argument for side-effecting tools.
+    It is user-facing metadata only: it never reaches the tool implementation,
+    the permission scope hash, or any persisted command.
+
+    移除模型为副作用工具提供的 intent 参数.该字段仅供用户阅读,不会传给工具实现、
+    权限范围哈希或任何持久化命令.
+    """
+
+    if "intent" not in call.arguments:
+        return call, None
+    raw = call.arguments.get("intent")
+    intent = " ".join(raw.split())[:_MAX_TOOL_INTENT_CHARS] if isinstance(raw, str) else ""
+    arguments = {key: value for key, value in call.arguments.items() if key != "intent"}
+    return replace(call, arguments=arguments), intent or None
 
 
 __all__ = ["ToolExecutor", "ToolObservationBuilder"]

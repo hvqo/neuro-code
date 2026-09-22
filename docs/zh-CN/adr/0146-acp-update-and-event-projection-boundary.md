@@ -1,12 +1,13 @@
 # ADR 0146：ACP Update 与 Event Projection 边界
 
-- 状态：Accepted
+[English](../../en/adr/0146-acp-update-and-event-projection-boundary.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-08-30
 - 范围：V1 Interface Boundary Consolidation 的第二个结构切片
 - 依赖：ADR 0035、ADR 0036 和 ADR 0145
 
-## Context
-
+## 背景
 `neuro_code.acp` 仍然是 ACP/JSON-RPC 入站适配器，拥有 connection state、session
 lifecycle、prompt coordination、client capability、permission request coordination、MCP
 和 transport handling。可是它的持久 history replay projection 与实时 `AgentEvent` mapping
@@ -17,8 +18,7 @@ runtime event，并输出有界 ACP `session_update` value。它不能获取 ses
 执行工具或决定 authority。本次提取必须保留冻结的 ACP wire contract，不能借新模块之机重设计
 event semantics。
 
-## Decision
-
+## 决策
 `neuro_code.interfaces.acp.updates` 是以下两个 cohesive outward projection path 的
 canonical owner：
 
@@ -74,16 +74,14 @@ aggregate byte limit 约束；truncation 继续保证 UTF-8 安全。Tool start 
 
 本 ADR 不引入新的 `AgentEvent` kind、ACP update type、message-ID strategy 或 tool-ID strategy。
 
-## Permission projection semantics
-
+## 权限投影语义
 `permission_tool_call` 只作为 `_AcpEventMapper` 上的 presentation helper 移动。它继续为既有
 `PermissionRequest` 创建相同的有界 pending `ToolCallUpdate`。这次移动不转移 authority：
 `PermissionManager`、`SessionApprovalBroker`、`PermissionDecision`、exact action matching、
 workspace/sandbox gates、grant behavior 和 fail-closed approval handling 仍由原有 application
 boundary 拥有。Approval 仍然发生在 pending presentation update 之后、tool execution 之前。
 
-## State ownership
-
+## 状态所有权
 Canonical updates module 只拥有 transient projection state：stable answer message ID、sent text
 byte count、tool-name/start tracking、explicit redaction values、由 caller 提供的 bound ACP
 client/session target，以及 mapped stop reason。
@@ -92,8 +90,7 @@ client/session target，以及 mapped stop reason。
 coordination、client capability negotiation、MCP 与 transport resources、permission
 orchestration，以及调用这些 projection 的 call sites。本次提取不会把顶层 module 变成 facade。
 
-## Dependency direction
-
+## 依赖方向
 本切片允许的方向是：
 
 ```text
@@ -126,8 +123,7 @@ workspace authority、sandbox behavior、MCP behavior、ACP capabilities、trans
 provider behavior。它不增加 retry、replay、checkpoint/rollback、parallel execution、dataflow、
 UI/ACP feature work 或任何新的 orchestration surface。
 
-## Validation
-
+## 验证
 验证覆盖既有 ACP history、live event、raw stdio 与 E2E path；canonical-definition 与 private-alias
 identity checks；dependency 与 import contracts；documentation parity；完整 repository quality
 gates；以及最终 pull-request merge-ref CI。验收标准是结构性的 projection-boundary 提取，同时

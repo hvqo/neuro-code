@@ -1,5 +1,7 @@
 # ADR 0097：带压缩记录的回合最终化原子事务
 
+[English](../../en/adr/0097-atomic-turn-finalization-with-compaction.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：`SessionStore` 与 SQLite 持久化

@@ -1,5 +1,10 @@
 # ADR 0105：统一普通执行预算与临时 REPLAN 指引
 
+[English](../../en/adr/0105-unified-execution-budget-and-replan-guidance.md) · **简体中文**
+
+- 状态：已接受
+- 日期：2026-08-09
+
 ## 背景
 
 公开的 `--max-steps` 选项与 Runtime 硬模型步骤上限使用同一个值，但默认监督器仍保留
@@ -11,8 +16,9 @@
 
 - `ExecutionBudget` 继续作为唯一的领域预算值。
 - `neuro_code.application.execution_policy` 负责具名的 `normal` 与 `deep` 产品档位，分别
-  解析为 48/48/192 和 96/96/384 的模型调用/工具轮次/工具调用上限。只读工具继承较宽的
-  单工具上限；已知副作用工具和状态转换工具使用更严格的单工具上限。
+  解析为 48/48/192 和 96/96/384 的模型调用/工具轮次/工具调用上限。只读工具与已知副作用
+  工具共用普通单工具上限；只有状态转换工具保留更严格的半回合上限。因此单个回合由全局
+  模型调用与工具调用上限约束，而不再为 shell 或编辑工具额外收紧一个比例。
 - `ApplicationSettings`、CLI/TUI 启动、ACP 启动、Composition、`AgentRuntime`、
   `AgentLoopRunner` 与 `AgentExecutionSupervisor` 使用同一个解析结果。`--max-steps N`
   继续作为兼容选项，但现在映射为 N 次模型调用、N 个工具轮次和 4N 次总工具调用，不再

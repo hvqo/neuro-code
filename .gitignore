@@ -11,6 +11,8 @@ htmlcov/
 build/
 dist/
 .neuro-code/
+# CodeBuddy assistant workspace (local tooling data).
+.codebuddy/
 # Benchmark runs are local, potentially large, and redacted only for handoff.
 benchmark-results/
 # Local manual agent/TUI scratch workspace.

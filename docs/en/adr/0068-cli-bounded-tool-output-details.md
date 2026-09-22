@@ -1,8 +1,9 @@
 # ADR 0068: CLI session-scoped bounded tool-output details
 
-## Status
+[简体中文](../../zh-CN/adr/0068-cli-bounded-tool-output-details.md) · **English**
 
-Accepted for Stage5BO.
+- Status: Accepted for Stage5BO
+- Date: 2026-08-07
 
 ## Context
 

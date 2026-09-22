@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from time import monotonic
 
+from textual.containers import Horizontal
+from textual.widgets import Button
+
 from neuro_code.application.runtime.agent import AgentRunResult
+from neuro_code.application.sessions.attachments import (
+    Attachment,
+    AttachmentError,
+    build_attachments,
+    compose_turn_input,
+)
 from neuro_code.application.sessions.turns import RunTurnRequest
 from neuro_code.application.workflows.plan_execution import (
     ExecutePlanRequest,
@@ -15,6 +28,7 @@ from neuro_code.application.workflows.session_task_execution import (
 )
 from neuro_code.domain.conversation.context import estimate_context_tokens, estimate_text_tokens
 from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
+from neuro_code.domain.conversation.messages import ContentPart
 from neuro_code.domain.execution import (
     SupervisorReasonCode,
     TurnCancellationPolicy,
@@ -23,6 +37,7 @@ from neuro_code.domain.plans import SessionPlan
 from neuro_code.interfaces.tui.controllers.base import TuiAppControllerMixin
 from neuro_code.interfaces.tui.execution import (
     BudgetUsageProjection,
+    budget_limited_detail,
     budget_limited_reason,
     recoverable_terminal_status,
 )
@@ -49,11 +64,21 @@ _BUDGET_REASON_TEXT_KEYS = {
 }
 
 
+def _human_size(size_bytes: int) -> str:
+    """Render a bounded human-readable attachment size.
+
+    渲染易读的附件大小."""
+
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MiB"
+    return f"{max(1, size_bytes // 1024)} KiB"
+
+
 class TurnControllerMixin(TuiAppControllerMixin):
     async def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         prompt = event.value.strip()
         event.input.value = ""
-        if not prompt:
+        if not prompt and not self._pending_attachment_paths:
             return
         if self._pending_interaction_request_id is not None and self._user_interaction is not None:
             request_id = self._pending_interaction_request_id
@@ -79,12 +104,24 @@ class TurnControllerMixin(TuiAppControllerMixin):
         if self._turn_worker is not None and self._turn_worker.is_running:
             self._write_ui_entry("error", "turn.running")
             return
+        attachments: tuple[Attachment, ...] = ()
+        if self._pending_attachment_paths:
+            try:
+                attachments = build_attachments(
+                    self._pending_attachment_paths,
+                    workspace=self._cwd,
+                )
+            except AttachmentError as error:
+                self._write_ui_entry("error", "attachment.invalid", reason=str(error))
+                self._restore_prompt_draft(prompt)
+                return
+        composed_prompt, content_parts = compose_turn_input(prompt, attachments)
         self._active_prompt = prompt
         self._active_prompt_entry_index = len(self._entries)
         self._ultracode_decision = None
         self._turn_pristine_rewound = False
-        self._write_entry("user", prompt)
-        self._context_used_tokens += 4 + estimate_text_tokens(prompt)
+        self._write_entry("user", self._entry_text_with_attachments(prompt, attachments))
+        self._context_used_tokens += 4 + estimate_text_tokens(composed_prompt)
         self._context_usage_estimated = True
         self._context_preflight_status = None
         self._context_preflight_capacity_tokens = None
@@ -102,12 +139,139 @@ class TurnControllerMixin(TuiAppControllerMixin):
         self._finalizing = False
         self._turn_usage_reported = False
         self._begin_pending_assistant()
+        self._clear_attachments()
         self._turn_worker = self.run_worker(
-            self._run_prompt(prompt),
+            self._run_prompt(composed_prompt, content_parts),
             name="agent-turn",
             group="agent",
             exclusive=True,
             exit_on_error=False,
+        )
+
+    @staticmethod
+    def _entry_text_with_attachments(prompt: str, attachments: tuple[Attachment, ...]) -> str:
+        """Render the user entry with one attachment marker per file.
+
+        在用户条目中为每个附件渲染一个标记."""
+
+        if not attachments:
+            return prompt
+        markers = "\n".join(
+            f"📎 {attachment.path.name} · {_human_size(attachment.size_bytes)}"
+            for attachment in attachments
+        )
+        return f"{prompt}\n{markers}" if prompt else markers
+
+    def _restore_prompt_draft(self, prompt: str) -> None:
+        """Return a rejected submission to the composer so nothing is lost.
+
+        被拒绝的提交返回输入框,避免内容丢失."""
+
+        prompt_widget = self._main_screen_query_one("#prompt", PromptInput)
+        prompt_widget.value = prompt
+        prompt_widget.cursor_position = len(prompt_widget.value)
+        prompt_widget.focus()
+
+    async def _add_attachments(self, paths: Sequence[str]) -> None:
+        """Validate and queue user attachments for the next message.
+
+        校验并暂存用户附件,用于下一条消息."""
+
+        if self._turn_worker is not None and self._turn_worker.is_running:
+            self._write_ui_entry("error", "turn.running")
+            return
+        combined = (*self._pending_attachment_paths, *paths)
+        try:
+            attachments = build_attachments(combined, workspace=self._cwd)
+        except AttachmentError as error:
+            self._write_ui_entry("error", "attachment.invalid", reason=str(error))
+            return
+        self._pending_attachment_paths = combined
+        self._pending_attachments = attachments
+        await self._refresh_attachment_tray()
+
+    def _clear_attachments(self) -> None:
+        self._pending_attachment_paths = ()
+        self._pending_attachments = ()
+        self.run_worker(
+            self._refresh_attachment_tray(),
+            name="attachment-tray",
+            exclusive=True,
+        )
+
+    async def _refresh_attachment_tray(self) -> None:
+        tray = self._main_screen_query_optional("#attachment-tray", Horizontal)
+        if tray is None:
+            return
+        await tray.remove_children([child for child in tray.children if isinstance(child, Button)])
+        if not self._pending_attachments:
+            tray.display = False
+            return
+        tray.display = True
+        await tray.mount_all(
+            [
+                Button(
+                    f"✕ {attachment.path.name} · {_human_size(attachment.size_bytes)}",
+                    id=f"attachment-remove-{index}",
+                )
+                for index, attachment in enumerate(self._pending_attachments)
+            ]
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if not button_id.startswith("attachment-remove-"):
+            return
+        event.stop()
+        index = button_id.removeprefix("attachment-remove-")
+        if not index.isdigit() or int(index) >= len(self._pending_attachment_paths):
+            return
+        position = int(index)
+        paths = list(self._pending_attachment_paths)
+        del paths[position]
+        self._pending_attachment_paths = tuple(paths)
+        self._pending_attachments = tuple(
+            attachment
+            for position_, attachment in enumerate(self._pending_attachments)
+            if position_ != position
+        )
+        self.run_worker(
+            self._refresh_attachment_tray(),
+            name="attachment-tray",
+            exclusive=True,
+        )
+
+    async def on_prompt_input_image_paste_requested(
+        self,
+        event: PromptInput.ImagePasteRequested,
+    ) -> None:
+        """Attach the system clipboard image, when one is available.
+
+        在可用时附加系统剪贴板图片."""
+
+        event.stop()
+        if self._turn_worker is not None and self._turn_worker.is_running:
+            self._write_ui_entry("error", "turn.running")
+            return
+        image = self._clipboard_image_reader.read_image()
+        if image is None:
+            # No image on the system clipboard: fall back to TextArea's text
+            # paste so ordinary copying keeps working unchanged.
+            #
+            # 系统剪贴板没有图片:回落到 TextArea 的文本粘贴,普通复制粘贴不受影响.
+            self._write_ui_entry("status", "clipboard.image_unavailable")
+            await event.input.run_action("paste")
+            return
+        handle, raw_path = tempfile.mkstemp(prefix="clipboard-", suffix=".png")
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(image.data)
+        path = Path(raw_path)
+        await self._add_attachments([str(path)])
+        self._write_ui_entry(
+            "status",
+            "clipboard.image_attached",
+            name=path.name,
+            size=_human_size(len(image.data)),
         )
 
     def _queue_interjection(self, prompt: str) -> bool:
@@ -156,11 +320,17 @@ class TurnControllerMixin(TuiAppControllerMixin):
             return
         self._write_ui_entry("status", "turn.draft_preserved")
 
-    async def _run_prompt(self, prompt: str) -> None:
+    async def _run_prompt(
+        self,
+        prompt: str,
+        content_parts: Sequence[ContentPart] = (),
+    ) -> None:
+        parts = tuple(content_parts)
         turn_service = self._turn_service
         if turn_service is not None:
             request = RunTurnRequest(
                 prompt,
+                content_parts=parts,
                 cancellation_policy=TurnCancellationPolicy.REWIND_PRISTINE,
                 expected_session_id=self._runner.session_id,
             )
@@ -173,6 +343,10 @@ class TurnControllerMixin(TuiAppControllerMixin):
                 prompt,
                 sink=self._handle_event,
                 cancellation_policy=TurnCancellationPolicy.REWIND_PRISTINE,
+                # Only forwarded when present so lightweight runner test
+                # doubles that predate attachments keep working unchanged.
+                # 仅在存在时传递,避免影响早期的轻量 runner 测试替身.
+                **({"content_parts": content_parts} if content_parts else {}),
             )
         )
 
@@ -245,7 +419,20 @@ class TurnControllerMixin(TuiAppControllerMixin):
                         if self._terminal_budget_usage is not None
                         else None
                     )
-                    if usage is None:
+                    detail = (
+                        self._terminal_budget_usage.per_tool
+                        if self._terminal_budget_usage is not None
+                        else None
+                    )
+                    if usage is None and detail is not None:
+                        self._write_ui_entry(
+                            "recoverable",
+                            "turn.budget_limited_per_tool",
+                            tool=detail.tool_name,
+                            used=detail.used,
+                            limit=detail.limit,
+                        )
+                    elif usage is None:
                         self._write_ui_entry(
                             "recoverable",
                             "turn.budget_limited_reason",
@@ -272,6 +459,8 @@ class TurnControllerMixin(TuiAppControllerMixin):
                     duration=duration,
                     steps=steps,
                 )
+            if self._agent_preferences.notify_completed is True:
+                self.bell()
         except asyncio.CancelledError:
             await self._discard_pending_assistant()
             if self._turn_pristine_rewound:
@@ -283,6 +472,8 @@ class TurnControllerMixin(TuiAppControllerMixin):
             await self._discard_pending_assistant()
             self._restore_queued_interjections()
             self._write_turn_failure(error)
+            if self._agent_preferences.notify_failed is True:
+                self.bell()
         finally:
             self._pending_interaction_request_id = None
             if self._background_wake_active:
@@ -536,6 +727,12 @@ class TurnControllerMixin(TuiAppControllerMixin):
                 self._terminal_execution_reason = budget_limited_reason(data)
                 if self._terminal_budget_usage is None:
                     self._terminal_budget_usage = BudgetUsageProjection.from_event_data(data)
+                else:
+                    detail = budget_limited_detail(data)
+                    if detail is not None:
+                        self._terminal_budget_usage = replace(
+                            self._terminal_budget_usage, per_tool=detail
+                        )
             else:
                 self._terminal_execution_status = None
                 self._terminal_execution_recoverable = False

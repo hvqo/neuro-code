@@ -107,7 +107,12 @@ class FixtureConversation:
     def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
         self.reasoning_effort = effort
 
-    def set_interaction_mode(self, mode: InteractionMode) -> None:
+    def set_interaction_mode(
+        self,
+        mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
+    ) -> None:
         self.interaction_mode = mode
 
     async def run(

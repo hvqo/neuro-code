@@ -1,5 +1,7 @@
 # ADR 0147: ACP Client I/O Adapter Boundary
 
+[简体中文](../../zh-CN/adr/0147-acp-client-io-adapter-boundary.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-30
 - Scope: third structural slice of V1 Interface Boundary Consolidation

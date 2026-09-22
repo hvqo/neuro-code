@@ -8,6 +8,14 @@
 - 其中关于保留 Provider facade 的部分已由 Architecture Freeze v1 后的 ADR 0072 取代。
 - 其中关于保留 Adapter、Tool 和 Domain 平面 facade 的部分已由兼容性清理审计后的 ADR 0074 取代。
 
+> **阅读指引。** 本记录的绝大部分篇幅是只追加的实施日志，而不是决策本身。请先读
+> `## 背景` 与 `## 决策`（约 70 行）；决策连同 `## 影响` 与 `## 被否决的方案` 合计约 90 行。
+> `### 实施状态` 一节是后续迁移阶段按日期记录的日志，约 720 行，只有需要某个具体边界的
+> 历史时才需要查阅。其中关于保留兼容门面的部分已由
+> [ADR 0072](0072-remove-provider-compatibility-facades.md)、
+> [ADR 0073](0073-remove-root-compatibility-facades.md) 和
+> [ADR 0074](0074-remove-adapter-tool-domain-facades.md) 取代。
+
 ## 背景
 
 Neuro Code 已经通过领域值、带类型端口、应用编排和具体适配器交付纵向能力，但当前包结构

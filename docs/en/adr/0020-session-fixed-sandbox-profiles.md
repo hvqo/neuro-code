@@ -2,6 +2,9 @@
 
 [简体中文](../../zh-CN/adr/0020-session-fixed-sandbox-profiles.md) · **English**
 
+- Status: Accepted
+- Date: 2026-07-18
+
 ## Context
 
 An operating-system sandbox is selected before provider or tool composition and

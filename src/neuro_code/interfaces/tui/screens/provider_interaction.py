@@ -136,12 +136,25 @@ class ProviderInteractionMixin(ProviderSettingsScreenMixin):
             self._edit_profile(self.initial_profile)
         if self.initial_error:
             self._show_provider_error(self.initial_error)
-        focus_target = (
-            "#provider-settings-model"
-            if self._editing_profile is not None
-            else f"#provider-settings-preset-{self._active_preset}"
-        )
-        self.query_one(focus_target).focus()
+        if (
+            self.first_run
+            or self.initial_profile is not None
+            or not self.provider_settings.profiles
+        ):
+            self._show_edit_view()
+            focus_target = (
+                "#provider-settings-model"
+                if self._editing_profile is not None
+                else f"#provider-settings-preset-{self._active_preset}"
+            )
+            self.query_one(focus_target).focus()
+            return
+        self._show_list_view()
+        profiles = self.query_one("#provider-settings-profiles")
+        if profiles.children:
+            profiles.children[0].focus()
+        else:
+            self.query_one("#provider-settings-new").focus()
 
     def _default_service(self) -> ProviderServiceDescriptor:
         return self.service_catalog.services[0]
@@ -155,6 +168,7 @@ class ProviderInteractionMixin(ProviderSettingsScreenMixin):
         profile_name = self._profile_ids.get(button_id)
         if profile_name is not None:
             self._edit_profile(profile_name)
+            self._show_edit_view()
             return
         catalog_model = self._catalog_model_ids.get(button_id)
         if catalog_model is not None:
@@ -192,6 +206,7 @@ class ProviderInteractionMixin(ProviderSettingsScreenMixin):
             return
         if button_id == "provider-settings-new":
             self._new_profile()
+            self._show_edit_view()
             return
         if button_id == "provider-settings-save":
             await self._save_provider()
@@ -209,7 +224,10 @@ class ProviderInteractionMixin(ProviderSettingsScreenMixin):
             await self._delete_provider()
             return
         if button_id == "provider-settings-back":
-            self.dismiss(None)
+            if self._view_mode == "edit":
+                self._show_list_view()
+            else:
+                self.dismiss(None)
 
     def _edit_profile(self, name: str) -> None:
         profile = self.provider_settings.profile(name)

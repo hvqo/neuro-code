@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0027-semantic-tui-and-application-reasoning-effort.md) · **English**
 
-## Status
-
-Accepted.
+- Status: Accepted
+- Date: 2026-07-18
 
 ## Context
 
@@ -80,7 +79,7 @@ sub-agent workflow is active when only Neuro Code's own review policy exists.
   projection `max`. The picker and runtime bar may show that projection, while
   an explicit user turn enters the durable application delegation service and
   selects exactly one `MAIN_MAX` or `BOUNDED_SWARM` path. Providers never
-  receive an invented native `ultracode` value. See [ADR 0141](adr/0141-automatic-ultracode-delegation.md).
+  receive an invented native `ultracode` value. See [ADR 0141](0141-automatic-ultracode-delegation.md).
 
 ## Consequences
 

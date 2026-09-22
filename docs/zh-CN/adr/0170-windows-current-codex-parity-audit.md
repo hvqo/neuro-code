@@ -1,4 +1,8 @@
-# ADR 0117：当前 OpenAI Codex Windows sandbox parity 审计
+# ADR 0170：当前 OpenAI Codex Windows sandbox parity 审计
+
+[English](../../en/adr/0170-windows-current-codex-parity-audit.md) · **简体中文**
+
+> 为保持 ADR 编号唯一，由 ADR 0117 重编号而来；决策内容未变。
 
 - 状态：已接受；作为当前生产 Windows sandbox 基线审计
 - 日期：2026-08-20

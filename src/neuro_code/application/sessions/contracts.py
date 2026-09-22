@@ -53,6 +53,17 @@ class InteractionModeSelectionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class NewSessionResult:
+    """Outcome of starting a fresh session in the current provider profile.
+
+    在当前供应配置下开启全新会话的结果.
+    """
+
+    previous_session_id: str | None
+    stopped_background_tasks: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class SessionOption:
     """Bounded session choice shown to an inbound interface.
 
@@ -72,6 +83,7 @@ class SessionOption:
     title: str | None = None
     matched_fields: tuple[str, ...] = ()
     snippet: str | None = None
+    project_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +109,7 @@ class SessionSelectionResult:
 
 __all__ = [
     "InteractionModeSelectionResult",
+    "NewSessionResult",
     "ReasoningEffortSelectionResult",
     "SessionOption",
     "SessionSelectionResult",

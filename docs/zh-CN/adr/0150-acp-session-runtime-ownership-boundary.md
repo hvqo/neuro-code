@@ -1,12 +1,13 @@
 # ADR 0150：ACP Session Runtime 所有权边界
 
-- Status：Accepted
-- Date：2026-08-31
-- Scope：叠加在 PR #77 之上的有界 ACP session runtime 切片
+[English](../../en/adr/0150-acp-session-runtime-ownership-boundary.md) · **简体中文**
+
+- 状态：已接受
+- 日期：2026-08-31
+- 范围：叠加在 PR #77 之上的有界 ACP session runtime 切片
 - Depends on：ADR 0145、ADR 0146、ADR 0147、ADR 0148 和 ADR 0149
 
-## Context
-
+## 背景
 精确冻结的 PR #77 base 是
 `d7dbbc645b15daf987128b7f5264cd29172b1bf8`。在该 base 上，
 `neuro_code.acp` 已经抽取 prompt/content、update projection、client I/O 和 MCP
@@ -30,8 +31,7 @@ connection adapter 中。
 Connection 级 client state、capability negotiation、registry、pending reservation、list cursor 和
 transport 仍由 Agent 拥有。
 
-## Decision
-
+## 决策
 引入 `neuro_code.interfaces.acp.session.AcpSessionRuntime`，作为唯一的 per-session runtime
 owner。它不反向引用 `NeuroCodeAcpAgent`，不持有 application service locator，也不感知
 bootstrap、provider、store 或 transport。
@@ -55,8 +55,7 @@ dispatch、`ext_method` dispatch、live MCP orchestration 和 transport。Applic
 私有 `_AcpSession` 名称继续作为 canonical runtime 的 identity-preserving alias，供行为测试兼容使用。
 它不是第二个 class，也不是 public export。
 
-## Resource ownership
-
+## 资源所有权
 成功 registry publication 之前，Agent 的 local construction path 保留 binding、MCP context 和
 client terminal 的 rollback ownership。publication 之后，`AcpSessionRuntime` 是活动 session 的
 唯一 cleanup owner，locals 会清空。构造或 publication 失败时，仍只关闭 local path 仍持有的资源。
@@ -66,8 +65,7 @@ Runtime 保留既有顺序：先 cancel/wait prompt task，再关闭 MCP tools�
 binding resource scope。因此 binding-owned LSP 与 background resource 仍由 PR #77 的 close authority
 控制。
 
-## Locking and concurrency
-
+## 锁与并发
 Agent registry lock 只保护 membership 与 reservation/publication。Runtime state lock 保护单个
 session 的可变 state。Runtime cleanup lock 串行化 aggregate cleanup。等待 provider/model turn、MCP
 operation、terminal shutdown、binding close 或 client permission request 时，不持有 runtime state lock。
@@ -81,22 +79,19 @@ MCP refresh 仍由 Agent orchestration。Runtime 会阻止关闭中的 session �
 但在 close 之前已经捕获 MCP reference 的 operation 仍可能与底层 refresh/close 边界重叠。该 race 被明确
 记录为后续 hardening debt，不做未经证明的结论。
 
-## Permissions and identity
-
+## 权限与身份
 Runtime 可以持有 application-owned `SessionApprovalBroker` 和 pending ACP presentation ID，但不拥有
 `PermissionManager`、policy 或 scoped-grant authority。Durable alias write 仍由 Agent 通过 application
 service 执行。Runtime 只在 state lock 下 reserve/commit in-memory identity，并拒绝同一个外部 ACP
 session 切换到另一 identity。
 
-## Non-goals
-
+## 非目标
 本 ADR 不移动或重设计 ACP transport、capability negotiation、`ext_method`、MCP infrastructure、
 client I/O adapter、application runner、CLI/TUI/domain/persistence boundary 或 checkpoint/rollback。
 不引入 retry、replay、cleanup-error aggregation 或通用 session repository。既有 cleanup error propagation
 保持不变：若前一个 resource close 抛错，后续资源的 exhaustive cleanup 仍属于未来 hardening。
 
-## Validation
-
+## 验证
 Focused runtime 与 architecture tests 证明 canonical class identity、没有 Agent back-reference 或
 forbidden concrete import、registry typing、prompt/approval ownership、cancellation/task identity、
 同步 identity binding、close-state rejection、并发 cleanup 幂等、资源顺序，以及

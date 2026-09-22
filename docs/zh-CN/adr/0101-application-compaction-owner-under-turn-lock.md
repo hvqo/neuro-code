@@ -1,5 +1,7 @@
 # ADR 0101：在回合锁下由应用层拥有压缩最终化
 
+[English](../../en/adr/0101-application-compaction-owner-under-turn-lock.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：`AgentConversation` 与 `ConversationRunner`

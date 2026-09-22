@@ -1,18 +1,18 @@
 # ADR 0159：只读 Git 变更检查
 
-- Status：Accepted
-- Date：2026-09-13
-- Scope：B2 普通 Agent 的有界只读 Git 检查
+[English](../../en/adr/0159-read-only-git-change-inspection.md) · **简体中文**
 
-## Context
+- 状态：已接受
+- 日期：2026-09-13
+- 范围：B2 普通 Agent 的有界只读 Git 检查
 
+## 背景
 Neuro Code 已经可以通过加固后的 worktree adapter 执行 Git 操作，但普通
 Agent 及其用户需要一个有界的仓库身份和当前变更视图。通用 Bash 不是合适的
 检查边界：它允许调用方控制 revision、path、config、hooks 及其他 Git 模式，
 也不能为 CLI 和 model tool 提供唯一的类型化 projection。
 
-## Decision
-
+## 决策
 增加一个面向 application 的 `GitInspectionApplication` port 和一个
 `GitInspectionService`。本地 infrastructure adapter 是 Git 检查执行与解析的
 唯一 owner。它使用固定 Git 命令和严格的 Git porcelain v2 `-z` parser，生成
@@ -55,8 +55,7 @@ checkpoint、rollback 或通用 Git GUI 功能，也不自动发现 untracked co
 submodule、不产生 verification evidence。后续任务可以增加面向用户的变更展示；B2 只建立
 共享的有界只读 projection。
 
-## Validation
-
+## 验证
 Focused tests 覆盖 clean、detached、staged/unstaged/mixed、untracked、rename/copy、
 conflict、binary、large、malformed、non-repository、unsafe configuration、timeout、
 cancellation、submodule、CLI 和 model-tool path。

@@ -1,6 +1,8 @@
 # ADR 0161：结构化会话 Working Set
 
-- 状态：Accepted
+[English](../../en/adr/0161-structured-session-working-set.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-09-15
 - 范围：CM2 有界持久任务状态 projection
 

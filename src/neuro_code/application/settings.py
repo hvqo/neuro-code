@@ -13,6 +13,7 @@ from neuro_code.application.execution_policy import (
     ExecutionProfile,
 )
 from neuro_code.application.permissions.policy import PermissionMode, PermissionRule
+from neuro_code.application.ports.agent_preferences import AgentPreferences
 from neuro_code.application.runtime.supervision import ExecutionControlMode
 from neuro_code.application.runtime.verification import validate_explicit_verification_command
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
@@ -42,6 +43,7 @@ class ApplicationSettings:
     execution_profile: ExecutionProfile = ExecutionProfile.NORMAL
     execution_budget_source: ExecutionBudgetSource | None = None
     verification_command: str | None = None
+    interactive_preferences: AgentPreferences | None = None
     _execution_budget: ExecutionBudget = field(init=False, repr=False)
 
     def __post_init__(self) -> None:

@@ -33,7 +33,13 @@ from neuro_code.domain.conversation.messages import (
     ToolCall,
 )
 from neuro_code.domain.sandbox.models import SandboxProfile
-from neuro_code.domain.sessions import SessionSnapshot, SessionSummary, normalize_session_title
+from neuro_code.domain.sessions import (
+    SessionProject,
+    SessionSnapshot,
+    SessionSummary,
+    normalize_project_name,
+    normalize_session_title,
+)
 from neuro_code.domain.sessions.search import (
     SessionSearchHit,
     SessionSearchPage,
@@ -65,6 +71,7 @@ from neuro_code.infrastructure.persistence.sqlite_session_schema import (
     _ensure_session_execution_record_schema,
     _ensure_session_plan_comment_schema,
     _ensure_session_plan_schema,
+    _ensure_session_project_schema,
     _ensure_session_task_schema,
     _ensure_session_turn_attempt_schema,
     _ensure_session_working_set_schema,
@@ -314,6 +321,12 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                             "UPDATE schema_meta SET version = 34 WHERE singleton = 1"
                         )
                         version = (34,)
+                    if version is not None and version[0] == 34:
+                        _ensure_session_project_schema(connection)
+                        connection.execute(
+                            "UPDATE schema_meta SET version = 35 WHERE singleton = 1"
+                        )
+                        version = (35,)
                     if version is None or version[0] != SCHEMA_VERSION:
                         raise SessionError(
                             "unsupported session schema version: "
@@ -345,6 +358,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                     _ensure_task_dag_replan_schema(connection)
                     _ensure_agent_swarm_schema(connection)
                     _ensure_result_adoption_schema(connection)
+                    _ensure_session_project_schema(connection)
                     _backfill_search_documents(connection, missing_only=True)
                     connection.commit()
                 except BaseException:
@@ -616,8 +630,8 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                 if session_id not in seen:
                     raise SessionError(f"unknown session: {session_id}")
                 if seen:
-                    placeholders = ", ".join("?" for _ in seen)
                     parameters = tuple(seen)
+                    placeholders = ", ".join("?" for _ in parameters)
                     lease = connection.execute(
                         f"""
                         SELECT 1
@@ -630,6 +644,13 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                     ).fetchone()
                     if lease is not None:
                         raise SessionError("session has preserved writable workspace resources")
+                    try:
+                        _purge_owned_session_records(connection, parameters)
+                    except sqlite3.IntegrityError as error:
+                        raise SessionError(
+                            "session has retained orchestration records that cannot be "
+                            "removed automatically"
+                        ) from error
 
                 for current in seen:
                     connection.execute("DELETE FROM sessions WHERE id = ?", (current,))
@@ -813,7 +834,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                 summary_row = connection.execute(
                     """
                     SELECT id, cwd, provider, model, created_at, updated_at,
-                           context_affinity, sandbox_profile, title
+                           context_affinity, sandbox_profile, title, project_id
                     FROM sessions WHERE id = ?
                     """,
                     (session_id,),
@@ -1209,7 +1230,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                 rows = connection.execute(
                     """
                     SELECT id, cwd, provider, model, created_at, updated_at,
-                           context_affinity, sandbox_profile, title
+                           context_affinity, sandbox_profile, title, project_id
                     FROM sessions ORDER BY updated_at DESC, id DESC LIMIT ?
                     """,
                     (limit,),
@@ -1259,7 +1280,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                 rows = connection.execute(
                     f"""
                     SELECT id, cwd, provider, model, created_at, updated_at,
-                           context_affinity, sandbox_profile, title
+                           context_affinity, sandbox_profile, title, project_id
                     FROM sessions
                     {where}
                     ORDER BY julianday(updated_at) DESC, id DESC
@@ -1267,6 +1288,194 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                     """,
                     parameters,
                 ).fetchall()
+            return [_summary_from_row(row) for row in rows]
+
+        return await run_blocking(load)
+
+    async def list_projects(self, *, limit: int = 200) -> list[SessionProject]:
+        if not 1 <= limit <= 1000:
+            raise SessionError("project list limit must be between 1 and 1000")
+
+        def load() -> list[SessionProject]:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT id, name, cwd, created_at, updated_at
+                    FROM session_projects
+                    ORDER BY updated_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+            return [_project_from_row(row) for row in rows]
+
+        return await run_blocking(load)
+
+    async def create_project(self, name: str, cwd: str) -> SessionProject:
+        try:
+            normalized_name = normalize_project_name(name)
+        except ValueError as error:
+            raise SessionError(str(error)) from error
+        if not isinstance(cwd, str) or not cwd.strip():
+            raise SessionError("project workspace must not be empty")
+        project_id = str(uuid.uuid4())
+
+        def create() -> SessionProject:
+            with closing(self._connect()) as connection, connection:
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO session_projects(id, name, cwd)
+                        VALUES (?, ?, ?)
+                        """,
+                        (project_id, normalized_name, cwd),
+                    )
+                except sqlite3.IntegrityError as error:
+                    raise SessionError(f"project name already exists: {normalized_name}") from error
+                row = connection.execute(
+                    """
+                    SELECT id, name, cwd, created_at, updated_at
+                    FROM session_projects WHERE id = ?
+                    """,
+                    (project_id,),
+                ).fetchone()
+            assert row is not None
+            return _project_from_row(row)
+
+        async with self._write_lock:
+            return await run_blocking(create)
+
+    async def rename_project(self, project_id: str, name: str) -> SessionProject:
+        try:
+            normalized_name = normalize_project_name(name)
+        except ValueError as error:
+            raise SessionError(str(error)) from error
+
+        def rename() -> SessionProject:
+            with closing(self._connect()) as connection, connection:
+                try:
+                    cursor = connection.execute(
+                        """
+                        UPDATE session_projects
+                        SET name = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (normalized_name, project_id),
+                    )
+                except sqlite3.IntegrityError as error:
+                    raise SessionError(f"project name already exists: {normalized_name}") from error
+                if cursor.rowcount != 1:
+                    raise SessionError(f"unknown project: {project_id}")
+                row = connection.execute(
+                    """
+                    SELECT id, name, cwd, created_at, updated_at
+                    FROM session_projects WHERE id = ?
+                    """,
+                    (project_id,),
+                ).fetchone()
+            assert row is not None
+            return _project_from_row(row)
+
+        async with self._write_lock:
+            return await run_blocking(rename)
+
+    async def delete_project(self, project_id: str) -> None:
+        """Delete one project while keeping its sessions, only detaching them.
+
+        删除项目本身并保留其会话,只解除归属."""
+
+        def delete() -> None:
+            with closing(self._connect()) as connection, connection:
+                exists = connection.execute(
+                    "SELECT 1 FROM session_projects WHERE id = ?",
+                    (project_id,),
+                ).fetchone()
+                if exists is None:
+                    raise SessionError(f"unknown project: {project_id}")
+                connection.execute(
+                    "UPDATE sessions SET project_id = NULL WHERE project_id = ?",
+                    (project_id,),
+                )
+                connection.execute(
+                    "DELETE FROM session_projects WHERE id = ?",
+                    (project_id,),
+                )
+
+        async with self._write_lock:
+            await run_blocking(delete)
+
+    async def assign_session_project(
+        self,
+        session_id: str,
+        project_id: str | None,
+    ) -> SessionSummary:
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise SessionError("session project id must not be empty")
+
+        def assign() -> SessionSummary:
+            with closing(self._connect()) as connection, connection:
+                if project_id is not None:
+                    project = connection.execute(
+                        "SELECT 1 FROM session_projects WHERE id = ?",
+                        (project_id,),
+                    ).fetchone()
+                    if project is None:
+                        raise SessionError(f"unknown project: {project_id}")
+                cursor = connection.execute(
+                    "UPDATE sessions SET project_id = ? WHERE id = ?",
+                    (project_id, session_id),
+                )
+                if cursor.rowcount != 1:
+                    raise SessionError(f"unknown session: {session_id}")
+                row = connection.execute(
+                    """
+                    SELECT id, cwd, provider, model, created_at, updated_at,
+                           context_affinity, sandbox_profile, title, project_id
+                    FROM sessions WHERE id = ?
+                    """,
+                    (session_id,),
+                ).fetchone()
+            assert row is not None
+            return _summary_from_row(row)
+
+        async with self._write_lock:
+            return await run_blocking(assign)
+
+    async def list_sessions_by_project(
+        self,
+        project_id: str | None,
+        *,
+        limit: int = 1000,
+    ) -> list[SessionSummary]:
+        if not 1 <= limit <= 1000:
+            raise SessionError("session list limit must be between 1 and 1000")
+
+        def load() -> list[SessionSummary]:
+            with closing(self._connect()) as connection:
+                if project_id is None:
+                    rows = connection.execute(
+                        """
+                        SELECT id, cwd, provider, model, created_at, updated_at,
+                               context_affinity, sandbox_profile, title, project_id
+                        FROM sessions
+                        WHERE project_id IS NULL
+                        ORDER BY updated_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                        (limit,),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        """
+                        SELECT id, cwd, provider, model, created_at, updated_at,
+                               context_affinity, sandbox_profile, title, project_id
+                        FROM sessions
+                        WHERE project_id = ?
+                        ORDER BY updated_at DESC, id DESC
+                        LIMIT ?
+                        """,
+                        (project_id, limit),
+                    ).fetchall()
             return [_summary_from_row(row) for row in rows]
 
         return await run_blocking(load)
@@ -1322,7 +1531,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                 row = connection.execute(
                     """
                     SELECT id, cwd, provider, model, created_at, updated_at,
-                           context_affinity, sandbox_profile, title
+                           context_affinity, sandbox_profile, title, project_id
                     FROM sessions WHERE id = ?
                     """,
                     (session_id,),
@@ -1648,10 +1857,122 @@ def _content_part_from_dict(raw: object) -> ContentPart:
     raise TypeError("unsupported content part kind")
 
 
+def _purge_owned_session_records(
+    connection: sqlite3.Connection,
+    session_ids: tuple[str, ...],
+) -> None:
+    """Remove durable orchestration bookkeeping owned by deleted sessions.
+
+    Ultracode, Agent Swarm, Leader, task-DAG, replan, and result-adoption rows
+    reference their parent session with ``ON DELETE RESTRICT``, so they must be
+    removed child-first before the session row itself.  Deletion stays scoped to
+    the session subtree: dag-scoped tables are filtered by the DAGs the subtree
+    owns.  Writable subagent leases are deliberately *not* removed here; the
+    caller refuses those sessions because they own on-disk workspace resources.
+
+    Ultracode、Agent Swarm、Leader、任务 DAG、重规划与结果采纳等记录都以
+    ``ON DELETE RESTRICT`` 引用父会话,因此必须在删除会话行之前按子到父的顺序移除.
+    删除范围限定在该会话子树内:按 DAG 归属过滤相关表.可写子代理租约故意不在此移除,
+    调用方会拒绝删除拥有磁盘工作区资源的会话.
+    """
+
+    ids = ", ".join("?" for _ in session_ids)
+    dag_rows = connection.execute(
+        f"SELECT dag_id FROM task_dags WHERE parent_session_id IN ({ids})",
+        session_ids,
+    ).fetchall()
+    dag_ids = tuple(str(row[0]) for row in dag_rows)
+    dags = ", ".join("?" for _ in dag_ids)
+
+    # Result-adoption targets first: they restrict their adoption row.
+    connection.execute(
+        f"""
+        DELETE FROM result_adoption_targets
+        WHERE adoption_id IN (
+            SELECT adoption_id FROM result_adoptions
+            WHERE parent_session_id IN ({ids})
+        )
+        """,
+        session_ids,
+    )
+    connection.execute(
+        f"DELETE FROM leader_decisions WHERE leader_session_id IN ({ids})",
+        session_ids,
+    )
+    connection.execute(
+        f"DELETE FROM orchestration_dag_replan_proposals WHERE parent_session_id IN ({ids})",
+        session_ids,
+    )
+    connection.execute(
+        f"DELETE FROM orchestration_plan_proposals WHERE parent_session_id IN ({ids})",
+        session_ids,
+    )
+    connection.execute(
+        f"DELETE FROM task_dag_recovery_claims WHERE parent_session_id IN ({ids})",
+        session_ids,
+    )
+    connection.execute(
+        f"DELETE FROM leader_attempts WHERE leader_session_id IN ({ids})",
+        session_ids,
+    )
+    connection.execute(
+        f"DELETE FROM orchestration_dag_replan_attempts "
+        f"WHERE parent_session_id IN ({ids}) OR planner_session_id IN ({ids})",
+        (*session_ids, *session_ids),
+    )
+    connection.execute(
+        f"DELETE FROM orchestration_planning_attempts "
+        f"WHERE parent_session_id IN ({ids}) OR planner_session_id IN ({ids})",
+        (*session_ids, *session_ids),
+    )
+    connection.execute(
+        f"DELETE FROM orchestration_swarm_runs "
+        f"WHERE parent_session_id IN ({ids}) OR planner_session_id IN ({ids})",
+        (*session_ids, *session_ids),
+    )
+    connection.execute(
+        f"DELETE FROM orchestration_ultracode_executions WHERE parent_session_id IN ({ids})",
+        session_ids,
+    )
+    connection.execute(
+        f"DELETE FROM result_adoptions WHERE parent_session_id IN ({ids})",
+        session_ids,
+    )
+    connection.execute(
+        f"DELETE FROM parent_context_relays "
+        f"WHERE parent_session_id IN ({ids}) OR child_session_id IN ({ids})",
+        (*session_ids, *session_ids),
+    )
+    if not dag_ids:
+        return
+    # DAG-owned children next, then the DAGs themselves.
+    connection.execute(f"DELETE FROM task_dag_dependency_relays WHERE dag_id IN ({dags})", dag_ids)
+    connection.execute(f"DELETE FROM task_dag_nodes WHERE dag_id IN ({dags})", dag_ids)
+    connection.execute(f"DELETE FROM task_dags WHERE parent_session_id IN ({ids})", session_ids)
+
+
+def _project_from_row(row: tuple[Any, ...]) -> SessionProject:
+    def timestamp(value: object) -> datetime:
+        parsed = datetime.fromisoformat(str(value).replace(" ", "T"))
+        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+
+    return SessionProject(
+        id=str(row[0]),
+        name=str(row[1]),
+        cwd=str(row[2]),
+        created_at=timestamp(row[3]),
+        updated_at=timestamp(row[4]),
+    )
+
+
 def _summary_from_row(row: tuple[Any, ...]) -> SessionSummary:
     def timestamp(value: object) -> datetime:
         parsed = datetime.fromisoformat(str(value).replace(" ", "T"))
         return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+
+    # The project row is appended by the session projections that expose it;
+    # narrower projections keep working without the optional tenth column.
+    project_id = str(row[9]) if len(row) > 9 and row[9] is not None else None
 
     return SessionSummary(
         id=str(row[0]),
@@ -1665,6 +1986,7 @@ def _summary_from_row(row: tuple[Any, ...]) -> SessionSummary:
             _parse_sandbox_profile(row[7], session_id=str(row[0])) if row[7] is not None else None
         ),
         title=str(row[8]) if row[8] else None,
+        project_id=project_id,
     )
 
 

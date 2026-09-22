@@ -1,10 +1,11 @@
 # ADR 0112：Windows 本地进程沙箱 AppContainer 可行性决策
 
-## 状态
+[English](../../en/adr/0112-windows-appcontainer-sandbox-feasibility-decision.md) · **简体中文**
 
-已接受。已研究的 classic stable unpackaged Windows AppContainer 架构延期，
-不进入生产沙箱适配器。显式 Windows 文件系统/网络 profile 仍为不支持并失败关闭。
-现有 `off` 路径及 Windows Job Object/ConPTY 生命周期契约保持不变。
+- 状态：已接受
+- 日期：2026-08-13
+
+已研究的 classic stable unpackaged Windows AppContainer 架构延期， 不进入生产沙箱适配器。显式 Windows 文件系统/网络 profile 仍为不支持并失败关闭。 现有 `off` 路径及 Windows Job Object/ConPTY 生命周期契约保持不变。
 
 ## 背景
 

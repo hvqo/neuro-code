@@ -1,8 +1,11 @@
 # ADR 0109: Canonical local-process sandbox boundary
 
-## Status
+[简体中文](../../zh-CN/adr/0109-canonical-local-process-sandbox-boundary.md) · **English**
 
-Accepted. PR 1 established the canonical port; PR 2 delivered the Linux
+- Status: Accepted
+- Date: 2026-08-12
+
+PR 1 established the canonical port; PR 2 delivered the Linux
 child-scoped Bash migration; PR 3 delivered the Linux child-scoped stdio MCP
 migration; PR 4 routed local PTY/ConPTY creation through the same port; PR 5
 removed the former controller-wide Bubblewrap re-exec and namespace

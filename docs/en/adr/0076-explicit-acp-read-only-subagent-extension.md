@@ -1,8 +1,9 @@
 # ADR 0076: Explicit ACP read-only subagent extension
 
-## Status
+[简体中文](../../zh-CN/adr/0076-explicit-acp-read-only-subagent-extension.md) · **English**
 
-Accepted for Stage5CV.
+- Status: Accepted for Stage5CV
+- Date: 2026-08-08
 
 ## Context
 

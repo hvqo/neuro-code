@@ -2,7 +2,8 @@
 
 **English** · [简体中文](../../zh-CN/adr/0048-bounded-provider-connection-discovery.md)
 
-Status: accepted
+- Status: Accepted
+- Date: 2026-07-28
 
 ## Context
 

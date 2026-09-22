@@ -1,6 +1,8 @@
 # ADR 0135: Bounded serialized Leader controller
 
-- Status: implemented as an explicit internal P0 vertical slice; final rating waits for merge-ref CI
+[简体中文](../../zh-CN/adr/0135-bounded-serialized-leader-controller.md) · **English**
+
+- Status: Accepted; implemented as an explicit internal P0 vertical slice; final rating waits for merge-ref CI
 - Date: 2026-08-24
 - Scope: one Leader over one pre-created bounded Task DAG, with serialized decisions
 

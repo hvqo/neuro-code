@@ -18,8 +18,9 @@ from neuro_code.application.ports.provider_settings import (
 )
 from neuro_code.interfaces.tui.screens.provider_screen import ProviderSettingsScreen
 from neuro_code.interfaces.tui.state import ProviderSettingsSubmission
-from neuro_code.interfaces.tui.theme import TEXTUAL_THEME
+from neuro_code.interfaces.tui.theme import TEXTUAL_THEMES
 from neuro_code.shared.ui_language import UiLanguage
+from neuro_code.shared.ui_theme import UiTheme
 
 
 class ProviderSetupApp(App[bool]):
@@ -45,11 +46,6 @@ class ProviderSetupApp(App[bool]):
         background: $surface-hover;
     }
 
-    Button:focus {
-        background: $surface;
-        border-left: tall $border-focus;
-        text-style: none;
-    }
 
     Button.-primary,
     Button.-success,
@@ -77,14 +73,20 @@ class ProviderSetupApp(App[bool]):
         border: none;
     }
 
+    Button:focus {
+        background: $surface-selected;
+        border: none;
+        text-style: none;
+    }
+
     Input {
         background: $surface;
         color: $text-primary;
-        border: tall $border;
+        border: round $border;
     }
 
     Input:focus {
-        border: tall $border-focus;
+        border: round $border-focus;
     }
     """
 
@@ -96,13 +98,15 @@ class ProviderSetupApp(App[bool]):
         provider_catalog: ProviderCatalog | None = None,
         socks_supported: bool = False,
         language: UiLanguage = UiLanguage.ENGLISH,
+        ui_theme: UiTheme = UiTheme.PORCELAIN,
         first_run: bool = True,
         initial_profile: str | None = None,
         initial_error: str | None = None,
     ) -> None:
         super().__init__()
-        self.register_theme(TEXTUAL_THEME)
-        self.theme = TEXTUAL_THEME.name
+        for palette in TEXTUAL_THEMES.values():
+            self.register_theme(palette)
+        self.theme = ui_theme.textual_name
         self._provider_settings = provider_settings
         self._provider_settings_store = provider_settings_store
         self._provider_catalog = provider_catalog

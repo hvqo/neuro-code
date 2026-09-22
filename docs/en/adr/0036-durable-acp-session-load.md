@@ -2,7 +2,7 @@
 
 [简体中文](../../zh-CN/adr/0036-durable-acp-session-load.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-07-19
 
 ## Context

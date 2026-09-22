@@ -1,5 +1,7 @@
 # ADR 0094：Runtime 压缩失败投影
 
+[English](../../en/adr/0094-runtime-compaction-failure-projection.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：未来 Runtime 接入使用的 application memory 契约

@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0015-async-interactive-tool-approval.md) · **English**
 
-## Status
-
-Accepted.
+- Status: Accepted
+- Date: 2026-07-17
 
 ## Context
 

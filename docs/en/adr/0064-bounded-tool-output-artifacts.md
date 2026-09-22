@@ -2,7 +2,7 @@
 
 [简体中文](../../zh-CN/adr/0064-bounded-tool-output-artifacts.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-08-06
 
 ## Context

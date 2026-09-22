@@ -2,7 +2,7 @@
 
 [简体中文](../../zh-CN/adr/0038-session-owned-stdio-mcp-tools.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-07-19
 
 ## Context

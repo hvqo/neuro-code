@@ -1,5 +1,7 @@
 # ADR 0115：Windows 原生沙箱 ConPTY 纵向切片
 
+[English](../../en/adr/0115-windows-native-sandbox-pty.md) · **简体中文**
+
 - 状态：已接受；W4 Windows ConPTY 生产路由已通过 focused 原生验收与完整 CI 认证
 - 日期：2026-08-15
 

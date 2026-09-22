@@ -1,8 +1,9 @@
 # ADR 0078: Explicit TUI Subagent Relationship View
 
-## Status
+[简体中文](../../zh-CN/adr/0078-explicit-tui-subagent-relationship-view.md) · **English**
 
-Accepted for Stage5CX.
+- Status: Accepted for Stage5CX
+- Date: 2026-08-08
 
 ## Context
 

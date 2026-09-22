@@ -1,8 +1,11 @@
 # ADR 0128: Read-only LSP vertical slice
 
-## Status
+[简体中文](../../zh-CN/adr/0128-read-only-lsp-vertical-slice.md) · **English**
 
-Accepted for the `codex/lsp-vertical-slice` stacked implementation. The slice
+- Status: Accepted for the `codex/lsp-vertical-slice` stacked implementation
+- Date: 2026-08-22
+
+The slice
 is intentionally read-only and does not claim worktree, checkpoint, rename,
 format, code-action, or workspace-edit support.
 

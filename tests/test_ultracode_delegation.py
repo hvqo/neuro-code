@@ -141,7 +141,12 @@ class _Runtime:
     def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
         self.reasoning_effort = effort
 
-    def set_interaction_mode(self, mode: InteractionMode) -> None:
+    def set_interaction_mode(
+        self,
+        mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
+    ) -> None:
         self.interaction_mode = mode
 
 
@@ -203,8 +208,13 @@ class _ParentRunner:
     def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
         self._conversation.set_reasoning_effort(effort)
 
-    def set_interaction_mode(self, mode: InteractionMode) -> None:
-        self._conversation.set_interaction_mode(mode)
+    def set_interaction_mode(
+        self,
+        mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
+    ) -> None:
+        self._conversation.set_interaction_mode(mode, unrestricted_auto=unrestricted_auto)
 
     async def run(
         self,
@@ -1747,12 +1757,12 @@ async def test_schema_27_to_32_migration_creates_ultracode_projection_without_lo
             connection.execute("UPDATE schema_meta SET version = 27 WHERE singleton = 1")
         await store.initialize()
 
-        assert SCHEMA_VERSION == 34
+        assert SCHEMA_VERSION == 35
         assert await store.get_session(session_id) is not None
         with closing(sqlite3.connect(database)) as connection:
             assert connection.execute(
                 "SELECT version FROM schema_meta WHERE singleton = 1"
-            ).fetchone() == (34,)
+            ).fetchone() == (35,)
             assert connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' "
                 "AND name = 'orchestration_ultracode_executions'"

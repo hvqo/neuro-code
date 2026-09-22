@@ -1,10 +1,11 @@
-# ADR 0074: Read-only parent-child subagent relationship projection
+# ADR 0169: Read-only parent-child subagent relationship projection
 
-[简体中文](../../zh-CN/adr/0074-read-only-parent-child-subagent-relationship-projection.md) · **English**
+[简体中文](../../zh-CN/adr/0169-read-only-parent-child-subagent-relationship-projection.md) · **English**
 
-## Status
+> Renumbered from ADR 0074 so every ADR number is unique; the decision itself is unchanged.
 
-Accepted for Stage5CT.
+- Status: Accepted for Stage5CT
+- Date: 2026-08-08
 
 ## Context
 

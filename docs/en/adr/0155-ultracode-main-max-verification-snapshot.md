@@ -1,5 +1,7 @@
 # ADR 0155: Durable MAIN_MAX verification snapshot
 
+[简体中文](../../zh-CN/adr/0155-ultracode-main-max-verification-snapshot.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-07
 - Scope: VF-4a bounded local Ultracode integration

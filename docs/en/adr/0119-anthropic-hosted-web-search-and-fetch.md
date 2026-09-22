@@ -1,5 +1,7 @@
 # ADR 0119: Anthropic hosted Web Search and Web Fetch
 
+[简体中文](../../zh-CN/adr/0119-anthropic-hosted-web-search-and-fetch.md) · **English**
+
 - Status: Accepted; P1.1 vertical slice
 - Date: 2026-08-19
 - Scope: Anthropic Messages hosted `web_search` and `web_fetch`

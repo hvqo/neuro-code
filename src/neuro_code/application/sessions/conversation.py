@@ -331,8 +331,13 @@ class AgentConversation:
     def auto_mode_unrestricted(self) -> bool:
         return self._runtime.auto_mode_unrestricted
 
-    def set_interaction_mode(self, mode: InteractionMode) -> None:
-        self._runtime.set_interaction_mode(mode)
+    def set_interaction_mode(
+        self,
+        mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
+    ) -> None:
+        self._runtime.set_interaction_mode(mode, unrestricted_auto=unrestricted_auto)
 
     @property
     def normal_requirements_enabled(self) -> bool:

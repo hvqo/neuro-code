@@ -1,6 +1,8 @@
 # ADR 0095: Explicit Runtime compaction seam
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0095-explicit-runtime-compaction-seam.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: `AgentRuntime` application facade
 

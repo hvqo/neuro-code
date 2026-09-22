@@ -2,7 +2,7 @@
 
 [简体中文](../../zh-CN/adr/0052-capability-gated-acp-client-filesystem.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-07-29
 
 ## Context

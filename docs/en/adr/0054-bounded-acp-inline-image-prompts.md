@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0054-bounded-acp-inline-image-prompts.md) · **English**
 
-## Status
-
-Accepted
+- Status: Accepted
+- Date: 2026-07-29
 
 ## Context
 

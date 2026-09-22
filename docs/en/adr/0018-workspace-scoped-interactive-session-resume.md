@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0018-workspace-scoped-interactive-session-resume.md) · **English**
 
-## Status
-
-Accepted.
+- Status: Accepted
+- Date: 2026-07-18
 
 ## Context
 

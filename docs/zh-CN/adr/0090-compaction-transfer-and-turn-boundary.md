@@ -1,5 +1,7 @@
 # ADR 0090：压缩条目传输与回合最终化边界
 
+[English](../../en/adr/0090-compaction-transfer-and-turn-boundary.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：会话导入/导出、分叉与压缩持久化

@@ -1,5 +1,7 @@
 # ADR 0120: Gemini Interactions and hosted Web Search tools
 
+[简体中文](../../zh-CN/adr/0120-gemini-interactions-and-hosted-web-tools.md) · **English**
+
 - Status: Accepted; P1.2 vertical slice
 - Date: 2026-08-19
 - Scope: Gemini Interactions, Google Search, URL Context, and Gemini route composition

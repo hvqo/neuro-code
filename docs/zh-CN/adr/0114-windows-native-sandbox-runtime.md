@@ -1,5 +1,7 @@
 # ADR 0114：Windows 原生非 PTY 沙箱运行时
 
+[English](../../en/adr/0114-windows-native-sandbox-runtime.md) · **简体中文**
+
 - 状态：已接受；W3 已在 focused 原生验收与 full CI 通过后合并
 - 日期：2026-08-14
 - 范围：Windows 启用 profile 下的 BASH、后台 Bash 与 MCP stdio

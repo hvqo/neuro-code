@@ -2,9 +2,8 @@
 
 **简体中文** · [English](../../en/adr/0143-bounded-durable-result-adoption.md)
 
-## 状态
-
-已接受，适用于有界内部纵向切片。
+- 状态：已接受，适用于有界内部纵向切片
+- 日期：2026-08-29
 
 ## 背景
 
@@ -59,8 +58,7 @@ worktree storage、credential 与 root 外路径在本切片中都 fail closed�
 file image 8 MiB、relative path 4 KiB。采纳 ownership lease 最长五分钟。这些上限是 application
 常量，durable state 加载时还会由不可变 domain value 再次校验。
 
-## Parent mutation authority
-
+## 父级变更权威
 Service 不调用 `shutil`、raw file replacement、Git checkout/apply/cherry-pick、shell 或面向 model
 的 public tool。它为每个 target 创建一个 typed `WorkspaceMutationRequest`，并调用从活动 parent
 binding 捕获的 mutation port。Runtime 路径保持为：

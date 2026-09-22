@@ -1,10 +1,11 @@
 # ADR 0111：macOS Seatbelt 本地进程沙箱
 
-## 状态
+[English](../../en/adr/0111-macos-seatbelt-local-process-sandbox.md) · **简体中文**
 
-已接受。macOS 上启用的内建沙箱 profile 使用生产级
-`MacOSSeatbeltLocalProcessSandbox`。本决策不改变 Linux Bubblewrap 或 Windows
-Job Object 的 guarantee。
+- 状态：已接受
+- 日期：2026-08-12
+
+macOS 上启用的内建沙箱 profile 使用生产级 `MacOSSeatbeltLocalProcessSandbox`。本决策不改变 Linux Bubblewrap 或 Windows Job Object 的 guarantee。
 
 ## 背景
 

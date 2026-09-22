@@ -25,6 +25,7 @@ from neuro_code.interfaces.tui.text import ui_text
 from neuro_code.interfaces.tui.theme import (
     CONNECTION_STATUS_STYLES,
     TEXT_SECONDARY,
+    theme_style,
 )
 from neuro_code.shared.redaction import redact_sensitive_text
 
@@ -181,7 +182,7 @@ class ProviderCatalogMixin(ProviderSettingsScreenMixin):
             self.query_one("#provider-settings-connection-status", Static).update("")
 
     def _show_connection_status(self, message: str, *, kind: str) -> None:
-        color = CONNECTION_STATUS_STYLES.get(kind, TEXT_SECONDARY)
+        color = theme_style(self, CONNECTION_STATUS_STYLES.get(kind, TEXT_SECONDARY))
         marker = {
             "success": _SUCCESS_MARK,
             "warning": _WARNING_MARK,

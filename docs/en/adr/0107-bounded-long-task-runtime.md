@@ -1,8 +1,9 @@
 # ADR 0107: Bounded long-task Runtime guidance, compaction, and segments
 
-## Status
+[简体中文](../../zh-CN/adr/0107-bounded-long-task-runtime.md) · **English**
 
-Accepted.
+- Status: Accepted
+- Date: 2026-08-09
 
 ## Context
 

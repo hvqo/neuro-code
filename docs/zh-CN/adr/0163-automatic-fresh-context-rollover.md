@@ -1,6 +1,8 @@
 # ADR 0163：Automatic fresh-context rollover
 
-- 状态：Accepted
+[English](../../en/adr/0163-automatic-fresh-context-rollover.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-09-15
 - 范围：CM3b 有界 automatic normal-agent context recovery
 

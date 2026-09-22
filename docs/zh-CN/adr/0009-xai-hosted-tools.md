@@ -2,9 +2,8 @@
 
 **简体中文** · [English](../../en/adr/0009-xai-hosted-tools.md)
 
-## 状态
-
-已接受。
+- 状态：已接受
+- 日期：2026-07-17
 
 [ADR 0010](0010-provider-profiles-and-cc-switch.md) 对本决策作了扩展：配置现在使用带
 `dialect = "xai"` 的 `openai-responses` profile；托管工具归属和生命周期规则不变。

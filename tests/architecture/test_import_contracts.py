@@ -2332,6 +2332,7 @@ def test_canonical_runtime_public_types_keep_module_paths_and_metadata() -> None
     assert profile.ConversationRunner is binding.ConversationRunner
     assert session_contracts.__all__ == [
         "InteractionModeSelectionResult",
+        "NewSessionResult",
         "ReasoningEffortSelectionResult",
         "SessionOption",
         "SessionSelectionResult",

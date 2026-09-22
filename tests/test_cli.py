@@ -62,7 +62,13 @@ from neuro_code.domain.conversation.events import (
     ModelTextDelta,
     ModelToolCall,
 )
-from neuro_code.domain.conversation.messages import Message, Role, ToolCall
+from neuro_code.domain.conversation.messages import (
+    ContentPart,
+    ContentPartKind,
+    Message,
+    Role,
+    ToolCall,
+)
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.execution import (
     AgentExecutionOutcome,
@@ -109,6 +115,7 @@ from neuro_code.interfaces.cli.subagents import (
 )
 from neuro_code.shared.errors import ConfigurationError, ProviderError
 from neuro_code.shared.ui_language import UiLanguage
+from neuro_code.shared.ui_theme import UiTheme
 
 
 class CliProvider:
@@ -167,6 +174,27 @@ class FinalizingCliProvider:
             raise ProviderError("finalizer provider failed")
         yield ModelTextDelta("finalized fixture response")
         yield ModelCompleted("stop")
+
+
+class RecordingCliProvider(FinalizingCliProvider):
+    """Finalizing provider that records user message content parts."""
+
+    def __init__(self, *, normal_tool_calls: int) -> None:
+        super().__init__(normal_tool_calls=normal_tool_calls)
+        self.captured_user_parts: list[tuple[ContentPart, ...]] = []
+
+    async def stream(
+        self,
+        context: ModelContext,
+        tools: Sequence[ToolDefinition],
+        *,
+        tool_policy: ModelToolPolicy = ModelToolPolicy.ALLOWED,
+    ) -> AsyncIterator[ModelEvent]:
+        for item in context.items:
+            if isinstance(item, Message) and item.role is Role.USER:
+                self.captured_user_parts.append(item.content_parts)
+        async for event in super().stream(context, tools, tool_policy=tool_policy):
+            yield event
 
 
 class GatedCliProvider:
@@ -537,6 +565,12 @@ api_key_env = "FIXTURE_KEY"
         cls._write_provider_config(state)
         output = io.StringIO()
         errors = io.StringIO()
+        # Pin the workspace so project-level configuration discovery cannot read
+        # a developer-local `.neuro-code/config.toml` from the checkout.  A
+        # declared context window there would make the preflight known and
+        # suppress the unknown-capacity notice these runs assert.
+        if "--cwd" not in arguments:
+            arguments = (*arguments, "--cwd", str(root))
         with (
             patch.dict(
                 "os.environ",
@@ -1261,6 +1295,50 @@ api_key_env = "FIXTURE_KEY"
         )
         self.assertEqual(output, "finalized fixture response\n")
 
+    def test_attach_flag_sends_image_content_parts_to_the_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "shot.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"payload" * 8)
+            provider = RecordingCliProvider(normal_tool_calls=1)
+            exit_code, _output, _errors = self._run_finalizing_agent(
+                root,
+                provider,
+                "-p",
+                "look at this",
+                "--attach",
+                str(image),
+                "--max-steps",
+                "1",
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(_output, "finalized fixture response\n")
+        self.assertGreaterEqual(len(provider.captured_user_parts), 1)
+        # The first (ordinary) request carries the typed prompt and the image.
+        parts = provider.captured_user_parts[0]
+        self.assertEqual(
+            [part.kind for part in parts],
+            [ContentPartKind.TEXT, ContentPartKind.IMAGE],
+        )
+        self.assertEqual(parts[0].text, "look at this")
+        self.assertTrue(parts[1].url.startswith("data:image/png;base64,"))
+
+    def test_attach_flag_rejects_missing_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exit_code, _output, errors = self._run_finalizing_agent(
+                root,
+                FinalizingCliProvider(normal_tool_calls=1),
+                "-p",
+                "look",
+                "--attach",
+                str(root / "missing.png"),
+            )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("invalid attachment", errors)
+
     def test_gated_response_hides_terminal_candidate_in_plain_json_and_jsonl(self) -> None:
         for output_format in ("plain", "json", "jsonl"):
             with (
@@ -1883,7 +1961,7 @@ api_key_env = "FIXTURE_KEY"
             root = Path(directory)
             self._write_provider_config(root / "state")
             (root / "state" / "ui-preferences.json").write_text(
-                json.dumps({"version": 1, "language": "zh-CN"}),
+                json.dumps({"version": 1, "language": "zh-CN", "theme": "graphite"}),
                 encoding="utf-8",
             )
             captured: dict[str, object] = {}
@@ -1902,6 +1980,7 @@ api_key_env = "FIXTURE_KEY"
                     interaction_mode_controller: object,
                     session_controller: object,
                     session_selection_service: object,
+                    session_library_service: object,
                     task_controller: object,
                     session_task_controller: object,
                     plan_controller: object,
@@ -1909,6 +1988,7 @@ api_key_env = "FIXTURE_KEY"
                     plan_scheduling_service: object,
                     queued_plan_execution_service: object,
                     ui_preferences: object,
+                    agent_preferences: object,
                     provider_settings_store: object,
                     provider_catalog: object,
                     managed_provider_settings: object,
@@ -1918,6 +1998,7 @@ api_key_env = "FIXTURE_KEY"
                     subagent_relationship_query: object,
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
+                    ui_theme: UiTheme,
                     initial_items: object,
                     provider_name: str,
                     model_name: str,
@@ -1934,6 +2015,7 @@ api_key_env = "FIXTURE_KEY"
                         interaction_mode_controller=interaction_mode_controller,
                         session_controller=session_controller,
                         session_selection_service=session_selection_service,
+                        session_library_service=session_library_service,
                         task_controller=task_controller,
                         session_task_controller=session_task_controller,
                         plan_controller=plan_controller,
@@ -1950,6 +2032,7 @@ api_key_env = "FIXTURE_KEY"
                         subagent_relationship_query=subagent_relationship_query,
                         subagent_relationship_lifecycle=subagent_relationship_lifecycle,
                         language=language,
+                        ui_theme=ui_theme,
                         initial_items=initial_items,
                         provider_name=provider_name,
                         model_name=model_name,
@@ -1998,6 +2081,7 @@ api_key_env = "FIXTURE_KEY"
             self.assertIsInstance(captured["turn_service"], SessionTurnService)
             self.assertEqual(captured["initial_items"], ())
             self.assertEqual(captured["language"], UiLanguage.SIMPLIFIED_CHINESE)
+            self.assertEqual(captured["ui_theme"], UiTheme.GRAPHITE)
             self.assertIsInstance(captured["provider_catalog"], PersistentProviderCatalog)
             self.assertIsInstance(
                 captured["tool_output_artifact_service"],
@@ -2138,6 +2222,7 @@ api_key_env = "FIXTURE_KEY"
                     interaction_mode_controller: object,
                     session_controller: object,
                     session_selection_service: object,
+                    session_library_service: object,
                     task_controller: object,
                     session_task_controller: object,
                     plan_controller: object,
@@ -2145,6 +2230,7 @@ api_key_env = "FIXTURE_KEY"
                     plan_scheduling_service: object,
                     queued_plan_execution_service: object,
                     ui_preferences: object,
+                    agent_preferences: object,
                     provider_settings_store: object,
                     provider_catalog: object,
                     managed_provider_settings: object,
@@ -2154,6 +2240,7 @@ api_key_env = "FIXTURE_KEY"
                     subagent_relationship_query: object,
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
+                    ui_theme: UiTheme,
                     initial_items: object,
                     provider_name: str,
                     model_name: str,
@@ -2169,6 +2256,7 @@ api_key_env = "FIXTURE_KEY"
                         reasoning_controller,
                         interaction_mode_controller,
                         session_selection_service,
+                        session_library_service,
                         task_controller,
                         session_task_controller,
                         plan_controller,
@@ -2267,6 +2355,7 @@ api_key_env = "SECOND_KEY"
                     interaction_mode_controller: object,
                     session_controller: object,
                     session_selection_service: object,
+                    session_library_service: object,
                     task_controller: object,
                     session_task_controller: object,
                     plan_controller: object,
@@ -2274,6 +2363,7 @@ api_key_env = "SECOND_KEY"
                     plan_scheduling_service: object,
                     queued_plan_execution_service: object,
                     ui_preferences: object,
+                    agent_preferences: object,
                     provider_settings_store: object,
                     provider_catalog: object,
                     managed_provider_settings: object,
@@ -2283,6 +2373,7 @@ api_key_env = "SECOND_KEY"
                     subagent_relationship_query: object,
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
+                    ui_theme: UiTheme,
                     initial_items: object,
                     provider_name: str,
                     model_name: str,
@@ -2296,6 +2387,7 @@ api_key_env = "SECOND_KEY"
                         reasoning_controller,
                         interaction_mode_controller,
                         session_selection_service,
+                        session_library_service,
                         plan_controller,
                         plan_execution_service,
                         plan_scheduling_service,
@@ -2437,6 +2529,7 @@ api_key_env = "SECOND_KEY"
                     interaction_mode_controller: object,
                     session_controller: object,
                     session_selection_service: object,
+                    session_library_service: object,
                     task_controller: object,
                     session_task_controller: object,
                     plan_controller: object,
@@ -2444,6 +2537,7 @@ api_key_env = "SECOND_KEY"
                     plan_scheduling_service: object,
                     queued_plan_execution_service: object,
                     ui_preferences: object,
+                    agent_preferences: object,
                     provider_settings_store: object,
                     provider_catalog: object,
                     managed_provider_settings: object,
@@ -2453,6 +2547,7 @@ api_key_env = "SECOND_KEY"
                     subagent_relationship_query: object,
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
+                    ui_theme: UiTheme,
                     initial_items: object,
                     provider_name: str,
                     model_name: str,
@@ -2466,6 +2561,7 @@ api_key_env = "SECOND_KEY"
                         reasoning_controller,
                         interaction_mode_controller,
                         session_selection_service,
+                        session_library_service,
                         ui_preferences,
                         provider_settings_store,
                         provider_catalog,

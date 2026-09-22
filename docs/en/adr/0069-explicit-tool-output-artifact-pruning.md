@@ -1,8 +1,9 @@
 # ADR 0069: Explicit lifecycle pruning for tool-output artifacts
 
-## Status
+[简体中文](../../zh-CN/adr/0069-explicit-tool-output-artifact-pruning.md) · **English**
 
-Accepted for Stage5BP.
+- Status: Accepted for Stage5BP
+- Date: 2026-08-07
 
 ## Context
 

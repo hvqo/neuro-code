@@ -16,14 +16,38 @@ from dataclasses import dataclass
 
 from neuro_code.domain.execution import (
     AgentExecutionStatus,
+    BudgetLimitDetail,
     SupervisorReasonCode,
 )
 
 __all__ = [
     "BudgetUsageProjection",
+    "budget_limited_detail",
     "budget_limited_reason",
     "recoverable_terminal_status",
 ]
+
+
+def budget_limited_detail(data: Mapping[str, object]) -> BudgetLimitDetail | None:
+    """Return the bounded per-tool projection behind one budget-limited terminal.
+
+    返回一次预算受限终态背后的有界单工具投影."""
+
+    if budget_limited_reason(data) is not SupervisorReasonCode.PER_TOOL_CALL_BUDGET:
+        return None
+    raw = data.get("execution_detail")
+    if not isinstance(raw, Mapping):
+        return None
+    tool_name = raw.get("tool_name")
+    used = raw.get("used")
+    limit = raw.get("limit")
+    if isinstance(tool_name, bool) or not isinstance(tool_name, str) or not tool_name:
+        return None
+    if isinstance(used, bool) or not isinstance(used, int) or used < 0:
+        return None
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        return None
+    return BudgetLimitDetail(tool_name, used, limit)
 
 
 _RECOVERABLE_TERMINAL_STATUSES = frozenset(
@@ -78,6 +102,7 @@ class BudgetUsageProjection:
     input_tokens: tuple[int | float, int | float] | None = None
     output_tokens: tuple[int | float, int | float] | None = None
     total_tokens: tuple[int | float, int | float] | None = None
+    per_tool: BudgetLimitDetail | None = None
 
     @classmethod
     def from_event_data(cls, data: Mapping[str, object]) -> BudgetUsageProjection | None:
@@ -94,6 +119,7 @@ class BudgetUsageProjection:
             input_tokens=_bounded_pair(data, "input_tokens_used", "input_tokens_limit"),
             output_tokens=_bounded_pair(data, "output_tokens_used", "output_tokens_limit"),
             total_tokens=_bounded_pair(data, "total_tokens_used", "total_tokens_limit"),
+            per_tool=budget_limited_detail(data),
         )
 
     def for_reason(

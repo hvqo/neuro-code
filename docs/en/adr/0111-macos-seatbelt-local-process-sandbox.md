@@ -1,8 +1,11 @@
 # ADR 0111: macOS Seatbelt local-process sandbox
 
-## Status
+[简体中文](../../zh-CN/adr/0111-macos-seatbelt-local-process-sandbox.md) · **English**
 
-Accepted. Enabled built-in sandbox profiles on macOS use a production
+- Status: Accepted
+- Date: 2026-08-12
+
+Enabled built-in sandbox profiles on macOS use a production
 `MacOSSeatbeltLocalProcessSandbox`. This decision does not change Linux
 Bubblewrap or Windows Job Object guarantees.
 

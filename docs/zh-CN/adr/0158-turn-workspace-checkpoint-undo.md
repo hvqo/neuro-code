@@ -1,18 +1,18 @@
 # ADR 0158：回合工作区 Checkpoint 与 Undo
 
-- Status：Accepted
-- Date：2026-09-11
-- Scope：B1 仅保留最新普通回合工作区 undo
+[English](../../en/adr/0158-turn-workspace-checkpoint-undo.md) · **简体中文**
 
-## Context
+- 状态：已接受
+- 日期：2026-09-11
+- 范围：B1 仅保留最新普通回合工作区 undo
 
+## 背景
 现有 checkpoint engine 可以安全捕获和恢复 Neuro Code 自有 managed worktree 的 Git-visible
 projection，但普通用户运行使用的是 source checkout。Raw path 不能作为 checkpoint authority，source
 checkout 也不能被插入 managed-worktree ownership store。B1 需要为普通回合中符合条件的 mutation 提供一个
 durable、仅保留最新目标的 undo，同时不改变 Git history 或 turn recovery。
 
-## Decision
-
+## 决策
 Bootstrap 只有在通过既有 Git port 证明 canonical repository identity、source path、当前 HEAD 以及 branch
 或 detached 状态后，才签发类型化的 `SourceWorkspaceCheckpointGrant`。Checkpoint application service 在
 capture 和 rollback 前重新证明该 grant；managed worktree handle 继续使用既有 ownership proof。
@@ -47,8 +47,7 @@ source identity 会阻止 retirement。对于未知 source state，不执行自�
 `MODEL_OUTPUT_STARTED`、turn recovery 与 committed assistant history 仍是彼此独立的事实。既有 managed checkpoint
 API、provider/tool contract、SQLite session schema 和 ACP protocol 不变；不增加 model-visible undo tool。
 
-## Validation
-
+## 验证
 Focused tests 覆盖 typed source authority、dirty/index/untracked/binary/symlink checkpoint 行为、latest-only
 association 与 invalidation、第一次 mutation 的并发准备、持久化失败、重启、rollback guard、CLI/TUI projection、
 live-mutator refusal，以及既有 managed checkpoint/recovery 回归。

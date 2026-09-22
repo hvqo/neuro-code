@@ -1,6 +1,8 @@
 # ADR 0160：持久历史可寻址性与有界回填
 
-- 状态：Accepted
+[English](../../en/adr/0160-durable-history-addressability-and-rehydration.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-09-14
 - 范围：CM1 持久会话历史可寻址性与只读回填
 

@@ -1,5 +1,7 @@
 # ADR 0115: Windows native sandbox ConPTY vertical slice
 
+[简体中文](../../zh-CN/adr/0115-windows-native-sandbox-pty.md) · **English**
+
 - Status: Accepted; W4 production Windows ConPTY routing certified by focused native acceptance and full CI
 - Date: 2026-08-15
 

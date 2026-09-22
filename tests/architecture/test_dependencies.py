@@ -283,6 +283,7 @@ _BOOTSTRAP_COMPOSITION_MIXIN_OWNERS = {
                 "create_tool_output_artifact_service",
                 "bind_provider_controller",
                 "bind_session_selection_controller",
+                "bind_session_library_service",
                 "bind_plan_execution_controller",
                 "bind_plan_scheduling_controller",
                 "bind_queued_plan_execution_controller",
@@ -1437,6 +1438,7 @@ def test_canonical_shared_modules_are_the_only_shared_implementations() -> None:
         "neuro_code.shared.limits",
         "neuro_code.shared.redaction",
         "neuro_code.shared.ui_language",
+        "neuro_code.shared.ui_theme",
     }
     assert {
         module for module in modules if module.startswith("neuro_code.shared")
@@ -1453,6 +1455,7 @@ def test_canonical_ports_are_the_only_port_modules() -> None:
     canonical_modules = {
         "neuro_code.application.ports",
         "neuro_code.application.ports.approval",
+        "neuro_code.application.ports.agent_preferences",
         "neuro_code.application.ports.agent_swarm",
         "neuro_code.application.ports.background_tasks",
         "neuro_code.application.ports.client_filesystem",
@@ -1930,12 +1933,14 @@ def test_canonical_session_modules_are_the_only_session_implementations() -> Non
     modules = _source_modules()
     canonical_modules = {
         "neuro_code.application.sessions",
+        "neuro_code.application.sessions.attachments",
         "neuro_code.application.sessions.binding",
         "neuro_code.application.sessions.catalog",
         "neuro_code.application.sessions.contracts",
         "neuro_code.application.sessions.context_rollover",
         "neuro_code.application.sessions.event_queries",
         "neuro_code.application.sessions.execution_queries",
+        "neuro_code.application.sessions.library",
         "neuro_code.application.sessions.lifecycle",
         "neuro_code.application.sessions.item_queries",
         "neuro_code.application.sessions.profile_conversation",
@@ -1959,9 +1964,19 @@ def test_canonical_session_modules_are_the_only_session_implementations() -> Non
     expected_classes = {
         "neuro_code.application.sessions.contracts": {
             "InteractionModeSelectionResult",
+            "NewSessionResult",
             "ReasoningEffortSelectionResult",
             "SessionOption",
             "SessionSelectionResult",
+        },
+        "neuro_code.application.sessions.attachments": {
+            "Attachment",
+            "AttachmentError",
+        },
+        "neuro_code.application.sessions.library": {
+            "SessionLibraryOwner",
+            "SessionLibraryService",
+            "SessionLibraryStore",
         },
         "neuro_code.application.sessions.selection": {
             "SessionSelectionController",

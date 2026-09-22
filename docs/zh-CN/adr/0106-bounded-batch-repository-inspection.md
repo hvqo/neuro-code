@@ -1,8 +1,9 @@
 # ADR 0106：有界批量仓库检查
 
-## 状态
+[English](../../en/adr/0106-bounded-batch-repository-inspection.md) · **简体中文**
 
-已接受。
+- 状态：已接受
+- 日期：2026-08-09
 
 ## 背景
 

@@ -141,7 +141,12 @@ class ConversationRunner(Protocol):
     @property
     def auto_mode_unrestricted(self) -> bool: ...
 
-    def set_interaction_mode(self, mode: InteractionMode) -> None: ...
+    def set_interaction_mode(
+        self,
+        mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
+    ) -> None: ...
 
     async def run(
         self,

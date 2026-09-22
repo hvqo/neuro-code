@@ -1,8 +1,9 @@
 # ADR 0067: Session-scoped bounded tool-output details in the TUI
 
-## Status
+[简体中文](../../zh-CN/adr/0067-tui-bounded-tool-output-details.md) · **English**
 
-Accepted for Stage5BN.
+- Status: Accepted for Stage5BN
+- Date: 2026-08-07
 
 ## Context
 

@@ -1,6 +1,8 @@
 # ADR 0100: Explicit compaction turn owner
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0100-explicit-compaction-turn-owner.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: `TurnEventRecorder`
 

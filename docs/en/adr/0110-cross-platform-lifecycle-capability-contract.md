@@ -1,8 +1,11 @@
 # ADR 0110: Cross-platform local-process lifecycle capability contract
 
-## Status
+[简体中文](../../zh-CN/adr/0110-cross-platform-lifecycle-capability-contract.md) · **English**
 
-Accepted. Phase 1–3 add an explicit lifecycle capability contract to the
+- Status: Accepted
+- Date: 2026-08-12
+
+Phase 1–3 add an explicit lifecycle capability contract to the
 canonical local-process port. This ADR does not implement a macOS Seatbelt
 adapter and does not change the existing Linux or Windows security boundary.
 

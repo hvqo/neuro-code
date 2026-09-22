@@ -1,5 +1,7 @@
 # ADR 0152: CLI Session Command Boundary
 
+[简体中文](../../zh-CN/adr/0152-cli-session-command-boundary.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-31
 - Scope: the bounded CLI session-command execution slice stacked on PR #80

@@ -1,8 +1,9 @@
 # ADR 0069：显式清理工具输出 artifact 的生命周期
 
-## 状态
+[English](../../en/adr/0069-explicit-tool-output-artifact-pruning.md) · **简体中文**
 
-接受用于 Stage5BP.
+- 状态：已接受（Stage5BP）
+- 日期：2026-08-07
 
 ## 背景
 

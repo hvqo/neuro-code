@@ -7,7 +7,7 @@ from time import monotonic
 from rich.table import Table
 from rich.text import Text
 from textual.containers import VerticalScroll
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
@@ -31,6 +31,7 @@ from neuro_code.interfaces.tui.theme import (
     TEXT_SECONDARY,
     WAITING_STYLE,
     loading_style,
+    theme_style,
 )
 from neuro_code.interfaces.tui.tool_activity import (
     ToolDisclosureLevel,
@@ -119,8 +120,8 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         )
         rendered = self._loading_wave()
         rendered.append("  ")
-        rendered.append(label, style=TEXT_SECONDARY)
-        rendered.append(f"  ·  {elapsed:>7}", style=TEXT_DIM)
+        rendered.append(label, style=theme_style(self, TEXT_SECONDARY))
+        rendered.append(f"  ·  {elapsed:>7}", style=theme_style(self, TEXT_DIM))
         activity.update(rendered)
         activity.display = True
 
@@ -128,6 +129,20 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         self.sub_title = ui_text(self._language, "subtitle")
         prompt = self._main_screen_query_one("#prompt", PromptInput)
         prompt.placeholder = ui_text(self._language, "prompt.placeholder")
+        self._main_screen_query_one("#prompt-caption-hint", Static).update(
+            ui_text(
+                self._language,
+                "prompt.hint.newline"
+                if self._agent_preferences.enter_behavior == "newline"
+                else "prompt.hint",
+            )
+        )
+        self._main_screen_query_one("#prompt-send", Button).label = ui_text(
+            self._language, "prompt.send"
+        )
+        newline = self._main_screen_query_one("#prompt-newline", Button)
+        newline.label = ui_text(self._language, "prompt.newline")
+        newline.tooltip = ui_text(self._language, "prompt.newline.help")
         prompt.refresh()
         self._refresh_command_hints(prompt.value)
         self._refresh_runtime_bar()
@@ -149,14 +164,17 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
             return
 
         hints = Text()
-        hints.append(ui_text(self._language, "command_hint.tab"), style=f"bold {TEXT_EMPHASIS}")
-        hints.append("  ", style=TEXT_DISABLED)
+        hints.append(
+            ui_text(self._language, "command_hint.tab"),
+            style=f"bold {theme_style(self, TEXT_EMPHASIS)}",
+        )
+        hints.append("  ", style=theme_style(self, TEXT_DISABLED))
         for index, completion in enumerate(completions[:_COMMAND_HINT_LIMIT]):
             if index:
-                hints.append("  ·  ", style=TEXT_DISABLED)
-            hints.append(completion.display, style=TEXT_SECONDARY)
+                hints.append("  ·  ", style=theme_style(self, TEXT_DISABLED))
+            hints.append(completion.display, style=theme_style(self, TEXT_SECONDARY))
         if len(completions) > _COMMAND_HINT_LIMIT:
-            hints.append("  ·  …", style=TEXT_MUTED)
+            hints.append("  ·  …", style=theme_style(self, TEXT_MUTED))
         widget.update(hints)
         widget.display = True
 
@@ -178,11 +196,11 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
     def _context_color(self) -> str:
         window = self._context_display_window_tokens()
         if window is None:
-            return TEXT_SECONDARY
+            return theme_style(self, TEXT_SECONDARY)
         ratio = self._context_used_tokens / window
         if ratio >= 0.8:
-            return ACCENT_WARNING
-        return TEXT_SECONDARY
+            return theme_style(self, ACCENT_WARNING)
+        return theme_style(self, TEXT_SECONDARY)
 
     def _context_token_usage(self) -> str:
         tokens = self._context_used_tokens
@@ -210,15 +228,15 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         wave = Text()
         for level in self._loading_animation.levels():
             safe_level = max(0, min(7, level))
-            wave.append(symbols[safe_level], style=loading_style(safe_level))
+            wave.append(symbols[safe_level], style=theme_style(self, loading_style(safe_level)))
         return wave
 
     def _render_model_loading(self) -> Text:
         loading = self._loading_wave()
         loading.append("  ")
         key = "turn.finalizing" if self._finalizing else "turn.waiting"
-        loading.append(ui_text(self._language, key), style=WAITING_STYLE)
-        loading.append("  ·  ↓", style=TEXT_DIM)
+        loading.append(ui_text(self._language, key), style=theme_style(self, WAITING_STYLE))
+        loading.append("  ·  ↓", style=theme_style(self, TEXT_DIM))
         loading.append(self._context_token_usage(), style=self._context_color())
         return loading
 
@@ -262,27 +280,32 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         requested = self._reasoning_effort
         effective = self._effective_reasoning_effort
         effort = Text()
-        effort.append(" · ", style=TEXT_DIM)
+        effort.append(" · ", style=theme_style(self, TEXT_DIM))
         if requested is ReasoningEffort.ULTRACODE:
             effort.append(
                 ui_text(self._language, "runtime.ultracode"),
-                style=TEXT_EMPHASIS,
+                style=theme_style(self, TEXT_EMPHASIS),
             )
-            effort.append(" · ", style=TEXT_DIM)
-            effort.append(self._ultracode_route_label(), style=TEXT_SECONDARY)
+            effort.append(" · ", style=theme_style(self, TEXT_DIM))
+            effort.append(self._ultracode_route_label(), style=theme_style(self, TEXT_SECONDARY))
             return effort
-        effort.append(requested.value, style=TEXT_SECONDARY)
+        effort.append(requested.value, style=theme_style(self, TEXT_SECONDARY))
         if effective is not requested:
-            effort.append(" → ", style=TEXT_DIM)
-            effort.append(effective.value, style=TEXT_SECONDARY)
+            effort.append(" → ", style=theme_style(self, TEXT_DIM))
+            effort.append(effective.value, style=theme_style(self, TEXT_SECONDARY))
         return effort
 
     def _refresh_runtime_bar(self) -> None:
-        model = Text(self._model_name, style=TEXT_EMPHASIS, overflow="ellipsis", no_wrap=True)
+        model = Text(
+            self._model_name,
+            style=theme_style(self, TEXT_EMPHASIS),
+            overflow="ellipsis",
+            no_wrap=True,
+        )
         effort = self._runtime_effort()
         mode = Text()
-        mode.append(" · ", style=TEXT_DIM)
-        mode.append(self._interaction_mode.value, style=TEXT_SECONDARY)
+        mode.append(" · ", style=theme_style(self, TEXT_DIM))
+        mode.append(self._interaction_mode.value, style=theme_style(self, TEXT_SECONDARY))
 
         primary = Table.grid(expand=True, padding=(0, 0))
         primary.add_column(ratio=1, overflow="ellipsis", no_wrap=True)
@@ -305,10 +328,15 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         )
 
         context = Text()
-        context.append("ctx ", style=TEXT_MUTED)
+        context.append("ctx ", style=theme_style(self, TEXT_MUTED))
         context.append(self._context_percentage(), style=self._context_color())
-        workspace = Text(self._display_cwd(), style=TEXT_MUTED, overflow="ellipsis", no_wrap=True)
-        secondary = Table.grid(expand=True, padding=(0, 0))
+        workspace = Text(
+            self._display_cwd(),
+            style=theme_style(self, TEXT_MUTED),
+            overflow="ellipsis",
+            no_wrap=True,
+        )
+        secondary = Table.grid(expand=True, padding=(0, 1))
         secondary.add_column(width=len(context.plain), no_wrap=True)
         secondary.add_column(ratio=1, justify="right", overflow="ellipsis", no_wrap=True)
         secondary.add_row(context, workspace)

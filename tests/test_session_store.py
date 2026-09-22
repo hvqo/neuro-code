@@ -278,6 +278,197 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertEqual(await store.load_compaction_items(session_id), [item])
 
+    async def test_session_projects_group_sessions_without_requiring_membership(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "sessions.db"
+            store = SqliteSessionStore(database)
+            await store.initialize()
+            first = await store.create_session("/workspace", "provider", "model")
+            second = await store.create_session("/workspace", "provider", "model")
+
+            project = await store.create_project("Release train", "/workspace")
+            self.assertEqual(project.name, "Release train")
+            self.assertEqual([item.id for item in await store.list_projects()], [project.id])
+
+            assigned = await store.assign_session_project(first, project.id)
+            self.assertEqual(assigned.project_id, project.id)
+            self.assertEqual(
+                [summary.id for summary in await store.list_sessions_by_project(project.id)],
+                [first],
+            )
+            self.assertEqual(
+                [summary.id for summary in await store.list_sessions_by_project(None)],
+                [second],
+            )
+            self.assertEqual((await store.get_session(first)).project_id, project.id)
+            self.assertEqual(
+                {summary.id: summary.project_id for summary in await store.list_sessions()},
+                {first: project.id, second: None},
+            )
+
+            renamed = await store.rename_project(project.id, "Release train 2026")
+            self.assertEqual(renamed.name, "Release train 2026")
+
+            with self.assertRaisesRegex(SessionError, "project name already exists"):
+                await store.create_project(" Release   train 2026 ", "/workspace")
+            with self.assertRaisesRegex(SessionError, "unknown project"):
+                await store.assign_session_project(second, "missing-project")
+            with self.assertRaisesRegex(SessionError, "unknown project"):
+                await store.delete_project("missing-project")
+
+            await store.delete_project(project.id)
+
+            self.assertEqual(await store.list_projects(), [])
+            self.assertIsNone((await store.get_session(first)).project_id)
+            self.assertEqual(await store.load_session_items(first), [])
+
+    async def test_project_schema_migrates_from_v34(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "sessions.db"
+            store = SqliteSessionStore(database)
+            await store.initialize()
+            session_id = await store.create_session("/workspace", "provider", "model")
+            connection = sqlite3.connect(database)
+            connection.execute("DROP TABLE session_projects")
+            connection.execute("UPDATE schema_meta SET version = 34 WHERE singleton = 1")
+            connection.commit()
+            connection.close()
+
+            migrated = SqliteSessionStore(database)
+            await migrated.initialize()
+
+            connection = sqlite3.connect(database)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT version FROM schema_meta WHERE singleton = 1"
+                ).fetchone(),
+                (SCHEMA_VERSION,),
+            )
+            self.assertIn(
+                "session_projects",
+                {
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                },
+            )
+            connection.close()
+
+            project = await migrated.create_project("Migrated", "/workspace")
+            self.assertEqual(
+                (await migrated.assign_session_project(session_id, project.id)).project_id,
+                project.id,
+            )
+
+    async def test_delete_session_purges_owned_orchestration_records(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "sessions.db"
+            store = SqliteSessionStore(database)
+            await store.initialize()
+            session_id = await store.create_session("/workspace", "provider", "model")
+
+            connection = sqlite3.connect(database)
+            self.addCleanup(connection.close)
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(
+                """
+                INSERT INTO task_dags(
+                    dag_id, parent_session_id, definition_fingerprint, state,
+                    generation, created_at, updated_at
+                ) VALUES ('dag-1', ?, 'fingerprint', 'completed', 0, '2026-09-21', '2026-09-21')
+                """,
+                (session_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO task_dag_nodes(
+                    dag_id, node_id, ordinal, prompt, prompt_fingerprint,
+                    dependencies_json, kind, state, generation
+                ) VALUES ('dag-1', 'node-1', 0, 'prompt', 'prompt-fingerprint', '[]',
+                          'writable_subagent', 'completed', 0)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO orchestration_ultracode_executions(
+                    execution_id, parent_session_id, parent_turn_id, input_fingerprint,
+                    context_fingerprint, decision, downstream_id, provider_name, model_name,
+                    state, generation, owner_id, owner_pid, owner_token, lease_expires_at,
+                    created_at, updated_at
+                ) VALUES ('execution-1', ?, 'turn-1', 'input-fingerprint', 'context-fingerprint',
+                          'bounded_swarm', 'downstream-1', 'provider', 'model', 'completed', 0,
+                          'owner', 1, 'token', '2026-09-21', '2026-09-21', '2026-09-21')
+                """,
+                (session_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO result_adoptions(
+                    adoption_id, parent_session_id, plan_json, plan_fingerprint, state,
+                    owner_pid, owner_token, lease_expires_at, created_at, updated_at, version
+                ) VALUES ('adoption-1', ?, '{}', 'plan-fingerprint', 'completed', 1, 'token',
+                          '2026-09-21', '2026-09-21', '2026-09-21', 0)
+                """,
+                (session_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO result_adoption_targets(
+                    adoption_id, ordinal, target_json, path, pre_image_fingerprint,
+                    desired_fingerprint, state, updated_at, version
+                ) VALUES ('adoption-1', 0, '{}', 'src/app.py', 'before', 'after',
+                          'applied', '2026-09-21', 0)
+                """
+            )
+            connection.commit()
+            connection.close()
+
+            await store.delete_session(session_id)
+
+            remaining = sqlite3.connect(database)
+            self.addCleanup(remaining.close)
+            self.assertEqual(
+                remaining.execute("SELECT COUNT(*) FROM sessions").fetchone(),
+                (0,),
+            )
+            for table in (
+                "task_dags",
+                "task_dag_nodes",
+                "orchestration_ultracode_executions",
+                "result_adoptions",
+                "result_adoption_targets",
+            ):
+                self.assertEqual(
+                    remaining.execute(f"SELECT COUNT(*) FROM {table}").fetchone(),
+                    (0,),
+                    table,
+                )
+            self.assertEqual(remaining.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    async def test_message_content_parts_round_trip_through_the_store(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SqliteSessionStore(Path(directory) / "sessions.db")
+            await store.initialize()
+            session_id = await store.create_session("/workspace", "provider", "model")
+            image_part = ContentPart.from_image("data:image/png;base64,aGVsbG8=")
+            items = [
+                Message(
+                    Role.USER,
+                    "",
+                    content_parts=(
+                        ContentPart.from_text("look"),
+                        image_part,
+                    ),
+                ),
+            ]
+            await store.save_session_items(session_id, items)
+
+            loaded = await store.load_session_items(session_id)
+
+            self.assertEqual(loaded, items)
+            self.assertEqual(loaded[0].content_parts[1].url, image_part.url)
+
     async def test_compaction_schema_migrates_from_v12(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "sessions.db"

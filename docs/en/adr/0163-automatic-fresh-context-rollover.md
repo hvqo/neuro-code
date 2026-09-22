@@ -1,5 +1,7 @@
 # ADR 0163: Automatic fresh-context rollover
 
+[简体中文](../../zh-CN/adr/0163-automatic-fresh-context-rollover.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: CM3b bounded automatic normal-agent context recovery

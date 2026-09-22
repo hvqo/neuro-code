@@ -126,6 +126,7 @@ from neuro_code.domain.conversation.request import ModelRequestSnapshot
 from neuro_code.domain.execution import (
     AgentExecutionOutcome,
     AgentExecutionStatus,
+    BudgetLimitDetail,
     ExecutionBudget,
     ExecutionBudgetPressure,
     ExecutionCounters,
@@ -152,6 +153,9 @@ LOGGER = logging.getLogger(__name__)
 
 EventSink = Callable[[AgentEvent], Awaitable[None] | None]
 WorkspaceUndoSealer = Callable[[str | None, str | None], Awaitable[None]]
+
+_MAX_TOOL_INTENT_SOURCE_CHARS = 2_000
+_MAX_TOOL_INTENT_CHARS = 400
 
 
 def _redacted_persisted_tool_calls(
@@ -245,6 +249,14 @@ def _raw_context_index_after_canonical_boundary(
         if durable_count >= boundary:
             return index + 1
     return len(items)
+
+
+def execution_detail_data(detail: BudgetLimitDetail | None) -> dict[str, object] | None:
+    """Project one bounded per-tool budget detail into event metadata.
+
+    将一个有界的单工具预算详情投影到事件 metadata."""
+
+    return detail.to_event_data() if detail is not None else None
 
 
 class AgentLoopRunner:
@@ -634,9 +646,31 @@ class AgentLoopRunner:
             turn_id=turn_id,
             workspace_undo_sealer=self._workspace_undo_sealer,
         )
-        emit = recorder.emit
+        recorder_emit = recorder.emit
         record_turn_failure = recorder.record_turn_failure
         finalize_turn_completion = recorder.finalize_turn_completion
+
+        # The model's own narration directly before a tool call explains the
+        # intent of that call. Keep a bounded tail so the approval dialog can
+        # show it instead of the raw policy line.
+        tool_intent_text = ""
+
+        def _pending_tool_intent() -> str | None:
+            collapsed = " ".join(tool_intent_text.split())
+            return collapsed[:_MAX_TOOL_INTENT_CHARS] or None
+
+        async def emit(
+            kind: AgentEventKind,
+            data: dict[str, object],
+        ) -> AgentEvent:
+            nonlocal tool_intent_text
+            if kind is AgentEventKind.TEXT_DELTA:
+                text = data.get("text")
+                if isinstance(text, str) and text:
+                    tool_intent_text = (tool_intent_text + text)[-_MAX_TOOL_INTENT_SOURCE_CHARS:]
+            elif kind is AgentEventKind.MODEL_STEP_STARTED:
+                tool_intent_text = ""
+            return await recorder_emit(kind, data)
 
         async def persist_workspace_undo_event(
             kind: AgentEventKind,
@@ -1287,6 +1321,7 @@ class AgentLoopRunner:
                 decision.reason_code,
                 finalized=True,
                 recoverable=True,
+                detail=decision.detail,
             )
 
         workspace_evidence: list[str] = []
@@ -1445,6 +1480,7 @@ class AgentLoopRunner:
                     if outcome.reason_code is not None
                     else None,
                     "recoverable": outcome.recoverable,
+                    "execution_detail": execution_detail_data(outcome.detail),
                 },
             )
             evidence = finalization_evidence(decision)
@@ -1562,6 +1598,7 @@ class AgentLoopRunner:
                 ),
                 "finalized": completion_outcome.finalized,
                 "recoverable": completion_outcome.recoverable,
+                "execution_detail": execution_detail_data(completion_outcome.detail),
                 "finalization_status": finalization.status.value,
                 "finalization_attempts": len(finalization.attempts),
                 "illegal_tool_calls": finalization.illegal_tool_calls,
@@ -2215,6 +2252,7 @@ class AgentLoopRunner:
                     isolated: bool,
                     *,
                     batch_limits: dict[int, tuple[int, int]] = model_tool_result_limits,
+                    intent: str | None = _pending_tool_intent(),
                 ) -> _ScheduledToolOutcome:
                     # Parallel calls get private append-only projections.  The
                     # executor still owns every permission, approval, sandbox,
@@ -2268,6 +2306,7 @@ class AgentLoopRunner:
                             model_result_estimated_token_limit=(
                                 result_limits[1] if result_limits is not None else None
                             ),
+                            intent=intent,
                         )
                         return _ScheduledToolOutcome(
                             observation,

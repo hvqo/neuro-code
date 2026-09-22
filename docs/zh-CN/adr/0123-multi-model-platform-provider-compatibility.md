@@ -1,6 +1,8 @@
 # ADR 0123：多模型平台 Provider 兼容性
 
-- 状态：Accepted；P3B 纵向切片
+[English](../../en/adr/0123-multi-model-platform-provider-compatibility.md) · **简体中文**
+
+- 状态：已接受；P3B 纵向切片
 - 日期：2026-08-20
 - 范围：火山方舟 Ark、百度千帆、阿里云 Model Studio / 百炼、腾讯 TokenHub
 

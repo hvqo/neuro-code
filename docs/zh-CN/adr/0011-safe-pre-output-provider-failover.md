@@ -2,7 +2,8 @@
 
 **简体中文** · [English](../../en/adr/0011-safe-pre-output-provider-failover.md)
 
-状态：已接受
+- 状态：已接受
+- 日期：2026-07-17
 
 ## 背景
 

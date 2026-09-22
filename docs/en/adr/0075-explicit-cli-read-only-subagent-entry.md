@@ -1,8 +1,9 @@
 # ADR 0075: Explicit CLI read-only subagent entry
 
-## Status
+[简体中文](../../zh-CN/adr/0075-explicit-cli-read-only-subagent-entry.md) · **English**
 
-Accepted for Stage5CU.
+- Status: Accepted for Stage5CU
+- Date: 2026-08-08
 
 ## Context
 

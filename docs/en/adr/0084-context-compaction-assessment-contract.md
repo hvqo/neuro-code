@@ -1,6 +1,8 @@
 # ADR 0084: Deterministic Context Compaction Assessment Contract
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0084-context-compaction-assessment-contract.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: Stage5DD
 

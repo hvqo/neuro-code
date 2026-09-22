@@ -26,6 +26,7 @@ from neuro_code.application.execution_policy import (
 from neuro_code.application.runtime.verification import VerificationBlocker, VerificationEvidence
 from neuro_code.domain.execution import (
     AgentExecutionStatus,
+    BudgetLimitDetail,
     ExecutionBudget,
     ExecutionBudgetUsage,
     ExecutionCounters,
@@ -1008,10 +1009,12 @@ class AgentExecutionSupervisor:
                 "tool call budget is exhausted",
             )
         for count in next_counts:
-            if count.count > self._budget.limit_for_tool(count.tool_name):
+            limit = self._budget.limit_for_tool(count.tool_name)
+            if count.count > limit:
                 return self._budget_limited(
                     SupervisorReasonCode.PER_TOOL_CALL_BUDGET,
                     "per-tool call budget is exhausted",
+                    detail=BudgetLimitDetail(count.tool_name, count.count, limit),
                 )
         return None
 
@@ -1107,7 +1110,13 @@ class AgentExecutionSupervisor:
             code,
         )
 
-    def _budget_limited(self, code: SupervisorReasonCode, reason: str) -> SupervisorDecision:
+    def _budget_limited(
+        self,
+        code: SupervisorReasonCode,
+        reason: str,
+        *,
+        detail: BudgetLimitDetail | None = None,
+    ) -> SupervisorDecision:
         if self._mode is SupervisionMode.ENFORCE:
             self._replace_snapshot(
                 status=AgentExecutionStatus.BUDGET_LIMITED, termination_reason=code
@@ -1118,6 +1127,7 @@ class AgentExecutionSupervisor:
             AgentExecutionStatus.BUDGET_LIMITED,
             False,
             code,
+            detail,
         )
 
     def _status_decision(self, snapshot: ExecutionSnapshot) -> SupervisorDecision:

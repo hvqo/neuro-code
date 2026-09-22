@@ -59,6 +59,7 @@ class JsonUiPreferencesStoreTests(unittest.IsolatedAsyncioTestCase):
                     "language": "zh-CN",
                     "reasoning_effort": "high",
                     "interaction_mode": "normal",
+                    "theme": "porcelain",
                 },
             )
             self.assertEqual(list(path.parent.glob("*.tmp")), [])

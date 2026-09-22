@@ -2,9 +2,8 @@
 
 **简体中文** · [English](../../en/adr/0026-stable-localized-tui-conversation.md)
 
-## 状态
-
-已接受。
+- 状态：已接受
+- 日期：2026-07-18
 
 ## 背景
 

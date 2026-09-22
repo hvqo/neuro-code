@@ -1,12 +1,13 @@
 # ADR 0154：普通 Agent 验证获取边界
 
-- 状态：Accepted
+[English](../../en/adr/0154-normal-agent-verification-acquisition-boundary.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-09-07
 - 范围：VF-3c 普通 Agent generic verification requirement 与可信 coverage acquisition
 - 依赖：ADR 0153、VF-1 verification freshness、VF-2 final-response truth boundary、VF-3a 与 VF-3b
 
-## Context
-
+## 背景
 VF-3a 定义了不可变、与 Provider 无关的 verification requirements，VF-3b 将精确 snapshot 传播到普通 Agent 的回合与恢复边界。
 普通 Agent 仍需要一种小而确定的方式，让发生工作区修改的回合具备 verification awareness，但不能推断任务专属验收标准，
 也不能发现测试 framework。
@@ -15,8 +16,7 @@ VF-3a 定义了不可变、与 Provider 无关的 verification requirements，VF
 执行了哪一类已识别命令；它们不证明该命令覆盖任意用户描述的目标。自由文本 summary、命令文本、模型 ID 和 NLP 都不是确定性的
 coverage fact。
 
-## Decision
-
+## 决策
 `neuro_code.application.sessions.requirements` 中的 `NormalTurnRequirementsPolicy` 是第一版新普通用户回合 default 的唯一 producer。
 在 UltraCode 路由之后、TurnInput 持久化、第一次 Provider 请求或工具执行之前，如果普通用户回合没有显式 snapshot，则准确获得一个
 不可变的 Required requirement：
@@ -47,8 +47,7 @@ Effective snapshot 沿用现有 ToolExecutor observation path。先观察 mutati
 
 不得声称所有测试、所有行为或整个任务都已验证。
 
-## Consequences
-
+## 后果
 普通回合在 default declaration 存在时仍保持现有 legacy streaming behavior；只有发生 workspace mutation 后才激活 requirement。只读与对话回合不会
 仅因声明存在就调用 finalizer 或启用 gate。工作区修改后的已识别命令与 default requirement 具有精确的 typed 关系，但任意目标 coverage 有意不做声明。
 

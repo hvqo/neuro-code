@@ -2,7 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0010-provider-profiles-and-cc-switch.md) · **English**
 
-Status: accepted
+- Status: Accepted
+- Date: 2026-07-17
 
 ## Context
 

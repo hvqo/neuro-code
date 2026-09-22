@@ -1,6 +1,8 @@
 # ADR 0091: Explicit and default-disabled context-compaction trigger
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0091-explicit-context-compaction-trigger.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: application memory and future Runtime integration boundary
 

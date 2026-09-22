@@ -3712,6 +3712,52 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(denial[0].content, "permission denied: not now")
             self.assertEqual(observer.capture_roots, [])
 
+    async def test_model_supplied_intent_reaches_the_approval_request_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "note.txt"
+            target.write_text("original", encoding="utf-8")
+            provider = ScriptedProvider(
+                (
+                    (
+                        ModelTextDelta("I will update the note."),
+                        ModelToolCall(
+                            ToolCall(
+                                "edit",
+                                "search_replace",
+                                {
+                                    "path": "note.txt",
+                                    "old": "original",
+                                    "new": "changed",
+                                    "intent": "把 note.txt 的内容改为 changed",
+                                },
+                            )
+                        ),
+                        ModelCompleted("tool_calls"),
+                    ),
+                    (ModelTextDelta("Done."), ModelCompleted("stop")),
+                )
+            )
+            approver = ImmediateApprover(PermissionApproval.allow_once())
+            runtime = AgentRuntime(
+                provider=provider,
+                tools=default_tool_registry(),
+                workspace_change_observer=EmptyWorkspaceChangeObserver(),
+                permissions=PermissionManager(interactive=True),
+                tool_context=ToolContext(root),
+                approver=approver,
+            )
+
+            result = await runtime.run("Edit note.txt")
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "changed")
+            self.assertEqual(len(approver.requests), 1)
+            self.assertEqual(approver.requests[0].intent, "把 note.txt 的内容改为 changed")
+            requested = next(
+                event for event in result.events if event.kind is AgentEventKind.TOOL_REQUESTED
+            )
+            self.assertNotIn("intent", requested.data["arguments"])
+
     async def test_cancelling_an_approval_wait_never_starts_the_tool(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -4538,6 +4584,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     "execution_status": "budget_limited",
                     "execution_reason": "model_call_budget",
                     "recoverable": True,
+                    "execution_detail": None,
                 },
             )
             kinds = [event.kind for event in result.events]
@@ -5392,6 +5439,10 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         runtime.set_interaction_mode(InteractionMode.AUTO)
         self.assertEqual(permissions.mode, PermissionMode.ACCEPT_EDITS)
         self.assertFalse(runtime.auto_mode_unrestricted)
+
+        runtime.set_interaction_mode(InteractionMode.AUTO, unrestricted_auto=True)
+        self.assertEqual(permissions.mode, PermissionMode.BYPASS)
+        self.assertTrue(runtime.auto_mode_unrestricted)
 
         explicit = PermissionManager(mode=PermissionMode.BYPASS, interactive=True)
         explicit_runtime = AgentRuntime(

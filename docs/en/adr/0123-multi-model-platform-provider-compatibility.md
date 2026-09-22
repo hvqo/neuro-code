@@ -1,5 +1,7 @@
 # ADR 0123: Multi-model platform provider compatibility
 
+[简体中文](../../zh-CN/adr/0123-multi-model-platform-provider-compatibility.md) · **English**
+
 - Status: Accepted; P3B vertical slice
 - Date: 2026-08-20
 - Scope: Volcengine Ark, Baidu Qianfan, Alibaba Model Studio / Bailian, and Tencent TokenHub

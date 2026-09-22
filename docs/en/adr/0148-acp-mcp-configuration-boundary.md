@@ -1,5 +1,7 @@
 # ADR 0148: ACP MCP Configuration Boundary
 
+[简体中文](../../zh-CN/adr/0148-acp-mcp-configuration-boundary.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-30
 - Scope: fourth structural slice of V1 Interface Boundary Consolidation

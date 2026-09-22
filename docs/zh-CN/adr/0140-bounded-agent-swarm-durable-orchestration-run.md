@@ -1,6 +1,8 @@
 # ADR 0140：有界 Agent Swarm / 持久化编排运行
 
-- 状态：作为显式内部 P0 vertical slice 已实现；最终验证记录在 PR #67 CI 中，live/paid provider validation 仍不在范围内
+[English](../../en/adr/0140-bounded-agent-swarm-durable-orchestration-run.md) · **简体中文**
+
+- 状态：已接受；作为显式内部 P0 vertical slice 已实现；最终验证记录在 PR #67 CI 中，live/paid provider validation 仍不在范围内
 - 日期：2026-08-27
 - 范围：一个有界 Planner → Leader → Task DAG → Writable worker 编排运行，最多使用一个既有 DAG Replan successor
 - 依赖：ADR 0131、ADR 0132、ADR 0133、ADR 0134、ADR 0135、ADR 0136、ADR 0137、ADR 0138 与 ADR 0139

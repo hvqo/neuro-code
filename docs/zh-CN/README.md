@@ -11,6 +11,23 @@ Neuro Code 是一个 Python 原生的终端 Coding Agent。它通过模型驱动
 
 命名的 provider profile 和持久会话，让工作流可以在受支持的模型服务之间灵活切换，而不必将运行时绑定到单一托管 provider。
 
+> **本文与英文版的关系**
+>
+> 本页是**产品概览**；英文版 [`README.md`](../../README.md) 同时还是**完整使用手册**，
+> 以下专题目前**只在英文版**中提供，本页不重复其内容：
+>
+> - 安装与启动细节：`Install and launch`
+> - 开发环境与本地验证：`Development`
+> - 完整的 TUI 使用说明（快捷键、设置页、会话管理、工具卡片）：`Interactive TUI`
+> - 受管后台命令与唤醒策略：`Managed background commands`
+> - OS 沙箱 profile 的逐平台边界：`Operating-system sandbox profiles`
+> - provider profile、能力矩阵、故障转移与代理策略：`Model providers`
+> - 只读 LSP 语义导航：`Read-only LSP semantic navigation`
+> - ACP v1 适配器的能力与限制：`Partial ACP v1 stdio`
+>
+> 若要了解某项能力**支持到什么程度、明确不支持什么**，请直接查
+> [兼容性矩阵](compatibility-matrix.md)（中英内容一致度约 98%）。
+
 <p align="center">
   <img src="../NeuroCode.png" alt="Neuro Code 终端界面" width="90%">
 </p>

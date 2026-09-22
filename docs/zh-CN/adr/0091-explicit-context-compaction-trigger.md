@@ -1,5 +1,7 @@
 # ADR 0091：显式且默认关闭的上下文压缩触发
 
+[English](../../en/adr/0091-explicit-context-compaction-trigger.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：应用层记忆与未来 Runtime 接入边界

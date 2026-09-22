@@ -1,5 +1,7 @@
 # ADR 0095：显式 Runtime 压缩接缝
 
+[English](../../en/adr/0095-explicit-runtime-compaction-seam.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：`AgentRuntime` application facade

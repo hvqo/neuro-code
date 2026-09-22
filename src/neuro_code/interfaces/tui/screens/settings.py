@@ -6,9 +6,11 @@ TUI 用户偏好设置屏幕.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from typing import ClassVar
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -24,11 +26,13 @@ from neuro_code.application.ports.provider_settings import (
 from neuro_code.domain.background_tasks.models import BackgroundTaskWakePolicy
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
+from neuro_code.interfaces.tui.screens.agent_preferences import PREFERENCE_GROUPS
 from neuro_code.interfaces.tui.state import _ERROR_MARK
 from neuro_code.interfaces.tui.text import language_name, ui_text
-from neuro_code.interfaces.tui.theme import ERROR_TEXT_STYLE
+from neuro_code.interfaces.tui.theme import ERROR_TEXT_STYLE, theme_style
 from neuro_code.interfaces.tui.widgets import MenuOptionButton
 from neuro_code.shared.ui_language import UiLanguage
+from neuro_code.shared.ui_theme import UiTheme
 
 
 class SettingsScreen(ModalScreen[str | None]):
@@ -37,49 +41,39 @@ class SettingsScreen(ModalScreen[str | None]):
     一级设置导航;详细表单位于子界面."""
 
     CSS = """
-    SettingsScreen {
-        align: center middle;
-        background: $background 85%;
-    }
-
+    SettingsScreen { align: center middle; background: $modal-overlay 25%; }
     #settings-dialog {
-        width: 82%;
-        max-width: 88;
-        height: auto;
-        max-height: 85%;
-        padding: $space-2 $space-3;
-        border: solid $border;
-        background: $surface;
+        width: 94%; max-width: 132; height: 90%;
+        padding: 1 2; border: round $border; background: $surface;
     }
-
-    #settings-title {
-        text-style: bold;
-        color: $text-primary;
-        margin-bottom: $space-1;
+    #settings-title { text-style: bold; color: $text-primary; height: 1; }
+    #settings-description, #settings-help { color: $text-muted; height: auto; }
+    #settings-search { width: 100%; margin: 1 0; }
+    #settings-body { height: 1fr; }
+    #settings-navigation { width: 24; height: 1fr; margin-right: 3; padding-right: 1; border-right: solid $border; }
+    #settings-navigation Button {
+        width: 100%; min-width: 0; height: 3; border: none;
+        background: $surface; color: $text-muted; content-align: left middle;
     }
-
-    #settings-description {
-        color: $text-muted;
-        margin-bottom: $space-1;
+    #settings-navigation Button.active, #settings-navigation Button:focus {
+        background: $boost; color: $text-primary; text-style: bold;
     }
-
-    #settings-categories {
-        height: auto;
-        max-height: 18;
-    }
-
-    #settings-categories MenuOptionButton {
-        width: 100%;
-        height: 3;
-        margin-bottom: $space-0;
-        content-align: left middle;
-    }
-
-    #settings-help {
-        color: $text-muted;
-    }
+    #settings-categories { width: 1fr; height: 1fr; }
+    .settings-group { height: auto; margin-bottom: 2; padding: 1 2; background: $boost 35%; }
+    .settings-group-title { color: $text-primary; text-style: bold; margin: 0 1 1 1; }
+    .settings-entry { height: auto; padding: 1 0; border-top: solid $border; }
+    .settings-entry MenuOptionButton { width: 100%; height: 2; content-align: left middle; background: transparent; }
+    .settings-entry MenuOptionButton:focus { background: $surface; }
+    .settings-entry-description { color: $text-muted; height: auto; margin: 0 1; }
+    #settings-empty { color: $text-muted; margin: 1; height: auto; }
+    #settings-help { margin-top: 1; }
+    SettingsScreen.compact #settings-dialog { width: 100%; height: 100%; padding: 0 1; }
+    SettingsScreen.compact #settings-navigation { display: none; }
+    SettingsScreen.compact #settings-description { display: none; }
+    SettingsScreen.compact .settings-group { padding: 1; }
     """
     BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("ctrl+f", "search", "Search", show=False),
         Binding("escape", "cancel", "Cancel", show=False),
         Binding("ctrl+c", "cancel", "Cancel", show=False),
     ]
@@ -92,6 +86,10 @@ class SettingsScreen(ModalScreen[str | None]):
         provider_settings_available: bool,
         reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH,
         interaction_mode: InteractionMode = InteractionMode.NORMAL,
+        permission_level: str = "ask",
+        ui_theme: UiTheme = UiTheme.PORCELAIN,
+        initial_category: str | None = None,
+        provider_settings: ManagedProviderSettings | None = None,
     ) -> None:
         super().__init__()
         self.selected = selected
@@ -99,81 +97,231 @@ class SettingsScreen(ModalScreen[str | None]):
         self.provider_settings_available = provider_settings_available
         self.reasoning_effort = reasoning_effort
         self.interaction_mode = interaction_mode
+        self.permission_level = permission_level
+        self.ui_theme = ui_theme
+        self.provider_settings = provider_settings
+        self._initial_category = initial_category
+        self._group = "all"
+
+    GROUPS: ClassVar[dict[str, tuple[str, ...]]] = {
+        "appearance": ("language", "theme", "input"),
+        "connection": ("providers", "model-requests", "network"),
+        "agent": ("agent-reasoning", "agent-interaction-mode", "execution", "verification"),
+        "tools": ("web-tools", "language-tools"),
+        "security": ("agent-permissions", "tool-intent"),
+        "background": ("background-wake", "wake-limits", "notifications"),
+        "context": ("context",),
+        "advanced": ("preferences-overview",),
+    }
+
+    def _entries(self) -> dict[str, tuple[str, str]]:
+        entries = {
+            "language": (
+                "settings.category.language.label",
+                language_name(self.selected, in_language=self.language),
+            ),
+            "theme": (
+                "settings.theme.title",
+                ui_text(self.language, f"settings.theme.{self.ui_theme.value}"),
+            ),
+            "providers": (
+                "settings.category.providers.label",
+                ui_text(self.language, "settings.category.providers.value"),
+            ),
+            "network": (
+                "settings.category.network.label",
+                ui_text(self.language, "settings.category.network.value"),
+            ),
+            "agent-reasoning": (
+                "settings.category.agent_reasoning.label",
+                self.reasoning_effort.value,
+            ),
+            "agent-interaction-mode": (
+                "settings.category.agent_interaction_mode.label",
+                self.interaction_mode.value,
+            ),
+            "agent-permissions": (
+                "settings.category.agent_permissions.label",
+                ui_text(self.language, f"permission.value.{self.permission_level}"),
+            ),
+            "background-wake": (
+                "settings.category.background_wake.label",
+                ui_text(self.language, "settings.category.background_wake.value"),
+            ),
+        }
+
+        for category in PREFERENCE_GROUPS:
+            entries[category] = (
+                f"settings.extra.{category}",
+                ui_text(self.language, "settings.category.network.value"),
+            )
+
+        entries["preferences-overview"] = (
+            "settings.extra.preferences-overview",
+            ui_text(self.language, "settings.category.providers.value"),
+        )
+        settings = self.provider_settings
+        if settings is not None:
+            for category, value in (
+                (
+                    "providers",
+                    settings.default_provider or ui_text(self.language, "settings.no_default"),
+                ),
+                (
+                    "network",
+                    ui_text(self.language, f"network_settings.{settings.proxy_defaults.mode}"),
+                ),
+                (
+                    "background-wake",
+                    ui_text(
+                        self.language,
+                        f"background_wake_settings.{settings.background_task_wake_policy.value}",
+                    ),
+                ),
+            ):
+                entries[category] = (entries[category][0], value)
+        return entries
 
     def compose(self) -> ComposeResult:
-        language_summary = language_name(self.selected, in_language=self.language)
-        yield Vertical(
-            Label(ui_text(self.language, "settings.title"), id="settings-title"),
-            Static(ui_text(self.language, "settings.description"), id="settings-description"),
-            VerticalScroll(
-                MenuOptionButton(
-                    ui_text(self.language, "settings.category.language.label"),
-                    secondary=language_summary,
-                    id="settings-category-language",
-                ),
-                MenuOptionButton(
-                    ui_text(self.language, "settings.category.agent_reasoning.label"),
-                    secondary=ui_text(
-                        self.language,
-                        "settings.category.agent_reasoning.value",
-                        effort=self.reasoning_effort.value,
-                    ),
-                    id="settings-category-agent-reasoning",
-                ),
-                MenuOptionButton(
-                    ui_text(self.language, "settings.category.agent_interaction_mode.label"),
-                    secondary=ui_text(
-                        self.language,
-                        "settings.category.agent_interaction_mode.value",
-                        mode=self.interaction_mode.value,
-                    ),
-                    id="settings-category-agent-interaction-mode",
-                ),
-                MenuOptionButton(
-                    ui_text(self.language, "settings.category.providers.label"),
-                    secondary=ui_text(self.language, "settings.category.providers.value"),
-                    id="settings-category-providers",
-                    disabled=not self.provider_settings_available,
-                ),
-                MenuOptionButton(
-                    ui_text(self.language, "settings.category.network.label"),
-                    secondary=ui_text(self.language, "settings.category.network.value"),
-                    id="settings-category-network",
-                    disabled=not self.provider_settings_available,
-                ),
-                MenuOptionButton(
-                    ui_text(self.language, "settings.category.background_wake.label"),
-                    secondary=ui_text(
-                        self.language,
-                        "settings.category.background_wake.value",
-                    ),
-                    id="settings-category-background-wake",
-                    disabled=not self.provider_settings_available,
-                ),
-                id="settings-categories",
-            ),
-            Static(ui_text(self.language, "settings.help"), id="settings-help"),
-            id="settings-dialog",
-            classes="modal-dialog modal-m",
-        )
+        with Vertical(id="settings-dialog"):
+            yield Label(ui_text(self.language, "settings.title"), id="settings-title")
+            yield Static(ui_text(self.language, "settings.description"), id="settings-description")
+            yield Input(placeholder=ui_text(self.language, "settings.search"), id="settings-search")
+            with Horizontal(id="settings-body"):
+                with VerticalScroll(id="settings-navigation"):
+                    for group in ("all", *self.GROUPS):
+                        yield Button(
+                            ui_text(self.language, f"settings.group.{group}"),
+                            id=f"settings-nav-{group}",
+                            classes="active" if group == "appearance" else "",
+                        )
+                with VerticalScroll(id="settings-categories"):
+                    entries = self._entries()
+                    for group, categories in self.GROUPS.items():
+                        with Vertical(id=f"settings-group-{group}", classes="settings-group"):
+                            yield Label(
+                                ui_text(self.language, f"settings.group.{group}"),
+                                classes="settings-group-title",
+                            )
+                            for category in categories:
+                                key, value = entries[category]
+                                unavailable = (
+                                    category in {"providers", "network", "background-wake"}
+                                    and not self.provider_settings_available
+                                )
+                                with Vertical(
+                                    id=f"settings-entry-{category}", classes="settings-entry"
+                                ):
+                                    yield MenuOptionButton(
+                                        ui_text(self.language, key),
+                                        secondary=value,
+                                        id=f"settings-category-{category}",
+                                        disabled=unavailable,
+                                    )
+                                    description = ui_text(
+                                        self.language, f"settings.detail.{category}"
+                                    )
+                                    if unavailable:
+                                        description += " " + ui_text(
+                                            self.language, "settings.unavailable"
+                                        )
+                                    yield Static(description, classes="settings-entry-description")
+                    yield Static(ui_text(self.language, "settings.empty"), id="settings-empty")
+            yield Static(ui_text(self.language, "settings.help"), id="settings-help")
 
     def on_mount(self) -> None:
-        self.query_one("#settings-category-language", Button).focus()
+        self._group = (
+            next(
+                (
+                    group
+                    for group, entries in self.GROUPS.items()
+                    if self._initial_category in entries
+                ),
+                "appearance",
+            )
+            if self.app.size.width >= 88
+            else "all"
+        )
+        self.set_class(self.app.size.width < 88, "compact")
+        self._filter_entries()
+        category = self._initial_category
+        if category is not None and category in self._entries():
+            self.query_one(f"#settings-category-{category}", Button).focus()
+        else:
+            self.query_one("#settings-search", Input).focus()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.set_class(event.size.width < 88, "compact")
+        if self.is_mounted and event.size.width < 88:
+            self._group = "all"
+            self._filter_entries()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "settings-search":
+            self._filter_entries()
+
+    def action_search(self) -> None:
+        self.query_one("#settings-search", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "settings-search":
+            return
+        event.stop()
+        for group, categories in self.GROUPS.items():
+            if not self.query_one(f"#settings-group-{group}").display:
+                continue
+            for category in categories:
+                entry = self.query_one(f"#settings-entry-{category}")
+                button = entry.query_one(Button)
+                if entry.display and not button.disabled:
+                    button.focus()
+                    return
+
+    def _filter_entries(self) -> None:
+        search = self.query_one("#settings-search", Input).value.casefold().strip()
+        count = 0
+        for group, categories in self.GROUPS.items():
+            visible = 0
+            for category in categories:
+                key, value = self._entries()[category]
+                terms = " ".join(
+                    (
+                        category,
+                        value,
+                        ui_text(self.language, key),
+                        ui_text(self.language, f"settings.group.{group}"),
+                        ui_text(self.language, f"settings.detail.{category}"),
+                    )
+                ).casefold()
+                match = (bool(search) or self._group in ("all", group)) and all(
+                    word in terms for word in search.split()
+                )
+                self.query_one(f"#settings-entry-{category}").display = match
+                visible += int(match)
+            self.query_one(f"#settings-group-{group}").display = visible > 0
+            count += visible
+        self.query_one("#settings-empty").display = count == 0
+        for button in self.query("#settings-navigation Button"):
+            button.set_class(button.id == f"settings-nav-{self._group}" and not search, "active")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        categories = {
-            "settings-category-language": "language",
-            "settings-category-agent-reasoning": "agent-reasoning",
-            "settings-category-agent-interaction-mode": "agent-interaction-mode",
-            "settings-category-providers": "providers",
-            "settings-category-network": "network",
-            "settings-category-background-wake": "background-wake",
-        }
-        category = categories.get(event.button.id or "")
-        if category is not None:
-            self.dismiss(category)
+        identifier = event.button.id or ""
+        if identifier.startswith("settings-nav-"):
+            event.stop()
+            self._group = identifier.removeprefix("settings-nav-")
+            self.query_one("#settings-search", Input).value = ""
+            self._filter_entries()
+            self.query_one("#settings-categories", VerticalScroll).scroll_home(animate=False)
+        elif identifier.startswith("settings-category-"):
+            event.stop()
+            self.dismiss(identifier.removeprefix("settings-category-"))
 
     def action_cancel(self) -> None:
+        search = self.query_one("#settings-search", Input)
+        if search.value:
+            search.value = ""
+            search.focus()
+            return
         self.dismiss(None)
 
 
@@ -185,7 +333,7 @@ class LanguageSettingsScreen(ModalScreen[UiLanguage | None]):
     CSS = """
     LanguageSettingsScreen {
         align: center middle;
-        background: $background 85%;
+        background: $modal-overlay 25%;
     }
 
     #language-settings-dialog {
@@ -193,7 +341,7 @@ class LanguageSettingsScreen(ModalScreen[UiLanguage | None]):
         max-width: 72;
         height: auto;
         padding: $space-2 $space-3;
-        border: solid $border;
+        border: round $border;
         background: $surface;
     }
 
@@ -300,6 +448,143 @@ class LanguageSettingsScreen(ModalScreen[UiLanguage | None]):
         self.dismiss(None)
 
 
+class ThemeSettingsScreen(ModalScreen[UiTheme | None]):
+    """Choose a light or dark palette with a separate current-choice marker.
+
+    选择浅色或深色主题,并独立标记当前选项。"""
+
+    CSS = """
+    ThemeSettingsScreen {
+        align: center middle;
+        background: $modal-overlay 25%;
+    }
+
+    #theme-settings-dialog {
+        width: 76%;
+        max-width: 72;
+        height: 85%;
+        max-height: 42;
+        padding: 1 2;
+        border: round $border;
+        background: $surface;
+    }
+
+    #theme-settings-title {
+        text-style: bold;
+        color: $text-primary;
+        margin-bottom: 1;
+    }
+
+    #theme-settings-description,
+    #theme-settings-help {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #settings-themes {
+        height: 1fr;
+        scrollbar-size-vertical: 1;
+        margin-bottom: 1;
+    }
+
+    #theme-settings-actions { height: auto; }
+
+    #settings-themes MenuOptionButton {
+        width: 100%;
+        height: 2;
+        min-height: 2;
+        border: none;
+        padding: 0 1;
+    }
+
+    #theme-settings-actions {
+        align-horizontal: right;
+    }
+    """
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "cancel", "Back", show=False),
+        Binding("ctrl+c", "cancel", "Back", show=False),
+    ]
+
+    def __init__(
+        self,
+        selected: UiTheme,
+        *,
+        language: UiLanguage,
+        preview: Callable[[UiTheme], None] | None = None,
+    ) -> None:
+        super().__init__()
+        self.selected = selected
+        self.language = language
+        self.preview = preview
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Label(
+                ui_text(self.language, "settings.theme.title"),
+                id="theme-settings-title",
+            ),
+            Static(
+                ui_text(self.language, "settings.theme.description"),
+                id="theme-settings-description",
+            ),
+            VerticalScroll(
+                *(
+                    MenuOptionButton(
+                        ui_text(self.language, f"settings.theme.{choice.value}"),
+                        secondary=ui_text(self.language, f"settings.theme.{choice.value}.detail"),
+                        id=f"settings-theme-{choice.value}",
+                        selected=self.selected is choice,
+                    )
+                    for choice in UiTheme
+                ),
+                id="settings-themes",
+            ),
+            Static(
+                ui_text(self.language, "settings.theme.help"),
+                id="theme-settings-help",
+            ),
+            Horizontal(
+                Button(ui_text(self.language, "settings.back"), id="theme-settings-back"),
+                id="theme-settings-actions",
+            ),
+            id="theme-settings-dialog",
+            classes="modal-dialog modal-s",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one(f"#settings-theme-{self.selected.value}", Button).focus()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        if self.preview is not None:
+            for choice in UiTheme:
+                if event.widget.id == f"settings-theme-{choice.value}":
+                    self.preview(choice)
+                    break
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in {"up", "down"}:
+            event.stop()
+            event.prevent_default()
+            choices = list(self.query("#settings-themes MenuOptionButton"))
+            if self.focused in choices:
+                index = choices.index(self.focused)
+                choices[(index + (1 if event.key == "down" else -1)) % len(choices)].focus()
+            else:
+                choices[0].focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        for choice in UiTheme:
+            if event.button.id == f"settings-theme-{choice.value}":
+                self.dismiss(choice)
+                return
+        if event.button.id == "theme-settings-back":
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
     """Edit the user-wide proxy default independently of provider credentials.
 
@@ -308,7 +593,7 @@ class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
     CSS = """
     NetworkProxySettingsScreen {
         align: center middle;
-        background: $background 85%;
+        background: $modal-overlay 25%;
     }
 
     #network-settings-dialog {
@@ -316,7 +601,7 @@ class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
         max-width: 88;
         height: auto;
         padding: $space-2 $space-3;
-        border: solid $border;
+        border: round $border;
         background: $surface;
     }
 
@@ -326,18 +611,36 @@ class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
         margin-bottom: 1;
     }
 
-    #network-settings-description,
-    #network-settings-hint,
-    #network-settings-error {
+    #network-settings-description {
         color: $text-muted;
         margin-bottom: 1;
     }
 
+    #network-settings-dialog Label {
+        text-style: bold;
+        color: $text-primary;
+        margin-top: 2;
+        margin-bottom: 1;
+    }
+
+    #network-settings-hint {
+        color: $text-muted;
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+
     #network-settings-error {
+        margin-top: 1;
+        margin-bottom: 1;
         padding-left: 1;
         border-left: tall $border-focus;
         color: $text-primary;
         text-style: bold;
+    }
+
+    #network-settings-error.empty {
+        padding-left: 0;
+        border-left: none;
     }
 
     #network-settings-modes,
@@ -350,12 +653,27 @@ class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
         margin-right: 1;
     }
 
+    #network-settings-modes Button:last-of-type {
+        margin-right: 0;
+    }
+
+    #network-settings-proxy-env {
+        margin-top: 1;
+    }
+
     #network-settings-actions {
         align-horizontal: right;
+        border-top: solid $border;
+        padding-top: 1;
+        margin-top: 1;
     }
 
     #network-settings-actions Button {
-        margin-left: 1;
+        margin-left: 2;
+    }
+
+    #network-settings-actions Button:first-of-type {
+        margin-left: 0;
     }
     """
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -409,7 +727,7 @@ class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
                 disabled=self.provider_settings.proxy_defaults.mode != "explicit",
             ),
             Static("", id="network-settings-hint"),
-            Static("", id="network-settings-error"),
+            Static("", id="network-settings-error", classes="empty"),
             Horizontal(
                 Button(ui_text(self.language, "settings.back"), id="network-settings-back"),
                 Button(
@@ -467,8 +785,10 @@ class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
             )
             settings = await self.provider_settings_store.save_proxy_defaults(proxy_defaults)
         except Exception as error:
-            self.query_one("#network-settings-error", Static).update(
-                Text(f"{_ERROR_MARK} {error}", style=ERROR_TEXT_STYLE)
+            error_widget = self.query_one("#network-settings-error", Static)
+            error_widget.set_class(False, "empty")
+            error_widget.update(
+                Text(f"{_ERROR_MARK} {error}", style=theme_style(self, ERROR_TEXT_STYLE))
             )
             return
         self.dismiss(settings)
@@ -485,7 +805,7 @@ class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
     CSS = """
     BackgroundWakeSettingsScreen {
         align: center middle;
-        background: $background 85%;
+        background: $modal-overlay 25%;
     }
 
     #background-wake-settings-dialog {
@@ -493,7 +813,7 @@ class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
         max-width: 88;
         height: auto;
         padding: $space-2 $space-3;
-        border: solid $border;
+        border: round $border;
         background: $surface;
     }
 
@@ -503,18 +823,36 @@ class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
         margin-bottom: 1;
     }
 
-    #background-wake-settings-description,
-    #background-wake-settings-hint,
-    #background-wake-settings-error {
+    #background-wake-settings-description {
         color: $text-muted;
         margin-bottom: 1;
     }
 
+    #background-wake-settings-dialog Label {
+        text-style: bold;
+        color: $text-primary;
+        margin-top: 2;
+        margin-bottom: 1;
+    }
+
+    #background-wake-settings-hint {
+        color: $text-muted;
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+
     #background-wake-settings-error {
+        margin-top: 1;
+        margin-bottom: 1;
         padding-left: 1;
         border-left: tall $border-focus;
         color: $text-primary;
         text-style: bold;
+    }
+
+    #background-wake-settings-error.empty {
+        padding-left: 0;
+        border-left: none;
     }
 
     #background-wake-settings-modes,
@@ -527,12 +865,23 @@ class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
         margin-right: 1;
     }
 
+    #background-wake-settings-modes Button:last-of-type {
+        margin-right: 0;
+    }
+
     #background-wake-settings-actions {
         align-horizontal: right;
+        border-top: solid $border;
+        padding-top: 1;
+        margin-top: 1;
     }
 
     #background-wake-settings-actions Button {
-        margin-left: 1;
+        margin-left: 2;
+    }
+
+    #background-wake-settings-actions Button:first-of-type {
+        margin-left: 0;
     }
     """
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -576,7 +925,7 @@ class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
                 id="background-wake-settings-modes",
             ),
             Static("", id="background-wake-settings-hint"),
-            Static("", id="background-wake-settings-error"),
+            Static("", id="background-wake-settings-error", classes="empty"),
             Horizontal(
                 Button(ui_text(self.language, "settings.back"), id="background-wake-settings-back"),
                 Button(
@@ -606,8 +955,10 @@ class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
                     self._active_policy
                 )
             except Exception as error:
-                self.query_one("#background-wake-settings-error", Static).update(
-                    Text(f"{_ERROR_MARK} {error}", style=ERROR_TEXT_STYLE)
+                error_widget = self.query_one("#background-wake-settings-error", Static)
+                error_widget.set_class(False, "empty")
+                error_widget.update(
+                    Text(f"{_ERROR_MARK} {error}", style=theme_style(self, ERROR_TEXT_STYLE))
                 )
                 return
             self.dismiss(settings)

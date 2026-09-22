@@ -352,8 +352,15 @@ class AgentRuntime:
     def set_plan_comments(self, comments: Sequence[PlanComment]) -> None:
         self._context_builder.set_plan_comments(comments)
 
-    def set_interaction_mode(self, mode: InteractionMode) -> None:
+    def set_interaction_mode(
+        self,
+        mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
+    ) -> None:
         self._context_builder.set_interaction_mode(mode)
+        if unrestricted_auto and mode is InteractionMode.AUTO:
+            self._auto_permission_mode = PermissionMode.BYPASS
         self._apply_interaction_mode_permissions()
 
     def replace_external_tools(

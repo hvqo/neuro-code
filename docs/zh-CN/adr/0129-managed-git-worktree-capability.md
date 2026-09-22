@@ -1,6 +1,8 @@
 # ADR 0129：由应用拥有的受管 Git Worktree 能力
 
-- 状态：首个本地生命周期切片已接受
+[English](../../en/adr/0129-managed-git-worktree-capability.md) · **简体中文**
+
+- 状态：已接受（首个本地生命周期切片）
 - 日期：2026-08-22
 - 范围：本地 Git worktree 创建、ownership、检查、协调和安全移除
 

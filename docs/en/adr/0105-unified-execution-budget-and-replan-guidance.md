@@ -1,5 +1,10 @@
 # ADR 0105: Unified ordinary execution budget and transient replan guidance
 
+[简体中文](../../zh-CN/adr/0105-unified-execution-budget-and-replan-guidance.md) · **English**
+
+- Status: Accepted
+- Date: 2026-08-09
+
 ## Context
 
 The public `--max-steps` option and the Runtime hard model-step limit used one
@@ -14,9 +19,11 @@ to change strategy.
 - `ExecutionBudget` remains the only domain budget value.
 - `neuro_code.application.execution_policy` owns the named `normal` and `deep`
   product profiles. They resolve respectively to 48/48/192 and 96/96/384
-  model-call/tool-round/tool-call limits. Read-only tools inherit the wider
-  per-tool ceiling; known side-effecting/state-transition tools receive
-  stricter per-tool limits.
+  model-call/tool-round/tool-call limits. Read-only tools and known
+  side-effecting tools share the ordinary per-tool ceiling; only state-transition
+  tools keep a stricter half-turn limit. A single turn is therefore bounded by
+  the global model-call and tool-call caps, not by an extra fraction for shell or
+  edit tools.
 - `ApplicationSettings`, CLI/TUI startup, ACP startup, Composition,
   `AgentRuntime`, `AgentLoopRunner`, and `AgentExecutionSupervisor` use the same
   resolved value. `--max-steps N` remains a compatibility option, but now maps

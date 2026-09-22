@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0009-xai-hosted-tools.md) · **English**
 
-## Status
-
-Accepted.
+- Status: Accepted
+- Date: 2026-07-17
 
 Amended by [ADR 0010](0010-provider-profiles-and-cc-switch.md): configuration
 now uses an `openai-responses` profile with `dialect = "xai"`; hosted-tool

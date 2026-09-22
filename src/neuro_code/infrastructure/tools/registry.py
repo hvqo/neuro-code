@@ -16,6 +16,7 @@ is the only registry owner.
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable
+from typing import Any, Final
 
 from neuro_code.application.ports.client_filesystem import ClientFileSystem
 from neuro_code.application.ports.client_terminal import ClientTerminal
@@ -30,6 +31,37 @@ from neuro_code.application.ports.working_set import WorkingSetController
 from neuro_code.domain.sandbox.models import SandboxProfile
 from neuro_code.domain.tools import ToolDefinition
 from neuro_code.shared.errors import ToolError
+
+_TOOL_INTENT_PROPERTY: Final[dict[str, Any]] = {
+    "type": "string",
+    "description": (
+        "One short sentence, in the user's language, explaining what this call does and why. "
+        "It is shown to the user in the approval prompt and is never executed or forwarded "
+        "to the program."
+    ),
+}
+
+
+def _with_tool_intent(tool: Tool) -> ToolDefinition:
+    """Add the optional intent field to one built-in side-effecting tool.
+
+    为内置副作用工具添加可选的意图字段."""
+
+    definition = tool.definition
+    if not tool.side_effecting:
+        return definition
+    properties = dict(definition.input_schema.get("properties") or {})
+    if "intent" in properties:
+        return definition
+    properties["intent"] = dict(_TOOL_INTENT_PROPERTY)
+    schema = dict(definition.input_schema)
+    schema["properties"] = properties
+    return ToolDefinition(
+        definition.name,
+        definition.description,
+        schema,
+        definition.execution_mode,
+    )
 
 
 class ToolRegistry:
@@ -79,7 +111,15 @@ class ToolRegistry:
         return self._tools.get(name)
 
     def definitions(self) -> tuple[ToolDefinition, ...]:
-        return tuple(tool.definition for tool in self._tools.values())
+        """Advertise the provider-facing catalog, including the intent field.
+
+        返回面向 Provider 的工具目录,其中包含意图字段.
+        """
+
+        return tuple(
+            tool.definition if name in self._external_names else _with_tool_intent(tool)
+            for name, tool in self._tools.items()
+        )
 
     def names(self) -> tuple[str, ...]:
         return tuple(self._tools)
