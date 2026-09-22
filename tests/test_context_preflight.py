@@ -48,6 +48,11 @@ class _EmptyToolCollection:
     def definitions(self) -> tuple[ToolDefinition, ...]:
         return ()
 
+    def has_synthetic_intent(self, name: str) -> bool:
+        """No tool here carries Neuro Code's synthetic intent field."""
+
+        return False
+
 
 class _ScriptedProvider(ModelProvider):
     provider_name = "fixture"
@@ -105,6 +110,11 @@ class _StaticToolCollection:
 
     def definitions(self) -> tuple[ToolDefinition, ...]:
         return self._definitions
+
+    def has_synthetic_intent(self, name: str) -> bool:
+        """No tool here carries Neuro Code's synthetic intent field."""
+
+        return False
 
 
 class ContextPreflightTests(unittest.TestCase):

@@ -9,6 +9,7 @@ from neuro_code.domain.permissions.bash_commands import (
     BashCommandSegment,
     analyze_bash_command,
     classify_bash_command_family,
+    classify_bash_read_only_inspection,
     validate_verification_command,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "BashCommandSegment",
     "analyze_bash_command",
     "classify_bash_command_family",
+    "classify_bash_read_only_inspection",
     "validate_verification_command",
 ]

@@ -835,6 +835,8 @@ class NeuroCodeApp(
         self._queued_interjections: deque[str] = deque()
         self._active_prompt: str | None = None
         self._pending_attachment_paths: tuple[str, ...] = ()
+        self._submitted_attachment_paths: tuple[str, ...] = ()
+        self._clipboard_temp_paths: set[Path] = set()
         self._pending_attachments: tuple[Attachment, ...] = ()
         self._active_prompt_entry_index: int | None = None
         self._turn_pristine_rewound = False
@@ -1034,6 +1036,9 @@ class NeuroCodeApp(
 
     def on_unmount(self) -> None:
         self._model_loading = False
+        # Release any clipboard temp file the interface still owns so teardown
+        # never strands one.
+        self._release_clipboard_resources()
         if self._approval_controller is not None:
             self._approval_controller.set_handler(None)
         self.console.pop_theme()

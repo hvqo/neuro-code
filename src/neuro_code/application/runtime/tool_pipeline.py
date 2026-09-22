@@ -82,6 +82,7 @@ from neuro_code.application.runtime.verification import (
 from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
 from neuro_code.domain.conversation.messages import Message, Role, SessionItem, ToolCall
 from neuro_code.domain.execution import ProgressKind, VerificationRequirementsSnapshot
+from neuro_code.domain.permissions import classify_bash_read_only_inspection
 from neuro_code.domain.plans import SessionPlan
 from neuro_code.domain.tools import (
     ToolExecutionResult,
@@ -112,6 +113,35 @@ _SUPERVISION_METADATA_KEYS = frozenset(
     }
 )
 _BACKGROUND_STATE_TOOL_NAMES = frozenset({"kill_task", "task_output"})
+_BASH_TOOL_NAME = "bash"
+
+
+def _evidence_worthy_observation(
+    tool_name: str,
+    arguments: Mapping[str, Any],
+    tool: Tool,
+) -> bool:
+    """Decide whether one successful observation counts as trusted evidence.
+
+    A read-only tool stays evidence.  A side-effecting-capable tool only counts
+    when the canonical Bash classifier proves the call was trusted read-only
+    repository inspection (or an already-recognized test/static-check family).
+    Otherwise non-empty output alone must never look like progress, so arbitrary
+    output from a genuinely mutating tool cannot bypass no-progress supervision.
+
+    只读工具仍然是证据.具有副作用能力的工具只有在规范 Bash 分类器证明该调用是可信的
+    只读仓库检查(或已识别的测试/静态检查族)时才算证据;否则仅凭非空输出不得视为进展,
+    真正变更型工具的任意输出无法绕过无进展监督.
+    """
+
+    if not tool.side_effecting:
+        return True
+    if tool_name != _BASH_TOOL_NAME:
+        return False
+    command = arguments.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return False
+    return classify_bash_read_only_inspection(command)
 
 
 class ToolObservationBuilder:
@@ -268,11 +298,17 @@ class ToolObservationBuilder:
             progress_kind = ProgressKind.EXTERNAL_STATE
         elif verification is not None:
             progress_kind = ProgressKind.VERIFICATION
-        elif not result.is_error and result.content and tool is not None:
-            # A successful non-empty result is evidence even from a
-            # side-effecting tool: shell inspection (grep/cat/python -c) makes
-            # no workspace change, but novel output is real progress. Exact
-            # repeats stay caught by the repetition detectors.
+        elif (
+            not result.is_error
+            and result.content
+            and tool is not None
+            and _evidence_worthy_observation(tool_name, arguments, tool)
+        ):
+            # Read-only tools stay evidence.  Bash can also be evidence, but only
+            # when the canonical classifier proves the call was trusted read-only
+            # repository inspection: non-empty output from a mutating or unknown
+            # shell shape must not look like progress.  Exact repeats stay caught
+            # by the repetition detectors.
             progress_kind = ProgressKind.EVIDENCE
         else:
             progress_kind = ProgressKind.NONE
@@ -512,8 +548,16 @@ class ToolExecutor:
         model_result_estimated_token_limit: int | None = None,
         intent: str | None = None,
     ) -> ToolExecutionObservation | None:
-        call, model_intent = _split_tool_intent(call)
-        intent = model_intent or intent
+        # Only strip the intent argument when Neuro Code itself injected that
+        # synthetic field into this tool's provider-facing schema.  External and
+        # caller-owned tools are authoritative over their own schema, so a real
+        # `intent` parameter of theirs must reach the tool unchanged.
+        #
+        # 仅当 Neuro Code 自己把合成字段注入该工具的 Provider schema 时才剥离 intent 参数.
+        # 外部/调用方拥有的工具对自己的 schema 拥有权威,其真实的 intent 参数必须原样传给工具.
+        if self._tools.has_synthetic_intent(call.name):
+            call, model_intent = _split_tool_intent(call)
+            intent = model_intent or intent
         resolved = False
         tool_requested_at = monotonic()
         workspace_before: WorkspaceChangeCheckpoint | None = None

@@ -14,6 +14,7 @@ from textual.widgets import Button
 
 from neuro_code.application.runtime.agent import AgentRunResult
 from neuro_code.application.sessions.attachments import (
+    MAX_IMAGE_ATTACHMENT_BYTES,
     Attachment,
     AttachmentError,
     build_attachments,
@@ -62,6 +63,14 @@ _BUDGET_REASON_TEXT_KEYS = {
     SupervisorReasonCode.TOTAL_TOKEN_BUDGET: "turn.budget_reason.total_token_budget",
     SupervisorReasonCode.CONTEXT_WINDOW_BUDGET: "turn.budget_reason.context_window_budget",
 }
+
+
+def _existing_paths(paths: Sequence[str]) -> tuple[str, ...]:
+    """Filter one attachment snapshot down to the paths still present.
+
+    将附件快照过滤为仍然存在的路径."""
+
+    return tuple(path for path in paths if os.path.exists(path))
 
 
 def _human_size(size_bytes: int) -> str:
@@ -139,6 +148,13 @@ class TurnControllerMixin(TuiAppControllerMixin):
         self._finalizing = False
         self._turn_usage_reported = False
         self._begin_pending_assistant()
+        # Remember what was submitted so a pristine rewind can re-queue it.  The
+        # owned clipboard temp files stay alive until the turn is durable, because
+        # a rewind would otherwise lose the only copy of a pasted image.
+        #
+        # 记住已提交的内容,以便原始回滚可以重新排队.拥有的剪贴板临时文件会保留到回合
+        # 持久化为止,否则回滚会丢失粘贴图片的唯一副本.
+        self._submitted_attachment_paths = tuple(self._pending_attachment_paths)
         self._clear_attachments()
         self._turn_worker = self.run_worker(
             self._run_prompt(composed_prompt, content_parts),
@@ -172,23 +188,58 @@ class TurnControllerMixin(TuiAppControllerMixin):
         prompt_widget.cursor_position = len(prompt_widget.value)
         prompt_widget.focus()
 
-    async def _add_attachments(self, paths: Sequence[str]) -> None:
-        """Validate and queue user attachments for the next message.
+    async def _add_attachments(self, paths: Sequence[str]) -> bool:
+        """Validate and queue attachments for the next message.
 
-        校验并暂存用户附件,用于下一条消息."""
+        Returns ``True`` only when every path was accepted, so a caller that owns
+        a temporary resource can report failure and release it.  A rejected
+        attachment never produces a success notice.
+
+        校验并暂存附件.仅当全部路径被接受时返回 ``True``,以便拥有临时资源的调用方
+        报告失败并释放资源;被拒绝的附件绝不产生成功提示.
+        """
 
         if self._turn_worker is not None and self._turn_worker.is_running:
             self._write_ui_entry("error", "turn.running")
-            return
+            return False
         combined = (*self._pending_attachment_paths, *paths)
         try:
             attachments = build_attachments(combined, workspace=self._cwd)
         except AttachmentError as error:
             self._write_ui_entry("error", "attachment.invalid", reason=str(error))
-            return
+            return False
         self._pending_attachment_paths = combined
         self._pending_attachments = attachments
         await self._refresh_attachment_tray()
+        return True
+
+    def _release_clipboard_temp(self, path: Path) -> None:
+        """Delete one TUI-owned clipboard temp file, idempotently and quietly.
+
+        Only resources this interface created are ever removed; user-supplied
+        attachment paths are never tracked, so they are never deleted.  Cleanup
+        errors are swallowed so they cannot mask the primary user-visible error.
+
+        幂等且静默地删除一个本界面拥有的剪贴板临时文件.只有本界面创建的资源会被删除;
+        用户提供的附件路径从不被跟踪,因此永不被删除.清理错误被吞掉,避免掩盖主要错误.
+        """
+
+        owned = self._clipboard_temp_paths
+        if path not in owned:
+            return
+        owned.discard(path)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            return
+
+    def _release_clipboard_resources(self) -> None:
+        """Release every clipboard temp file this interface still owns.
+
+        释放本界面仍拥有的全部剪贴板临时文件."""
+
+        for path in tuple(self._clipboard_temp_paths):
+            self._release_clipboard_temp(path)
 
     def _clear_attachments(self) -> None:
         self._pending_attachment_paths = ()
@@ -228,8 +279,10 @@ class TurnControllerMixin(TuiAppControllerMixin):
             return
         position = int(index)
         paths = list(self._pending_attachment_paths)
+        removed_path = paths[position]
         del paths[position]
         self._pending_attachment_paths = tuple(paths)
+        self._release_clipboard_temp(Path(removed_path))
         self._pending_attachments = tuple(
             attachment
             for position_, attachment in enumerate(self._pending_attachments)
@@ -262,11 +315,35 @@ class TurnControllerMixin(TuiAppControllerMixin):
             self._write_ui_entry("status", "clipboard.image_unavailable")
             await event.input.run_action("paste")
             return
+        if len(image.data) > MAX_IMAGE_ATTACHMENT_BYTES:
+            # Reject before creating any retained temporary resource.
+            #
+            # 在创建任何保留的临时资源之前先拒绝超限负载.
+            self._write_ui_entry(
+                "error",
+                "attachment.invalid",
+                reason=(
+                    f"image attachment is too large: clipboard "
+                    f"({len(image.data)} > {MAX_IMAGE_ATTACHMENT_BYTES} bytes)"
+                ),
+            )
+            return
         handle, raw_path = tempfile.mkstemp(prefix="clipboard-", suffix=".png")
-        with os.fdopen(handle, "wb") as stream:
-            stream.write(image.data)
         path = Path(raw_path)
-        await self._add_attachments([str(path)])
+        self._clipboard_temp_paths.add(path)
+        try:
+            with os.fdopen(handle, "wb") as stream:
+                stream.write(image.data)
+        except OSError as error:
+            self._release_clipboard_temp(path)
+            self._write_ui_entry("error", "attachment.invalid", reason=str(error))
+            return
+        if not await self._add_attachments([str(path)]):
+            # A rejected attachment must never be followed by a success notice.
+            #
+            # 被拒绝的附件之后绝不能出现成功提示.
+            self._release_clipboard_temp(path)
+            return
         self._write_ui_entry(
             "status",
             "clipboard.image_attached",
@@ -303,10 +380,46 @@ class TurnControllerMixin(TuiAppControllerMixin):
         prompt.cursor_position = len(prompt.value)
         self._write_ui_entry("status", "turn.interjections_restored", count=len(queued))
 
+    async def _restore_submitted_attachments(self) -> None:
+        """Re-queue the attachments of a rewound turn so nothing is lost.
+
+        将被回滚回合的附件重新排队,避免丢失."""
+
+        paths = self._submitted_attachment_paths
+        self._submitted_attachment_paths = ()
+        if not paths or self._pending_attachment_paths:
+            return
+        existing = _existing_paths(paths)
+        if not existing:
+            return
+        try:
+            attachments = build_attachments(existing, workspace=self._cwd)
+        except AttachmentError:
+            return
+        self._pending_attachment_paths = existing
+        self._pending_attachments = attachments
+        await self._refresh_attachment_tray()
+
+    def _finalize_attachment_resources(self) -> None:
+        """Release owned clipboard temp files once a turn no longer needs them.
+
+        A rewound turn deliberately keeps them so the restored draft can be
+        resent with its image intact.
+
+        回合不再需要时释放拥有的剪贴板临时文件;被回滚的回合刻意保留它们,以便恢复的
+        草稿可以连同图片一起重新发送.
+        """
+
+        if self._turn_pristine_rewound:
+            return
+        self._submitted_attachment_paths = ()
+        self._release_clipboard_resources()
+
     async def _restore_pristine_prompt(self) -> None:
         prompt_text = self._active_prompt
         if not prompt_text:
             return
+        await self._restore_submitted_attachments()
         entry_index = self._active_prompt_entry_index
         prompt = self._main_screen_query_one("#prompt", PromptInput)
         if not prompt.value:
@@ -337,6 +450,7 @@ class TurnControllerMixin(TuiAppControllerMixin):
             await self._run_agent_turn(
                 lambda: turn_service.run_turn(request, sink=self._handle_event)
             )
+            self._finalize_attachment_resources()
             return
         await self._run_agent_turn(
             lambda: self._runner.run(
@@ -349,6 +463,7 @@ class TurnControllerMixin(TuiAppControllerMixin):
                 **({"content_parts": content_parts} if content_parts else {}),
             )
         )
+        self._finalize_attachment_resources()
 
     async def _run_background_wake(self) -> None:
         await self._run_agent_turn(

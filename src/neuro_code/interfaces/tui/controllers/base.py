@@ -180,7 +180,9 @@ class TuiAppControllerMixin:
         _active_prompt_entry_index: int | None
         _pending_attachment_paths: tuple[str, ...]
         _pending_attachments: tuple[Attachment, ...]
+        _submitted_attachment_paths: tuple[str, ...]
         _clipboard_image_reader: ClipboardImageReader
+        _clipboard_temp_paths: set[Path]
         _turn_pristine_rewound: bool
         _pending_assistant: ConversationMessage | None
         _reasoning_announced: bool

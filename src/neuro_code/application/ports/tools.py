@@ -229,6 +229,14 @@ class ToolCollection(Protocol):
 
     def definitions(self) -> tuple[ToolDefinition, ...]: ...
 
+    def has_synthetic_intent(self, name: str) -> bool:
+        """Report whether this collection injected Neuro Code's synthetic intent field.
+
+        Only Neuro Code-owned tools may carry it; external/caller-owned tools are
+        authoritative over their own schema.
+        """
+        ...
+
 
 __all__ = [
     "MAX_TOOL_OUTPUT_ARTIFACT_BYTES",

@@ -510,6 +510,11 @@ class RuntimeParityAsyncTests(unittest.IsolatedAsyncioTestCase):
             def definitions(self) -> tuple[ToolDefinition, ...]:
                 return ()
 
+            def has_synthetic_intent(self, name: str) -> bool:
+                """No tool here carries Neuro Code's synthetic intent field."""
+
+                return False
+
         scheduler = ToolScheduler(Tools())
         self.assertEqual(await scheduler.run((), lambda call, isolated: asyncio.sleep(0)), ())
 
