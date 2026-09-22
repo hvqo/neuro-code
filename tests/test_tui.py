@@ -2069,10 +2069,17 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(80, 24)) as pilot:
             prompt = app.query_one("#prompt", PromptInput)
             prompt.post_message(events.Paste("first line\nsecond line\r\nthird line"))
-            await pilot.pause()
+            for _ in range(40):
+                await pilot.pause(0.01)
+                if prompt.value == "first line\nsecond line\nthird line":
+                    break
 
             self.assertEqual(prompt.value, "first line\nsecond line\nthird line")
             self.assertEqual(prompt.text.splitlines(), ["first line", "second line", "third line"])
+            for _ in range(40):
+                await pilot.pause(0.01)
+                if prompt.region.height > 1:
+                    break
             self.assertGreater(prompt.region.height, 1)
             self.assertLessEqual(prompt.region.height, 8)
 
@@ -4275,35 +4282,43 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(90, 24)) as pilot:
             prompt = app.query_one("#prompt", PromptInput)
             hints = app.query_one("#command-hints", Static)
+
+            async def wait_for_hints(condition) -> None:
+                for _ in range(40):
+                    await pilot.pause(0.01)
+                    if condition():
+                        return
+
             prompt.value = "/eff"
-            await pilot.pause()
+            await wait_for_hints(lambda: hints.display and "/effort LEVEL" in str(hints.renderable))
             self.assertTrue(hints.display)
             self.assertIn("/effort LEVEL", str(hints.renderable))
 
             await pilot.press("tab")
-            await pilot.pause()
+            await wait_for_hints(lambda: prompt.value == "/effort")
             self.assertEqual(prompt.value, "/effort")
+            await wait_for_hints(lambda: "/effort low" in str(hints.renderable))
             self.assertIn("/effort low", str(hints.renderable))
 
             await pilot.press("tab")
-            await pilot.pause()
+            await wait_for_hints(lambda: prompt.value == "/effort low")
             self.assertEqual(prompt.value, "/effort low")
 
             prompt.value = "/provider"
             await pilot.pause()
             await pilot.press("tab")
-            await pilot.pause()
+            await wait_for_hints(lambda: prompt.value == "/provider first")
             self.assertEqual(prompt.value, "/provider first")
 
             prompt.value = "/resume"
-            await pilot.pause()
+            await wait_for_hints(lambda: "/resume SESSION_ID" in str(hints.renderable))
             self.assertIn("/resume SESSION_ID", str(hints.renderable))
             await pilot.press("tab")
-            await pilot.pause()
+            await wait_for_hints(lambda: prompt.value == "/resume ")
             self.assertEqual(prompt.value, "/resume ")
 
             prompt.value = "ordinary prompt"
-            await pilot.pause()
+            await wait_for_hints(lambda: not hints.display)
             self.assertFalse(hints.display)
             self.assertEqual(runner.prompts, [])
 
