@@ -2,9 +2,8 @@
 
 **简体中文** · [English](../../en/adr/0126-provider-typed-failure-taxonomy.md)
 
-## 状态
-
-接受，适用于当前 pre-alpha Runtime。
+- 状态：已接受，适用于当前 pre-alpha Runtime
+- 日期：2026-08-21
 
 ## 背景
 

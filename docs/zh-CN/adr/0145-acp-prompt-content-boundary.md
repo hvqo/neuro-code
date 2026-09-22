@@ -1,12 +1,13 @@
 # ADR 0145：ACP Prompt Content 边界提取
 
-- 状态：Accepted
+[English](../../en/adr/0145-acp-prompt-content-boundary.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-08-30
 - 范围：V1 Interface Boundary Consolidation 的第一个结构切片
 - 依赖：ADR 0035、ADR 0054 和 ADR 0055
 
-## Context
-
+## 背景
 `neuro_code.acp` 仍然是 ACP/JSON-RPC 适配器，并且合理地拥有 connection、session、update、
 client capability、MCP 与 transport 生命周期。可是它的入站 prompt/content 校验与转换曾经
 和这些职责混在一起，使第一个 interface package consolidation 步骤难以测试，也没有为
@@ -16,8 +17,7 @@ content boundary 建立明确 owner。
 安全的 consolidation slice 是纯 prompt/content boundary。它必须保留冻结的 ACP 行为，也不能
 在其余职责分别迁移前把 `neuro_code.acp` 变成 facade。
 
-## Decision
-
+## 决策
 `neuro_code.interfaces.acp.content` 是入站 ACP prompt/content conversion boundary 的
 canonical owner。它拥有：
 
@@ -51,8 +51,7 @@ base64 与 `audio/*` MIME type。Resource link 与 embedded-resource URI 只作�
 最终有序 `ContentPart` tuple 不变，仍随 user message 传递，使 provider adapter 可以在当前
 回合与恢复回合应用自己的 role、MIME 和 request-size 校验。
 
-## Dependency direction
-
+## 依赖方向
 本切片允许的方向是：
 
 ```text
@@ -87,8 +86,7 @@ prompt/content contract 的同时，分别为 update、client I/O、MCP configur
 都有自己的 audit、compatibility proof 与 behavior-preserving validation。Client-capability negotiation
 和 agent/server protocol handling 在单独边界获接受前仍由 `NeuroCodeAcpAgent` 持有。本 ADR 不预授权更多切片。
 
-## Validation
-
+## 验证
 验证覆盖既有 ACP content matrix、ACP raw stdio 与 E2E path、dependency 与 import contract、
 object identity、documentation parity、完整 repository quality gates，以及最终 pull-request
 merge-ref CI。验收标准是结构 consolidation，同时保持可观察 ACP 行为不变。

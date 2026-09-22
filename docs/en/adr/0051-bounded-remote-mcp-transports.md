@@ -2,7 +2,7 @@
 
 [简体中文](../../zh-CN/adr/0051-bounded-remote-mcp-transports.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-07-29
 
 ## Context

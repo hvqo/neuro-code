@@ -1,12 +1,13 @@
 # ADR 0148：ACP MCP Configuration 边界
 
-- 状态：Accepted
+[English](../../en/adr/0148-acp-mcp-configuration-boundary.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-08-30
 - 范围：V1 Interface Boundary Consolidation 的第四个结构切片
 - 依赖：ADR 0052、ADR 0053、ADR 0056、ADR 0145、ADR 0146 和 ADR 0147
 
-## Context
-
+## 背景
 冻结的 PR #75 HEAD 是
 `3e8a8cd6796b886213cf57bc70231b415d07ca5c`。顶层的
 `neuro_code.acp` adapter 仍包含 ACP 协议处理、session lifecycle、live MCP callback 与
@@ -20,8 +21,7 @@ session state 或 transport behavior。
 
 审计针对 PR #75 exact head 完成，并在移动代码前结束。
 
-### Configuration symbols
-
+### 配置符号
 以下 symbols 只属于 configuration，构成一个 cohesive boundary：
 
 - `McpServer`：HTTP、SSE、ACP-transport 和 stdio declaration 的 ACP input union；
@@ -94,8 +94,7 @@ opening、cancellation 和 cleanup。`tests/test_acp_e2e.py`、`tests/test_acp_r
 `tests/test_mcp_stdio.py` 和 `tests/test_mcp_http.py` 覆盖 downstream runtime/protocol surface，
 继续作为 integration tests，而不是 parser tests。
 
-## Decision
-
+## 决策
 `neuro_code.interfaces.acp.mcp_config` 作为无状态 ACP MCP configuration conversion 的
 canonical owner。它导入 ACP SDK schema、既有 application ACP configuration contract 以及
 既有 canonical ACP serialized-size helper。
@@ -147,8 +146,7 @@ parser 保留：
 
 配置转换期间不会发生 redirect、DNS lookup、socket creation 或 endpoint probing。
 
-## Serialized configuration bound
-
+## 序列化配置上限
 parser 继续生成相同的 canonical JSON-compatible projection，并在返回 configuration contract
 前对该 projection 使用 `serialized_size_bytes`。`MAX_MCP_CONFIGURATION_BYTES` 仍是 UTF-8
 serialized payload bound，不替换为 `sys.getsizeof` 或其他内存测量。

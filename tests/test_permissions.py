@@ -24,6 +24,7 @@ from neuro_code.application.ports.workspace import (
     FilesystemAccessTarget,
     FilesystemTargetRequest,
 )
+from neuro_code.infrastructure.tools.registry import default_tool_registry
 from neuro_code.infrastructure.workspace.paths import (
     _reject_ambiguous_windows_path,
     resolve_delegated_workspace_path,
@@ -423,6 +424,72 @@ class PermissionTests(unittest.TestCase):
 
         self.assertTrue(request.summary.startswith("Run shell command:\necho "))
         self.assertIn("[truncated]", request.summary)
+
+    def test_side_effecting_tools_advertise_the_optional_intent_field(self) -> None:
+        registry = default_tool_registry()
+        definitions = {definition.name: definition for definition in registry.definitions()}
+
+        for name in registry.names():
+            tool = registry.get(name)
+            assert tool is not None
+            schema = definitions[name].input_schema
+            properties = schema["properties"]
+            with self.subTest(tool=name):
+                if tool.side_effecting:
+                    self.assertIn("intent", properties)
+                    self.assertNotIn("intent", schema.get("required", []))
+                else:
+                    self.assertNotIn("intent", properties)
+
+    def test_model_intent_does_not_change_the_session_scope_key(self) -> None:
+        first = build_permission_request(
+            "call-1",
+            "bash",
+            {"command": "git status"},
+            "interactive approval required",
+            intent="Check the working tree state.",
+        )
+        second = build_permission_request(
+            "call-2",
+            "bash",
+            {"command": "git status"},
+            "interactive approval required",
+            intent="Explain the current branch state.",
+        )
+
+        self.assertEqual(first.scope_key, second.scope_key)
+        self.assertNotIn("intent", str(first.summary))
+
+    def test_permission_request_intent_is_bounded_and_optional(self) -> None:
+        self.assertIsNone(
+            build_permission_request(
+                "call-1",
+                "bash",
+                {"command": "git status"},
+                "interactive approval required",
+            ).intent
+        )
+        self.assertIsNone(
+            build_permission_request(
+                "call-2",
+                "bash",
+                {"command": "git status"},
+                "interactive approval required",
+                intent="   \n  ",
+            ).intent
+        )
+        request = build_permission_request(
+            "call-3",
+            "bash",
+            {"command": "git status"},
+            "interactive approval required",
+            intent=f"  Let me check\n the branch   state. {'x' * 1_000}",
+        )
+
+        assert request.intent is not None
+        self.assertTrue(request.intent.startswith("Let me check the branch state."))
+        self.assertNotIn("\n", request.intent)
+        self.assertEqual(len(request.intent), 400)
         self.assertLess(len(request.summary), 2_100)
 
     def test_dynamic_bash_cannot_create_a_session_approval_scope(self) -> None:

@@ -37,7 +37,7 @@ class ReasoningEffortScreen(ModalScreen[ReasoningEffort | None]):
     CSS = """
     ReasoningEffortScreen {
         align: center middle;
-        background: $background 85%;
+        background: $modal-overlay 25%;
     }
 
     #effort-dialog {
@@ -46,7 +46,7 @@ class ReasoningEffortScreen(ModalScreen[ReasoningEffort | None]):
         height: auto;
         max-height: 90%;
         padding: $space-2 $space-3;
-        border: solid $border;
+        border: round $border;
         background: $surface;
     }
 
@@ -66,11 +66,6 @@ class ReasoningEffortScreen(ModalScreen[ReasoningEffort | None]):
         height: 3;
         margin-bottom: $space-0;
         content-align: left middle;
-    }
-
-    #effort-help {
-        color: $text-muted;
-        margin-top: 1;
     }
     """
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -112,7 +107,6 @@ class ReasoningEffortScreen(ModalScreen[ReasoningEffort | None]):
         yield Vertical(
             Label(ui_text(self.language, "effort.title"), id="effort-title"),
             VerticalScroll(*buttons, id="effort-options"),
-            Static(ui_text(self.language, "effort.help"), id="effort-help"),
             id="effort-dialog",
             classes="modal-dialog modal-m",
         )
@@ -139,7 +133,7 @@ class InteractionModeScreen(ModalScreen[InteractionMode | None]):
     CSS = """
     InteractionModeScreen {
         align: center middle;
-        background: $background 85%;
+        background: $modal-overlay 25%;
     }
 
     #interaction-mode-dialog {
@@ -148,7 +142,7 @@ class InteractionModeScreen(ModalScreen[InteractionMode | None]):
         height: auto;
         max-height: 90%;
         padding: $space-2 $space-3;
-        border: solid $border;
+        border: round $border;
         background: $surface;
     }
 
@@ -230,6 +224,222 @@ class InteractionModeScreen(ModalScreen[InteractionMode | None]):
         self.dismiss(None)
 
 
+class PermissionSettingsScreen(ModalScreen[tuple[InteractionMode, bool] | None]):
+    """Choose the three-level permission-approval preference.
+
+    The ``ask`` and ``auto`` levels map to bounded interaction modes, while the
+    ``full`` level only returns after the dedicated danger confirmation
+    succeeds.  The screen never dismisses with full access by accident.
+
+    选择三级权限审批偏好.ask 与 auto 映射到有界交互模式,full 只有在专属危险确认
+    成功后才返回,不会意外地以完全访问关闭.
+    """
+
+    _LEVEL_CHOICES: ClassVar[tuple[tuple[str, InteractionMode, bool], ...]] = (
+        ("ask", InteractionMode.NORMAL, False),
+        ("auto", InteractionMode.ACCEPT_EDITS, False),
+        ("full", InteractionMode.AUTO, True),
+    )
+
+    CSS = """
+    PermissionSettingsScreen {
+        align: center middle;
+        background: $modal-overlay 25%;
+    }
+
+    #permission-settings-dialog {
+        width: 82%;
+        max-width: 88;
+        height: auto;
+        max-height: 90%;
+        padding: $space-2 $space-3;
+        border: round $border;
+        background: $surface;
+    }
+
+    #permission-settings-title {
+        text-style: bold;
+        color: $text-primary;
+        margin-bottom: 1;
+    }
+
+    #permission-settings-description {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #permission-settings-options {
+        height: auto;
+        max-height: 12;
+    }
+
+    #permission-settings-options MenuOptionButton {
+        width: 100%;
+        height: 3;
+        margin-bottom: $space-0;
+        content-align: left middle;
+    }
+
+    #permission-settings-help {
+        color: $text-muted;
+        margin-top: 1;
+    }
+    """
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "cancel", "Cancel", show=False),
+    ]
+
+    def __init__(self, selected: str, *, language: UiLanguage = UiLanguage.ENGLISH) -> None:
+        super().__init__()
+        self.selected = selected
+        self.language = language
+
+    def compose(self) -> ComposeResult:
+        buttons = [
+            MenuOptionButton(
+                f"\N{WARNING SIGN} {ui_text(self.language, f'permission.level.{level}')}"
+                if level == "full"
+                else ui_text(self.language, f"permission.level.{level}"),
+                secondary=ui_text(self.language, f"permission.level.{level}.detail"),
+                selected=self.selected == level,
+                muted=False,
+                primary_width=18,
+                secondary_justify="left",
+                id=f"permission-choice-{level}",
+            )
+            for level, _, _ in self._LEVEL_CHOICES
+        ]
+        yield Vertical(
+            Label(ui_text(self.language, "permission.title"), id="permission-settings-title"),
+            Static(
+                ui_text(self.language, "permission.description"),
+                id="permission-settings-description",
+            ),
+            VerticalScroll(*buttons, id="permission-settings-options"),
+            Static(ui_text(self.language, "permission.help"), id="permission-settings-help"),
+            id="permission-settings-dialog",
+            classes="modal-dialog modal-m",
+        )
+
+    def on_mount(self) -> None:
+        focused = (
+            "#permission-choice-full"
+            if self.selected == "full"
+            else (f"#permission-choice-{self.selected}")
+        )
+        self.query_one(focused, Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        level = (event.button.id or "").removeprefix("permission-choice-")
+        for name, mode, unrestricted in self._LEVEL_CHOICES:
+            if level == name:
+                if unrestricted:
+                    self.app.push_screen(
+                        FullAccessConfirmScreen(language=self.language),
+                        self._full_access_confirmed,
+                    )
+                else:
+                    self.dismiss((mode, unrestricted))
+                return
+
+    def _full_access_confirmed(self, confirmed: bool | None) -> None:
+        if confirmed:
+            self.dismiss((InteractionMode.AUTO, True))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class FullAccessConfirmScreen(ModalScreen[bool]):
+    """Fail-closed danger confirmation before enabling unrestricted full access.
+
+    开启不受限完全访问前的故障关闭危险确认.
+    """
+
+    CSS = """
+    FullAccessConfirmScreen {
+        align: center middle;
+        background: $modal-overlay 25%;
+    }
+
+    #full-access-dialog {
+        width: 76%;
+        max-width: 72;
+        height: auto;
+        padding: $space-2 $space-3;
+        border: round $border-focus;
+        background: $surface;
+    }
+
+    #full-access-title {
+        text-style: bold;
+        color: $warning;
+        margin-bottom: 1;
+    }
+
+    #full-access-description {
+        color: $text-body;
+        margin-bottom: 1;
+    }
+
+    #full-access-actions {
+        height: auto;
+        align-horizontal: right;
+    }
+
+    #full-access-actions Button {
+        margin-left: 1;
+    }
+    """
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "cancel", "Cancel", show=False),
+    ]
+
+    def __init__(self, *, language: UiLanguage = UiLanguage.ENGLISH) -> None:
+        super().__init__()
+        self.language = language
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Label(
+                f"\N{WARNING SIGN} {ui_text(self.language, 'permission.confirm.title')}",
+                id="full-access-title",
+            ),
+            Static(
+                ui_text(self.language, "permission.confirm.description"),
+                id="full-access-description",
+            ),
+            Horizontal(
+                Button(
+                    ui_text(self.language, "permission.confirm.accept"),
+                    id="full-access-accept",
+                    variant="error",
+                ),
+                Button(
+                    ui_text(self.language, "permission.confirm.cancel"),
+                    id="full-access-cancel",
+                ),
+                id="full-access-actions",
+            ),
+            id="full-access-dialog",
+            classes="modal-dialog modal-s",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#full-access-cancel", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "full-access-accept":
+            self.dismiss(True)
+        elif event.button.id == "full-access-cancel":
+            self.dismiss(False)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
 class PermissionApprovalScreen(ModalScreen[PermissionApproval]):
     """Fail-closed modal for one bounded permission request.
 
@@ -238,7 +448,7 @@ class PermissionApprovalScreen(ModalScreen[PermissionApproval]):
     CSS = """
     PermissionApprovalScreen {
         align: center middle;
-        background: $background 85%;
+        background: $modal-overlay 25%;
     }
 
     #approval-dialog {
@@ -247,7 +457,7 @@ class PermissionApprovalScreen(ModalScreen[PermissionApproval]):
         height: auto;
         max-height: 90%;
         padding: $space-2 $space-3;
-        border: solid $border;
+        border: round $border;
         background: $surface;
     }
 
@@ -255,6 +465,14 @@ class PermissionApprovalScreen(ModalScreen[PermissionApproval]):
         text-style: bold;
         color: $text-primary;
         margin-bottom: 1;
+    }
+
+    #approval-intent {
+        height: auto;
+        max-height: 6;
+        overflow-y: auto;
+        margin: $space-1 $space-0;
+        color: $text-primary;
     }
 
     #approval-summary {
@@ -265,11 +483,6 @@ class PermissionApprovalScreen(ModalScreen[PermissionApproval]):
         padding: $space-1;
         border: none;
         background: $background;
-    }
-
-    #approval-reason {
-        color: $text-muted;
-        margin-bottom: 1;
     }
 
     #approval-actions {
@@ -294,10 +507,12 @@ class PermissionApprovalScreen(ModalScreen[PermissionApproval]):
         request: PermissionRequest,
         *,
         language: UiLanguage = UiLanguage.ENGLISH,
+        show_intent: bool = True,
     ) -> None:
         super().__init__()
         self.request = request
         self.language = language
+        self.show_intent = show_intent
         self._scope_button_candidates: dict[str, PermissionScopeCandidate] = {}
 
     def compose(self) -> ComposeResult:
@@ -345,17 +560,12 @@ class PermissionApprovalScreen(ModalScreen[PermissionApproval]):
                     )
                 )
             ),
-            Static(Text(self.request.summary), id="approval-summary"),
-            Static(
-                Text(
-                    ui_text(
-                        self.language,
-                        "approval.policy",
-                        policy=self.request.reason,
-                    )
-                ),
-                id="approval-reason",
+            *(
+                (Static(Text(self.request.intent), id="approval-intent"),)
+                if self.show_intent and self.request.intent is not None
+                else ()
             ),
+            Static(Text(self.request.summary), id="approval-summary"),
             *scope_widgets,
             Horizontal(
                 Button(
@@ -421,7 +631,7 @@ class ProviderSelectionScreen(ModalScreen[str | None]):
     CSS = """
     ProviderSelectionScreen {
         align: center middle;
-        background: $background 85%;
+        background: $modal-overlay 25%;
     }
 
     #provider-dialog {
@@ -429,7 +639,7 @@ class ProviderSelectionScreen(ModalScreen[str | None]):
         max-width: 116;
         height: 80%;
         padding: $space-2 $space-3;
-        border: solid $border;
+        border: round $border;
         background: $surface;
     }
 
@@ -538,7 +748,7 @@ class SessionSelectionScreen(ModalScreen[str | None]):
     CSS = """
     SessionSelectionScreen {
         align: center middle;
-        background: $background 85%;
+        background: $modal-overlay 25%;
     }
 
     #session-dialog {
@@ -546,7 +756,7 @@ class SessionSelectionScreen(ModalScreen[str | None]):
         max-width: 116;
         height: 80%;
         padding: $space-2 $space-3;
-        border: solid $border;
+        border: round $border;
         background: $surface;
     }
 

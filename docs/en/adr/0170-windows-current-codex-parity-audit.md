@@ -1,4 +1,8 @@
-# ADR 0117: Current OpenAI Codex Windows sandbox parity audit
+# ADR 0170: Current OpenAI Codex Windows sandbox parity audit
+
+[简体中文](../../zh-CN/adr/0170-windows-current-codex-parity-audit.md) · **English**
+
+> Renumbered from ADR 0117 so every ADR number is unique; the decision itself is unchanged.
 
 - Status: Accepted as the current production Windows sandbox baseline audit
 - Date: 2026-08-20

@@ -126,6 +126,7 @@ from neuro_code.domain.conversation.request import ModelRequestSnapshot
 from neuro_code.domain.execution import (
     AgentExecutionOutcome,
     AgentExecutionStatus,
+    BudgetLimitDetail,
     ExecutionBudget,
     ExecutionBudgetPressure,
     ExecutionCounters,
@@ -152,6 +153,9 @@ LOGGER = logging.getLogger(__name__)
 
 EventSink = Callable[[AgentEvent], Awaitable[None] | None]
 WorkspaceUndoSealer = Callable[[str | None, str | None], Awaitable[None]]
+
+_MAX_TOOL_INTENT_SOURCE_CHARS = 2_000
+_MAX_TOOL_INTENT_CHARS = 400
 
 
 def _redacted_persisted_tool_calls(
@@ -247,6 +251,14 @@ def _raw_context_index_after_canonical_boundary(
     return len(items)
 
 
+def execution_detail_data(detail: BudgetLimitDetail | None) -> dict[str, object] | None:
+    """Project one bounded per-tool budget detail into event metadata.
+
+    将一个有界的单工具预算详情投影到事件 metadata."""
+
+    return detail.to_event_data() if detail is not None else None
+
+
 class AgentLoopRunner:
     """Own one agent turn's step loop and finalization orchestration.
 
@@ -254,6 +266,7 @@ class AgentLoopRunner:
 
     __slots__ = (
         "_active_provider_window",
+        "_budgeted_supervisor_factory",
         "_compaction_runtime_gate",
         "_context_builder",
         "_context_rollover",
@@ -291,7 +304,9 @@ class AgentLoopRunner:
         system_prompt: str,
         execution_budget: ExecutionBudget,
         context_builder: ContextBuilder,
-        supervisor_factory: Callable[[], AgentExecutionSupervisor],
+        supervisor_factory: Callable[[], AgentExecutionSupervisor] | None,
+        budgeted_supervisor_factory: Callable[[ExecutionBudget], AgentExecutionSupervisor]
+        | None = None,
         supervision_observer: SupervisionObserver | None,
         execution_control_mode: ExecutionControlMode,
         finalizer_factory: Callable[[ModelProvider, int, tuple[str, ...]], Finalizer],
@@ -337,6 +352,7 @@ class AgentLoopRunner:
         self._segment_policy = ExecutionSegmentPolicy.from_budget(execution_budget)
         self._context_builder = context_builder
         self._supervisor_factory = supervisor_factory
+        self._budgeted_supervisor_factory = budgeted_supervisor_factory
         self._supervision_observer = supervision_observer
         self._execution_control_mode = execution_control_mode
         self._final_output_gate_enabled = final_output_gate_enabled
@@ -380,7 +396,20 @@ class AgentLoopRunner:
         verification_workspace_mutation_id: str | None = None,
         verification_command: str | None = None,
         resume_existing_attempt: bool = False,
+        execution_budget_override: ExecutionBudget | None = None,
     ) -> AgentRunResult:
+        if execution_budget_override is not None and not isinstance(
+            execution_budget_override,
+            ExecutionBudget,
+        ):
+            raise TypeError("execution_budget_override must be an ExecutionBudget or None")
+        effective_budget = (
+            execution_budget_override
+            if execution_budget_override is not None
+            else self._execution_budget
+        )
+        effective_max_steps = effective_budget.max_model_calls
+        effective_segment_policy = ExecutionSegmentPolicy.from_budget(effective_budget)
         prompt_parts = tuple(content_parts)
         verification_command = validate_explicit_verification_command(verification_command)
         if ultracode_execution_id is not None and (
@@ -617,9 +646,31 @@ class AgentLoopRunner:
             turn_id=turn_id,
             workspace_undo_sealer=self._workspace_undo_sealer,
         )
-        emit = recorder.emit
+        recorder_emit = recorder.emit
         record_turn_failure = recorder.record_turn_failure
         finalize_turn_completion = recorder.finalize_turn_completion
+
+        # The model's own narration directly before a tool call explains the
+        # intent of that call. Keep a bounded tail so the approval dialog can
+        # show it instead of the raw policy line.
+        tool_intent_text = ""
+
+        def _pending_tool_intent() -> str | None:
+            collapsed = " ".join(tool_intent_text.split())
+            return collapsed[:_MAX_TOOL_INTENT_CHARS] or None
+
+        async def emit(
+            kind: AgentEventKind,
+            data: dict[str, object],
+        ) -> AgentEvent:
+            nonlocal tool_intent_text
+            if kind is AgentEventKind.TEXT_DELTA:
+                text = data.get("text")
+                if isinstance(text, str) and text:
+                    tool_intent_text = (tool_intent_text + text)[-_MAX_TOOL_INTENT_SOURCE_CHARS:]
+            elif kind is AgentEventKind.MODEL_STEP_STARTED:
+                tool_intent_text = ""
+            return await recorder_emit(kind, data)
 
         async def persist_workspace_undo_event(
             kind: AgentEventKind,
@@ -1270,6 +1321,7 @@ class AgentLoopRunner:
                 decision.reason_code,
                 finalized=True,
                 recoverable=True,
+                detail=decision.detail,
             )
 
         workspace_evidence: list[str] = []
@@ -1410,7 +1462,7 @@ class AgentLoopRunner:
             await maybe_acquire_explicit_verification()
             if (
                 decision.reason_code is SupervisorReasonCode.MODEL_CALL_BUDGET
-                and step >= self._max_steps
+                and step >= effective_max_steps
             ):
                 decision = SupervisorDecision(
                     SupervisorDecisionKind.MARK_BUDGET_LIMITED,
@@ -1428,6 +1480,7 @@ class AgentLoopRunner:
                     if outcome.reason_code is not None
                     else None,
                     "recoverable": outcome.recoverable,
+                    "execution_detail": execution_detail_data(outcome.detail),
                 },
             )
             evidence = finalization_evidence(decision)
@@ -1545,6 +1598,7 @@ class AgentLoopRunner:
                 ),
                 "finalized": completion_outcome.finalized,
                 "recoverable": completion_outcome.recoverable,
+                "execution_detail": execution_detail_data(completion_outcome.detail),
                 "finalization_status": finalization.status.value,
                 "finalization_attempts": len(finalization.attempts),
                 "illegal_tool_calls": finalization.illegal_tool_calls,
@@ -1595,7 +1649,12 @@ class AgentLoopRunner:
         pending_terminal_decision: SupervisorDecision | None = None
         try:
             try:
-                supervisor = self._supervisor_factory()
+                if self._budgeted_supervisor_factory is not None:
+                    supervisor = self._budgeted_supervisor_factory(effective_budget)
+                elif self._supervisor_factory is not None:
+                    supervisor = self._supervisor_factory()
+                else:
+                    raise TypeError("an execution supervisor factory is required")
                 if not isinstance(supervisor, AgentExecutionSupervisor):
                     raise TypeError("supervisor_factory must return an AgentExecutionSupervisor")
                 supervisor.start_turn()
@@ -1666,7 +1725,7 @@ class AgentLoopRunner:
                         record for record in records if record.compaction_id == selected_id
                     )
 
-            for step in range(1, self._max_steps + 1):
+            for step in range(1, effective_max_steps + 1):
                 if pending_terminal_decision is not None:
                     return await complete_finalized_turn(pending_terminal_decision, step=step - 1)
                 step_started_at = monotonic()
@@ -2008,9 +2067,9 @@ class AgentLoopRunner:
                 if any(
                     limit is not None
                     for limit in (
-                        self._execution_budget.max_input_tokens,
-                        self._execution_budget.max_output_tokens,
-                        self._execution_budget.max_total_tokens,
+                        effective_budget.max_input_tokens,
+                        effective_budget.max_output_tokens,
+                        effective_budget.max_total_tokens,
                     )
                 ):
                     await emit_budget_usage()
@@ -2193,6 +2252,7 @@ class AgentLoopRunner:
                     isolated: bool,
                     *,
                     batch_limits: dict[int, tuple[int, int]] = model_tool_result_limits,
+                    intent: str | None = _pending_tool_intent(),
                 ) -> _ScheduledToolOutcome:
                     # Parallel calls get private append-only projections.  The
                     # executor still owns every permission, approval, sandbox,
@@ -2246,6 +2306,7 @@ class AgentLoopRunner:
                             model_result_estimated_token_limit=(
                                 result_limits[1] if result_limits is not None else None
                             ),
+                            intent=intent,
                         )
                         return _ScheduledToolOutcome(
                             observation,
@@ -2318,7 +2379,7 @@ class AgentLoopRunner:
                     and current_supervisor is not None
                     and segment_progress_kinds
                     and current_supervisor.snapshot.consecutive_no_progress_rounds == 0
-                    and self._segment_policy.reached(
+                    and effective_segment_policy.reached(
                         current_supervisor.snapshot.counters,
                         segment_start_counters,
                     )
@@ -2372,9 +2433,9 @@ class AgentLoopRunner:
                         False,
                         SupervisorReasonCode.MODEL_STEP_LIMIT,
                     ),
-                    step=self._max_steps,
+                    step=effective_max_steps,
                 )
-            raise ProviderError(f"agent exceeded the maximum of {self._max_steps} model steps")
+            raise ProviderError(f"agent exceeded the maximum of {effective_max_steps} model steps")
         except BaseException as error:
             # Preserve cancellation semantics while still making the session auditable.
             await record_turn_failure(error)

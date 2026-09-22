@@ -1,6 +1,8 @@
 # ADR 0102: Context usage snapshot and stale-source request builder
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0102-context-usage-snapshot-and-stale-source-builder.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: `neuro_code.application.memory.compaction_runtime`
 

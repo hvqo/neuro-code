@@ -2,6 +2,9 @@
 
 [简体中文](../../zh-CN/adr/0019-fail-closed-linux-sandbox-profiles.md) · **English**
 
+- Status: Accepted
+- Date: 2026-07-18
+
 ## Context
 
 The fixed historical Rust baseline exposes `off`, `workspace`, `read-only`, and

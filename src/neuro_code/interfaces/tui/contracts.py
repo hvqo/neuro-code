@@ -16,6 +16,7 @@ from neuro_code.application.providers.service import ChangeProviderRequest
 from neuro_code.application.runtime.agent import AgentRunResult, EventSink
 from neuro_code.application.sessions.contracts import (
     InteractionModeSelectionResult,
+    NewSessionResult,
     ReasoningEffortSelectionResult,
     SessionOption,
 )
@@ -30,6 +31,7 @@ from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.execution import TurnCancellationPolicy
 from neuro_code.domain.plans import PlanComment, SessionPlan
 from neuro_code.domain.session_tasks import SessionTask
+from neuro_code.domain.sessions import SessionProject, SessionSummary
 from neuro_code.domain.workspace_undo import WorkspaceUndoResult
 
 
@@ -99,6 +101,8 @@ class InteractionModeController(Protocol):
     async def set_interaction_mode(
         self,
         mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
     ) -> InteractionModeSelectionResult: ...
 
 
@@ -106,6 +110,36 @@ SessionController = SessionSelectionController
 
 
 SessionSearchCallback = Callable[[str | None], Awaitable[tuple[SessionOption, ...]]]
+
+
+class SessionLibraryController(Protocol):
+    """Bounded session/project management capability consumed by the TUI.
+
+    TUI 使用的有界会话/项目管理能力."""
+
+    def active_session_id(self) -> str | None: ...
+
+    async def list_projects(self) -> tuple[SessionProject, ...]: ...
+
+    async def list_sessions(self, query: str | None = None) -> tuple[SessionOption, ...]: ...
+
+    async def create_project(self, name: str, cwd: str) -> SessionProject: ...
+
+    async def rename_project(self, project_id: str, name: str) -> SessionProject: ...
+
+    async def delete_project(self, project_id: str) -> None: ...
+
+    async def rename_session(self, session_id: str, title: str) -> SessionSummary: ...
+
+    async def assign_session_project(
+        self,
+        session_id: str,
+        project_id: str | None,
+    ) -> SessionSummary: ...
+
+    async def delete_session(self, session_id: str) -> None: ...
+
+    async def start_new_session(self) -> NewSessionResult: ...
 
 
 class TaskController(Protocol):
@@ -155,6 +189,7 @@ __all__ = [
     "ProviderController",
     "ReasoningController",
     "SessionController",
+    "SessionLibraryController",
     "SessionSearchCallback",
     "SessionTaskController",
     "TaskController",

@@ -115,6 +115,8 @@ It is intentionally concise and is updated as implementation evidence changes.
   acceptance/PTY/compatibility, terminal smoke, and macOS Seatbelt jobs. Its
   W5 artifact contains 20 rows and 60 HOST/W3/W4 cells, all `PASS`, with no
   host failures and all nine tool-provenance records passing.
-- Current local gates on the merged head pass: lock check, documentation parity
-  (134 bilingual pairs), Ruff, format check, mypy, 1,986 pytest tests with 48
-  expected skips and 17 deselections at 85.15% coverage, and package build.
+- Current local gates on the merged head pass: lock check, documentation parity,
+  Ruff, format check, mypy, pytest, and package build. The counts recorded when
+  this ledger was last updated (134 bilingual pairs, 1,986 pytest tests, 48
+  expected skips, 17 deselections, 85.15% coverage) are historical; current
+  values are 179 pairs and 2,979 tests with 51 skips as of 2026-09-21.

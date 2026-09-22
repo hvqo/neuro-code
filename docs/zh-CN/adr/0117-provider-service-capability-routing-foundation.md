@@ -1,5 +1,7 @@
 # ADR 0117：Provider Service、Capability 与 Runtime Route 基础
 
+[English](../../en/adr/0117-provider-service-capability-routing-foundation.md) · **简体中文**
+
 - 状态：已接受；托管 Web 执行仍按计划不实现
 - 日期：2026-08-19
 - 范围：Provider 元数据、能力解析、模型发现和角色路由

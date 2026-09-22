@@ -1,6 +1,8 @@
 # ADR 0085: Provider-Aware Context Window and Summary Request
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0085-provider-aware-context-summary-request.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: Stage5DE
 

@@ -26,14 +26,13 @@
 Run all of the following for implementation changes:
 
 ```bash
-uv lock --check
-uv run python scripts/check_docs_parity.py
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest --cov=neuro_code --cov-report=term-missing
-uv build
+uv run python scripts/check_all.py
 ```
+
+`scripts/check_all.py` is the single source of truth for the completion checks
+(lock check, documentation parity and consistency, Ruff, format, mypy, pytest
+with coverage, and build); adding a gate means editing that script rather than
+several hand-written copies. `--quick` skips the slow test run and build.
 
 Update the compatibility matrix in both languages and relevant architecture or
 ADR material whenever observable compatibility or a stable internal boundary

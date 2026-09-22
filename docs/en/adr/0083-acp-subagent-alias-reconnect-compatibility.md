@@ -1,6 +1,8 @@
 # ADR 0083: ACP Subagent Alias Reconnect Compatibility
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0083-acp-subagent-alias-reconnect-compatibility.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: Stage5DC
 

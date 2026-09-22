@@ -1,5 +1,7 @@
 # ADR 0080：显式 CLI 子代理生命周期操作
 
+[English](../../en/adr/0080-explicit-cli-subagent-lifecycle-actions.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：Stage5CZ

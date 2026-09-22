@@ -30,6 +30,11 @@ from neuro_code.application.providers.service import (
 )
 from neuro_code.application.sessions import SessionApplicationService
 from neuro_code.application.sessions.binding import ConversationBinding
+from neuro_code.application.sessions.library import (
+    SessionLibraryOwner,
+    SessionLibraryService,
+    SessionLibraryStore,
+)
 from neuro_code.application.sessions.selection import (
     SessionSelectionController,
     SessionSelectionService,
@@ -247,6 +252,14 @@ class CompositionServicesMixin(CompositionRootMixin):
         """Bind session listing, selection, and rename to an inbound seam."""
 
         return SessionSelectionService(controller)
+
+    def bind_session_library_service(
+        self: CompositionRootMixin,
+        owner: SessionLibraryOwner,
+    ) -> SessionLibraryService:
+        """Bind project and session library management to the session store."""
+
+        return SessionLibraryService(cast(SessionLibraryStore, self.store), owner=owner)
 
     def bind_plan_execution_controller(
         self: CompositionRootMixin,

@@ -1,6 +1,8 @@
 # ADR 0136：有界 Task DAG predecessor-result Relay
 
-- 状态：在当前纵向切片范围内 PROVEN
+[English](../../en/adr/0136-bounded-task-dag-predecessor-result-relay.md) · **简体中文**
+
+- 状态：已接受；在当前纵向切片范围内 PROVEN
 - 日期：2026-08-24
 - 范围：一个 bounded static Task DAG 的直接 completed-predecessor result projection，包含有界 fan-out/fan-in 执行
 

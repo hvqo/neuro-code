@@ -1,5 +1,7 @@
 # ADR 0073: Remove Obsolete Root Compatibility Facades
 
+[简体中文](../../zh-CN/adr/0073-remove-root-compatibility-facades.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-07
 - Supersedes: the root-facade retention decision for these five modules in ADR 0049

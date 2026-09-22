@@ -2,7 +2,8 @@
 
 **简体中文** · [English](../../en/adr/0010-provider-profiles-and-cc-switch.md)
 
-状态：已接受
+- 状态：已接受
+- 日期：2026-07-17
 
 ## 背景
 

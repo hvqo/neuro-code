@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0066-session-scoped-tool-output-artifacts.md) · **English**
 
-## Status
-
-Accepted — Stage5BM, 2026-08-06.
+- Status: Accepted — Stage5BM, 2026-08-06
+- Date: 2026-08-07
 
 ## Context
 

@@ -1,5 +1,7 @@
 # ADR 0116：Windows 开发者工作负载兼容性基线
 
+[English](../../en/adr/0116-windows-developer-workload-compatibility.md) · **简体中文**
+
 - 状态：已接受；W5 工作负载兼容性已在生产 W3/W4 路由验证
 - 日期：2026-08-16
 - 范围：通过 W3 与 W4 路由运行的普通 Windows 开发者工作负载

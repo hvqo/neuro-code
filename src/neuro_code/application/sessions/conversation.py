@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from neuro_code.application.checkpoints.turn_undo import TurnWorkspaceCheckpointCoordinator
+from neuro_code.application.execution_policy import ExecutionBudgetSource
 from neuro_code.application.memory.compaction import ProviderContextWindow
 from neuro_code.application.memory.compaction_runtime import (
     ContextCompactionCommandResult,
@@ -78,6 +79,7 @@ from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.execution import (
     AgentExecutionOutcome,
     AgentExecutionStatus,
+    ExecutionBudget,
     SessionExecutionRecord,
     SupervisorReasonCode,
     TurnCancellationPolicy,
@@ -310,6 +312,14 @@ class AgentConversation:
     def reasoning_effort(self) -> ReasoningEffort:
         return self._runtime.reasoning_effort
 
+    @property
+    def execution_budget(self) -> ExecutionBudget:
+        return self._runtime.execution_budget
+
+    @property
+    def execution_budget_source(self) -> ExecutionBudgetSource:
+        return self._runtime.execution_budget_source
+
     def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
         self._runtime.set_reasoning_effort(effort)
 
@@ -321,8 +331,13 @@ class AgentConversation:
     def auto_mode_unrestricted(self) -> bool:
         return self._runtime.auto_mode_unrestricted
 
-    def set_interaction_mode(self, mode: InteractionMode) -> None:
-        self._runtime.set_interaction_mode(mode)
+    def set_interaction_mode(
+        self,
+        mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
+    ) -> None:
+        self._runtime.set_interaction_mode(mode, unrestricted_auto=unrestricted_auto)
 
     @property
     def normal_requirements_enabled(self) -> bool:
@@ -365,6 +380,7 @@ class AgentConversation:
         verification_requirements: VerificationRequirementsSnapshot | None = None,
         verification_workspace_mutation_id: str | None = None,
         resume_existing_attempt: bool = False,
+        execution_budget_override: ExecutionBudget | None = None,
     ) -> AgentRunResult:
         verification_requirements = self._resolve_new_normal_turn_requirements(
             verification_requirements,
@@ -417,6 +433,8 @@ class AgentConversation:
                     )
                 if resume_existing_attempt:
                     runtime_kwargs["resume_existing_attempt"] = True
+                if execution_budget_override is not None:
+                    runtime_kwargs["execution_budget_override"] = execution_budget_override
                 result = await self._runtime.run(prompt, **runtime_kwargs)
             except asyncio.CancelledError:
                 await self._reload_persisted_state()

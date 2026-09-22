@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0057-durable-structured-session-plans.md) · **English**
 
-## Status
-
-Accepted
+- Status: Accepted
+- Date: 2026-07-29
 
 ## Context
 

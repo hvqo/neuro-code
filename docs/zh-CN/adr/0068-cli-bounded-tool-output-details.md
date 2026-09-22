@@ -1,8 +1,9 @@
 # ADR 0068：CLI 会话作用域的有界工具输出详情
 
-## 状态
+[English](../../en/adr/0068-cli-bounded-tool-output-details.md) · **简体中文**
 
-Stage5BO 接受.
+- 状态：已接受（Stage5BO）
+- 日期：2026-08-07
 
 ## 背景
 

@@ -1,6 +1,8 @@
 # ADR 0099: Typed context-compaction turn projection
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0099-context-compaction-turn-projection.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: `application.memory.compaction_runtime`
 

@@ -1,5 +1,7 @@
 # ADR 0098：由回合记录器拥有可选的压缩最终化
 
+[English](../../en/adr/0098-turn-recorder-compaction-finalization-owner.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：`TurnEventRecorder`

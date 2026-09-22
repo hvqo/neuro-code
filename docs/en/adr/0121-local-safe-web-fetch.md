@@ -1,5 +1,7 @@
 # ADR 0121: Local safe Web Fetch
 
+[简体中文](../../zh-CN/adr/0121-local-safe-web-fetch.md) · **English**
+
 - Status: Accepted; P2 vertical slice
 - Date: 2026-08-19
 - Scope: public HTTP(S) text fetch, SSRF defense, bounded extraction, and main-facing routing

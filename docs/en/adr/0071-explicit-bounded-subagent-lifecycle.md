@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0071-explicit-bounded-subagent-lifecycle.md) · **English**
 
-## Status
-
-Accepted for Stage5CQ.
+- Status: Accepted for Stage5CQ
+- Date: 2026-08-07
 
 ## Context
 

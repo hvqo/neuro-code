@@ -359,6 +359,19 @@ decision, downstream identity, and parent-visible result are recovery-safe
 and are not automatically switched or replayed. See [ADR 0027](adr/0027-semantic-tui-and-application-reasoning-effort.md)
 and [ADR 0141](adr/0141-automatic-ultracode-delegation.md).
 
+The router also recognizes repository/project-wide scope together with an
+explicit improvement intent (for example, “Analyze this entire codebase and
+identify areas that should be improved.”); that combination may select
+`BOUNDED_SWARM`. Narrow function/file debugging or optimization remains
+`MAIN_MAX`, and the existing Swarm objective byte limit still wins. Ordinary
+execution defaults to `normal` (48 model calls); an omitted profile gives an
+Ultracode `MAIN_MAX` request the deeper 96-call budget, while explicit
+`--execution-profile normal`, `deep`, or `--max-steps N` remains authoritative.
+That Ultracode budget is request-scoped and durably snapshotted for recovery;
+an incompatible legacy non-terminal record fails closed, while completed
+replay remains unchanged. A typed `BUDGET_LIMITED` notice reports its reason
+and usage when available; `STUCK` keeps its existing notice.
+
 Ordinary Agent execution uses the `normal` budget profile by default (48 model
 calls, 48 tool rounds, and 192 tool calls). `--execution-profile deep` selects
 the bounded 96/96/384 profile for longer investigations. The compatibility

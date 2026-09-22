@@ -1,6 +1,8 @@
 # ADR 0081: Explicit ACP Subagent Lifecycle Extension
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0081-explicit-acp-subagent-lifecycle-extension.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: Stage5DA
 

@@ -2,9 +2,8 @@
 
 **简体中文** · [English](../../en/adr/0008-xai-responses-native-replay.md)
 
-## 状态
-
-已接受。
+- 状态：已接受
+- 日期：2026-07-17
 
 [ADR 0010](0010-provider-profiles-and-cc-switch.md) 对本决策作了扩展：适配器现已泛化为
 通用 Responses，xAI 作为可选方言；本 ADR 继续约束 xAI 专属的原生回放行为。

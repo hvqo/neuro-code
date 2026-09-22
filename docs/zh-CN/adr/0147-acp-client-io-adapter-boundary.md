@@ -1,12 +1,13 @@
 # ADR 0147：ACP Client I/O Adapter 边界
 
-- 状态：Accepted
+[English](../../en/adr/0147-acp-client-io-adapter-boundary.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-08-30
 - 范围：V1 Interface Boundary Consolidation 的第三个结构切片
 - 依赖：ADR 0052、ADR 0053、ADR 0056、ADR 0145 和 ADR 0146
 
-## Context
-
+## 背景
 冻结的 PR #74 HEAD 是
 `18a686222190f5251e269bb68e1ebfeb7744cede`。顶层的
 `neuro_code.acp` adapter 仍然包含多个不相关职责。本轮下一个 cohesive boundary 是
@@ -21,8 +22,7 @@ ACP client-side filesystem 与 terminal adaptation，它实现既有的 applicat
 
 审计针对 PR #74 exact head 完成，并在移动代码前结束。
 
-### Filesystem adaptation
-
+### 文件系统适配
 filesystem 专属 symbol 是 `_AcpClientFileSystem`。它拥有 ACP SDK `Client`、绑定的外部
 ACP `session_id`，以及两个经过协商的布尔值：`supports_read` 与 `supports_write`。
 
@@ -32,8 +32,7 @@ line 和可选 limit 转发到 `fs/read_text_file`，将 UTF-8 response 限制�
 在调用 `fs/write_text_file` 之前使用相同的 1 MiB UTF-8 bound，保留 cancellation 与
 `ToolError`，并将其他 failure 转成既有稳定错误。
 
-### Terminal adaptation
-
+### 终端适配
 terminal 专属 symbols 是：
 
 - `_AcpClientTerminalTask`；
@@ -105,8 +104,7 @@ create/wait/output/release、invalid response handling、no-environment forwardi
 start/get/wait/kill、timeout/cancellation、retention 和 shutdown。下游 port consumers 仍由
 `tests/test_tools.py` 覆盖。
 
-## Decision
-
+## 决策
 `neuro_code.interfaces.acp.client_io` 是 ACP client filesystem 与 terminal adapters、
 adapter 专属 bounds 和 validation helpers 的 canonical owner。实现按结构移动，不改变 method
 signatures 或 control flow。
@@ -150,8 +148,7 @@ registry、binding publication、capability snapshot、permission broker、works
 或 transport。terminal task watcher 仍然拥有 background completion state；session cleanup
 继续调用 adapter 的幂等 shutdown。
 
-## Compatibility
-
+## 兼容性
 `neuro_code.acp` 直接从 `client_io` 导入移动后的 private classes、helpers 和 adapter 专属
 constants。这些是保持 identity 的 private compatibility aliases，不是 wrappers 或重复定义。
 因此既有 private test 与 integration references 仍保持 behavior，同时 classes/helpers 的
@@ -177,8 +174,7 @@ lifecycle、permissions、workspace/sandbox policy、MCP、transport、provider 
 semantics、output bounds、retry、replay、checkpoint/rollback、automatic delegation、writable
 subagents、parallel/dataflow execution、UI behavior 或 interactive terminal features。
 
-## Validation
-
+## 验证
 验证包括 canonical-definition 与 alias identity contracts、dependency/import contracts、既有
 ACP unit/raw-stdio/E2E behavior、documentation parity、完整 repository quality gates，以及最终
 pull-request merge-ref CI。只有新的 merge-ref CI 全绿才接受；不能只凭本地测试把该结构边界标记为

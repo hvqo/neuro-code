@@ -1,8 +1,9 @@
 # ADR 0106: Bounded batch repository inspection
 
-## Status
+[简体中文](../../zh-CN/adr/0106-bounded-batch-repository-inspection.md) · **English**
 
-Accepted.
+- Status: Accepted
+- Date: 2026-08-09
 
 ## Context
 

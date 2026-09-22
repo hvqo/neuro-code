@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0017-safe-interactive-profile-selection.md) · **English**
 
-## Status
-
-Accepted.
+- Status: Accepted
+- Date: 2026-07-17
 
 ## Context
 

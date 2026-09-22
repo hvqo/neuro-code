@@ -1,5 +1,7 @@
 # ADR 0100：显式压缩回合所有者
 
+[English](../../en/adr/0100-explicit-compaction-turn-owner.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：`TurnEventRecorder`

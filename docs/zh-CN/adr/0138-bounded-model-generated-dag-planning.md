@@ -1,6 +1,8 @@
 # ADR 0138：有界 Model-Generated DAG Planning
 
-- 状态：作为显式内部 P0 vertical slice 实现；最终评级等待 merge-ref CI
+[English](../../en/adr/0138-bounded-model-generated-dag-planning.md) · **简体中文**
+
+- 状态：已接受；作为显式内部 P0 vertical slice 实现；最终评级等待 merge-ref CI
 - 日期：2026-08-26
 - 范围：一个显式 parent objective 到一个不可变有界 Task DAG
 - 依赖：ADR 0134、ADR 0135、ADR 0136 与 ADR 0137
@@ -34,15 +36,13 @@ acyclic、prompt、parallelism 和 immutable graph validation/publication 的唯
 Leader 继续拥有 READY wave 选择。Writable 继续拥有 worker binding、capability intersection、
 Worktree、Checkpoint、child session、tool 和 worker-scoped LSP。
 
-### Zero-tool Planner binding
-
+### 零工具 Planner 绑定
 Composition 创建专用的持久化 planner session 和 one-step `ConversationBinding`。Local tool、
 provider-hosted tool、filesystem、Bash、terminal、network、MCP、LSP、Worktree、Checkpoint、
 worker 和 background capability 均不存在。Planner binding 不通过 public CLI、TUI 或 ACP
 orchestration command 暴露。
 
-### Planning input envelope
-
+### 规划输入 envelope
 Request 包含调用方提供的一个 `planning_id` 和 objective。Parent identity 取自真实 parent
 binding 的 runner session ID；调用方提供的 identity 不具有 authority。Planner 可以接收一个
 独立的不可变 `PlanningContextEnvelope`，其中只有真实 USER 和可见 ASSISTANT 纯文本。它排除
@@ -53,8 +53,7 @@ Envelope 保持 source order，并使用既有有界 context limit：最多 10 �
 24 KiB、渲染内容 32 KiB。其 canonical JSON 与 SHA-256 fingerprint 是确定性的。Envelope 只是
 evidence，不能授予 tool、root、sandbox policy、provider access、worker 或 filesystem authority。
 
-### Strict proposal contract
-
+### 严格 proposal 契约
 Provider 必须返回一个严格 JSON object，顶层只允许以下字段：
 
 ```json

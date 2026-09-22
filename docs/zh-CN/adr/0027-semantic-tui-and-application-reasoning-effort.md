@@ -2,9 +2,8 @@
 
 **简体中文** · [English](../../en/adr/0027-semantic-tui-and-application-reasoning-effort.md)
 
-## 状态
-
-已接受。
+- 状态：已接受
+- 日期：2026-07-18
 
 ## 背景
 
@@ -55,7 +54,7 @@ Markdown 层级。本地生命周期通知的正文起始位置也不统一，�
 - `ultracode` 的请求值是 `ultracode`，供应商兼容投影为 `max`。选择器和运行栏可以显示
   该投影，但显式用户回合会进入 durable application delegation service，并准确选择
   `MAIN_MAX` 或 `BOUNDED_SWARM` 中的一条路径。供应商永远不会收到编造的原生 `ultracode`
-  值。详见 [ADR 0141](adr/0141-automatic-ultracode-delegation.md)。
+  值。详见 [ADR 0141](0141-automatic-ultracode-delegation.md)。
 
 ## 后果
 

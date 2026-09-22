@@ -1,5 +1,7 @@
 # ADR 0119：Anthropic Hosted Web Search 与 Web Fetch
 
+[English](../../en/adr/0119-anthropic-hosted-web-search-and-fetch.md) · **简体中文**
+
 - 状态：已接受；P1.1 纵向切片
 - 日期：2026-08-19
 - 范围：Anthropic Messages hosted `web_search` 与 `web_fetch`

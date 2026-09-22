@@ -2,7 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0012-provider-http-proxy-policy.md) · **English**
 
-Status: accepted
+- Status: Accepted
+- Date: 2026-07-17
 
 ## Context
 

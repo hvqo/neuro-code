@@ -73,7 +73,7 @@ from neuro_code.domain.execution import (
     TurnSource,
 )
 from neuro_code.domain.tools import ToolDefinition, ToolResult
-from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionStore
+from neuro_code.infrastructure.persistence.sqlite_session import SCHEMA_VERSION, SqliteSessionStore
 from neuro_code.infrastructure.providers.failover import FailoverModelProvider, ProviderCandidate
 from neuro_code.infrastructure.providers.openai_responses import OpenAIResponsesProvider
 from neuro_code.infrastructure.tools.new_context import NewContextTool
@@ -145,6 +145,15 @@ class _ToolCollection:
 
     def definitions(self) -> tuple[ToolDefinition, ...]:
         return tuple(tool.definition for tool in self._tools.values())
+
+    def has_synthetic_intent(self, name: str) -> bool:
+        """Mirror the registry rule for this built-in-only test collection."""
+
+        tool = self._tools.get(name)
+        if tool is None:
+            return False
+        properties = tool.definition.input_schema.get("properties") or {}
+        return getattr(tool, "side_effecting", False) and "intent" not in properties
 
 
 class _RecordingCompactionGate(ContextCompactionRuntimeGate):
@@ -471,7 +480,7 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
                 connection.execute(
                     "SELECT version FROM schema_meta WHERE singleton = 1"
                 ).fetchone(),
-                (33,),
+                (SCHEMA_VERSION,),
             )
         finally:
             connection.close()

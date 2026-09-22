@@ -16,6 +16,7 @@ is the only registry owner.
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable
+from typing import Any, Final
 
 from neuro_code.application.ports.client_filesystem import ClientFileSystem
 from neuro_code.application.ports.client_terminal import ClientTerminal
@@ -30,6 +31,52 @@ from neuro_code.application.ports.working_set import WorkingSetController
 from neuro_code.domain.sandbox.models import SandboxProfile
 from neuro_code.domain.tools import ToolDefinition
 from neuro_code.shared.errors import ToolError
+
+_TOOL_INTENT_PROPERTY: Final[dict[str, Any]] = {
+    "type": "string",
+    "description": (
+        "One short sentence, in the user's language, explaining what this call does and why. "
+        "It is shown to the user in the approval prompt and is never executed or forwarded "
+        "to the program."
+    ),
+}
+
+
+def _injects_tool_intent(tool: Tool) -> bool:
+    """Return True when Neuro Code owns the synthetic intent field for this tool.
+
+    Neuro Code only augments the provider-facing schema of its own built-in
+    side-effecting tools, and never when the canonical schema already declares
+    an ``intent`` parameter: a real argument always wins over the synthetic one.
+
+    仅当该工具是 Neuro Code 内置副作用工具且其规范 schema 未声明 intent 参数时,
+    Neuro Code 才注入合成 intent 字段;真实参数始终优先于合成字段.
+    """
+
+    if not tool.side_effecting:
+        return False
+    properties = tool.definition.input_schema.get("properties") or {}
+    return "intent" not in properties
+
+
+def _with_tool_intent(tool: Tool) -> ToolDefinition:
+    """Add the optional intent field to one built-in side-effecting tool.
+
+    为内置副作用工具添加可选的意图字段."""
+
+    definition = tool.definition
+    if not _injects_tool_intent(tool):
+        return definition
+    properties = dict(definition.input_schema.get("properties") or {})
+    properties["intent"] = dict(_TOOL_INTENT_PROPERTY)
+    schema = dict(definition.input_schema)
+    schema["properties"] = properties
+    return ToolDefinition(
+        definition.name,
+        definition.description,
+        schema,
+        definition.execution_mode,
+    )
 
 
 class ToolRegistry:
@@ -78,8 +125,33 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
+    def has_synthetic_intent(self, name: str) -> bool:
+        """Report whether this tool's provider schema carries Neuro Code's synthetic intent.
+
+        External/caller-owned tools are authoritative over their own schema and
+        never carry the synthetic field, and a canonical ``intent`` parameter
+        always wins.  Ownership is decided here so executors never guess it.
+
+        报告该工具的 Provider schema 是否带有 Neuro Code 合成的 intent 字段.
+        外部/调用方拥有的工具对自己的 schema 拥有权威,绝不携带合成字段;规范 intent
+        参数始终优先.所有权在此判定,执行器无需猜测.
+        """
+
+        if name in self._external_names:
+            return False
+        tool = self._tools.get(name)
+        return tool is not None and _injects_tool_intent(tool)
+
     def definitions(self) -> tuple[ToolDefinition, ...]:
-        return tuple(tool.definition for tool in self._tools.values())
+        """Advertise the provider-facing catalog, including the intent field.
+
+        返回面向 Provider 的工具目录,其中包含意图字段.
+        """
+
+        return tuple(
+            tool.definition if name in self._external_names else _with_tool_intent(tool)
+            for name, tool in self._tools.items()
+        )
 
     def names(self) -> tuple[str, ...]:
         return tuple(self._tools)

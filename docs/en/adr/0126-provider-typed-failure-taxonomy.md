@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0126-provider-typed-failure-taxonomy.md) · **English**
 
-## Status
-
-Accepted for the current pre-alpha runtime.
+- Status: Accepted for the current pre-alpha runtime
+- Date: 2026-08-21
 
 ## Context
 

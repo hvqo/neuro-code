@@ -1,6 +1,8 @@
 # ADR 0133: Bounded parent context relay
 
-- Status: implemented as an explicit internal vertical slice; final rating waits for merge-ref CI
+[简体中文](../../zh-CN/adr/0133-bounded-parent-context-relay.md) · **English**
+
+- Status: Accepted; implemented as an explicit internal vertical slice; final rating waits for merge-ref CI
 - Date: 2026-08-24
 - Scope: one serialized writable worker and one immutable parent-to-child context snapshot
 

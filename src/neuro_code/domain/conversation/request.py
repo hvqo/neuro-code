@@ -12,6 +12,8 @@ into a second prompt store.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import uuid
@@ -21,12 +23,23 @@ from types import MappingProxyType
 from typing import Any
 
 from neuro_code.domain.conversation.context import ModelContext, estimate_text_tokens
-from neuro_code.domain.conversation.messages import Message, SessionItem
+from neuro_code.domain.conversation.messages import ContentPart, Message, SessionItem
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.tools import ToolDefinition
 
 REQUEST_SNAPSHOT_SCHEMA_VERSION = 1
 MAX_REQUEST_SNAPSHOT_ID_BYTES = 128
+
+# One inline image is billed by providers at a roughly fixed token cost that is
+# unrelated to its encoded byte size.  The estimator adds this allowance per
+# image part instead of counting its base64 payload as text, which would inflate
+# a few megabytes into hundreds of thousands of phantom tokens and wrongly block
+# the turn in ``ContextPreflight``.
+#
+# 一张内联图片按 Provider 的计费近似是一个与编码字节量无关的固定 token 成本.
+# 估算器为每个图片部件加这份定额,而不是把 base64 负载当文本计数,否则几 MB 会被
+# 虚增成几十万 token,导致 ContextPreflight 错误地阻断回合.
+IMAGE_PART_TOKEN_ESTIMATE = 1_536
 
 
 def _canonical(value: Any) -> Any:
@@ -57,6 +70,58 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _inline_data_shape(encoded: str) -> dict[str, Any]:
+    """Project one base64 payload as bounded accounting facts.
+
+    Snapshots and estimates must stay small and must not embed prompt-sized
+    binary payloads, so the projection records the decoded byte count and a
+    short digest instead of the data itself.  A malformed payload falls back to
+    the encoded length; both forms stay deterministic.
+
+    将 base64 负载投影为有界的计量事实.快照与估算必须保持小巧,不得内嵌提示词量级的
+    二进制负载,因此投影记录解码字节数与短摘要而非数据本身;负载非法时回退为编码长度,
+    两种形式都是确定性的.
+    """
+
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+        size = len(decoded)
+        digest = hashlib.sha256(decoded).hexdigest()[:16]
+    except (ValueError, binascii.Error):
+        size = len(encoded)
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+    return {"data_bytes": size, "data_sha256": digest}
+
+
+def _data_uri_shape(url: str) -> dict[str, Any] | None:
+    """Project one ``data:`` URI as bounded accounting facts.
+
+    将 ``data:`` URI 投影为有界的计量事实."""
+
+    if not url.startswith("data:"):
+        return None
+    header, separator, payload = url.partition(",")
+    if not separator:
+        return None
+    media_type = header.removeprefix("data:").split(";", 1)[0]
+    shape = _inline_data_shape(payload)
+    return {"media_type": media_type or "application/octet-stream", **shape}
+
+
+def _content_part_shape(part: ContentPart) -> dict[str, Any]:
+    shape: dict[str, Any] = {"kind": part.kind.value}
+    if part.text is not None:
+        shape["text"] = part.text
+    if part.mime_type is not None:
+        shape["mime_type"] = part.mime_type
+    if part.url is not None:
+        inline = _data_uri_shape(part.url)
+        shape["url"] = inline if inline is not None else part.url
+    if part.data is not None:
+        shape.update(_inline_data_shape(part.data))
+    return shape
+
+
 def _item_shape(item: SessionItem) -> dict[str, Any]:
     if isinstance(item, Message):
         return {
@@ -73,7 +138,7 @@ def _item_shape(item: SessionItem) -> dict[str, Any]:
                 }
                 for call in item.tool_calls
             ],
-            "content_parts": [part.to_dict() for part in item.content_parts],
+            "content_parts": [_content_part_shape(part) for part in item.content_parts],
             "content": item.content,
             "reasoning_content": item.reasoning_content,
             "synthetic_reason": (
@@ -222,7 +287,9 @@ def estimate_model_request_tokens(payload: Mapping[str, Any]) -> ModelRequestTok
     if not isinstance(context, list) or not isinstance(tools, list):
         raise ValueError("request payload must contain context and tools lists")
     metadata = {key: value for key, value in payload.items() if key not in {"context", "tools"}}
+    image_parts = _count_image_parts(context)
     context_tokens = _estimate_payload_tokens({"context": context})
+    context_tokens += image_parts * IMAGE_PART_TOKEN_ESTIMATE
     tool_tokens = _estimate_payload_tokens({"tools": tools})
     request_shape_tokens = _estimate_payload_tokens(metadata)
     return ModelRequestTokenEstimate(
@@ -231,6 +298,24 @@ def estimate_model_request_tokens(payload: Mapping[str, Any]) -> ModelRequestTok
         tool_tokens,
         request_shape_tokens,
     )
+
+
+def _count_image_parts(context: Sequence[Any]) -> int:
+    """Count inline image parts in a projected payload context.
+
+    统计投影负载上下文中的内联图片部件数."""
+
+    count = 0
+    for item in context:
+        if not isinstance(item, Mapping) or item.get("kind") != "message":
+            continue
+        parts = item.get("content_parts")
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if isinstance(part, Mapping) and part.get("kind") == "image":
+                count += 1
+    return count
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,6 +472,7 @@ class ModelRequestSnapshot:
 
 
 __all__ = [
+    "IMAGE_PART_TOKEN_ESTIMATE",
     "MAX_REQUEST_SNAPSHOT_ID_BYTES",
     "REQUEST_SNAPSHOT_SCHEMA_VERSION",
     "ModelRequestSnapshot",

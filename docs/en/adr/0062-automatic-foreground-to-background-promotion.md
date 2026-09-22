@@ -2,7 +2,7 @@
 
 [简体中文](../../zh-CN/adr/0062-automatic-foreground-to-background-promotion.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-08-02
 
 ## Context

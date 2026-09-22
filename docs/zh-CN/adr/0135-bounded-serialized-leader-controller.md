@@ -1,6 +1,8 @@
 # ADR 0135：有界串行 Leader controller
 
-- 状态：作为显式内部 P0 纵向切片实现；最终评级等待 merge-ref CI
+[English](../../en/adr/0135-bounded-serialized-leader-controller.md) · **简体中文**
+
+- 状态：已接受；作为显式内部 P0 纵向切片实现；最终评级等待 merge-ref CI
 - 日期：2026-08-24
 - 范围：一个作用于预先创建 bounded Task DAG 的 Leader，decision 串行执行
 

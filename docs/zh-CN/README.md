@@ -11,6 +11,23 @@ Neuro Code 是一个 Python 原生的终端 Coding Agent。它通过模型驱动
 
 命名的 provider profile 和持久会话，让工作流可以在受支持的模型服务之间灵活切换，而不必将运行时绑定到单一托管 provider。
 
+> **本文与英文版的关系**
+>
+> 本页是**产品概览**；英文版 [`README.md`](../../README.md) 同时还是**完整使用手册**，
+> 以下专题目前**只在英文版**中提供，本页不重复其内容：
+>
+> - 安装与启动细节：`Install and launch`
+> - 开发环境与本地验证：`Development`
+> - 完整的 TUI 使用说明（快捷键、设置页、会话管理、工具卡片）：`Interactive TUI`
+> - 受管后台命令与唤醒策略：`Managed background commands`
+> - OS 沙箱 profile 的逐平台边界：`Operating-system sandbox profiles`
+> - provider profile、能力矩阵、故障转移与代理策略：`Model providers`
+> - 只读 LSP 语义导航：`Read-only LSP semantic navigation`
+> - ACP v1 适配器的能力与限制：`Partial ACP v1 stdio`
+>
+> 若要了解某项能力**支持到什么程度、明确不支持什么**，请直接查
+> [兼容性矩阵](compatibility-matrix.md)（中英内容一致度约 98%）。
+
 <p align="center">
   <img src="../NeuroCode.png" alt="Neuro Code 终端界面" width="90%">
 </p>
@@ -74,6 +91,8 @@ TUI 启动也通过共享的应用设置边界使用该选项；本切片不向 
 - **Sessions** — 基于 SQLite 的会话支持恢复、工作区范围内的搜索、标题、分叉、导出/导入以及持久化的计划/任务元数据。
 - **TUI** — Textual 界面提供流式对话、provider 和 session 选择器、审批提示、斜杠命令、Markdown 渲染以及持久化的 UI 偏好设置。
 - **Bounded orchestration** — 有界、持久化的 Task DAG、Leader、Agent Swarm 和自动 Ultracode 委派可以协调受约束的并行工作；结果采纳和可写 worker 仍受显式能力、工作区和 sandbox 边界控制。
+
+Ultracode 路由还会识别“项目/仓库范围”与明确的优化意图同时出现的请求（例如“请你对这个项目的代码进行分析，告诉我哪里还有需要优化的地方？”），此组合可以选择 `BOUNDED_SWARM`；窄范围的函数/文件排错或优化仍选择 `MAIN_MAX`，现有 Swarm objective 字节上限继续有效。普通执行默认使用 `normal`（48 次模型调用）；省略档位时，Ultracode 的 `MAIN_MAX` 请求使用更深的 96 次预算，而显式 `--execution-profile normal`、`deep` 或 `--max-steps N` 保持显式选择。该预算按请求传递并持久化快照用于恢复；缺少或不兼容预算的 legacy 非终态记录会 fail closed，已完成记录的 replay 语义不变。TUI 的 typed `BUDGET_LIMITED` 提示会在可用时报告原因和用量，`STUCK` 提示保持不变。
 
 ## 安全与控制
 

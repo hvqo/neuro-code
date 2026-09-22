@@ -1,6 +1,8 @@
 # ADR 0080: Explicit CLI Subagent Lifecycle Actions
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0080-explicit-cli-subagent-lifecycle-actions.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: Stage5CZ
 

@@ -1,10 +1,11 @@
-# ADR 0073：有界只读子 Agent 结果投影
+# ADR 0168：有界只读子 Agent 结果投影
 
-[English](../../en/adr/0073-bounded-read-only-subagent-result-projection.md) · **简体中文**
+[English](../../en/adr/0168-bounded-read-only-subagent-result-projection.md) · **简体中文**
 
-## 状态
+> 为保持 ADR 编号唯一，由 ADR 0073 重编号而来；决策内容未变。
 
-Stage5CS 已接受。
+- 状态：已接受（Stage5CS）
+- 日期：2026-08-08
 
 ## 背景
 

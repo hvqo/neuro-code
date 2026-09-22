@@ -87,6 +87,15 @@ class _ToolCollection:
     def definitions(self) -> tuple[ToolDefinition, ...]:
         return tuple(tool.definition for tool in self._tools.values())
 
+    def has_synthetic_intent(self, name: str) -> bool:
+        """Mirror the registry rule for this built-in-only test collection."""
+
+        tool = self._tools.get(name)
+        if tool is None:
+            return False
+        properties = tool.definition.input_schema.get("properties") or {}
+        return getattr(tool, "side_effecting", False) and "intent" not in properties
+
 
 class _RecordingHook:
     def __init__(self) -> None:

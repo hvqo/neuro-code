@@ -7,6 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from neuro_code.domain.execution._validation import require_positive_int, require_tool_name
+
 
 class AgentExecutionStatus(StrEnum):
     """Lifecycle state for one supervised agent execution.
@@ -79,6 +81,26 @@ class ProgressKind(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class BudgetLimitDetail:
+    """Bounded per-tool projection attached to one per-tool budget terminal.
+
+    附加到单个"单工具预算"终态上的有界单工具投影。
+    """
+
+    tool_name: str
+    used: int
+    limit: int
+
+    def __post_init__(self) -> None:
+        require_tool_name(self.tool_name, field_name="budget limit detail tool_name")
+        require_positive_int(self.used, field_name="budget limit detail used")
+        require_positive_int(self.limit, field_name="budget limit detail limit")
+
+    def to_event_data(self) -> dict[str, object]:
+        return {"tool_name": self.tool_name, "used": self.used, "limit": self.limit}
+
+
+@dataclass(frozen=True, slots=True)
 class AgentExecutionOutcome:
     """A recoverable terminal result produced by controlled execution supervision.
 
@@ -88,6 +110,7 @@ class AgentExecutionOutcome:
     reason_code: SupervisorReasonCode | None
     finalized: bool
     recoverable: bool
+    detail: BudgetLimitDetail | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, AgentExecutionStatus):
@@ -110,6 +133,8 @@ class AgentExecutionOutcome:
             raise ValueError("stuck and budget-limited outcomes must be recoverable")
         if self.status is AgentExecutionStatus.COMPLETED and self.reason_code is not None:
             raise ValueError("completed outcomes must not have a reason_code")
+        if self.detail is not None and not isinstance(self.detail, BudgetLimitDetail):
+            raise ValueError("execution outcome detail must be a BudgetLimitDetail or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +148,7 @@ class SupervisorDecision:
     status: AgentExecutionStatus
     should_finalize: bool
     reason_code: SupervisorReasonCode = SupervisorReasonCode.NONE
+    detail: BudgetLimitDetail | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, SupervisorDecisionKind):
@@ -131,6 +157,8 @@ class SupervisorDecision:
             raise ValueError("supervisor decision status must be canonical")
         if not isinstance(self.reason_code, SupervisorReasonCode):
             raise ValueError("supervisor decision reason_code must be canonical")
+        if self.detail is not None and not isinstance(self.detail, BudgetLimitDetail):
+            raise ValueError("supervisor decision detail must be a BudgetLimitDetail or None")
         if (
             not isinstance(self.reason, str)
             or not self.reason

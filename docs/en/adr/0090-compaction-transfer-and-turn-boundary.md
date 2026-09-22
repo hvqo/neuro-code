@@ -1,6 +1,8 @@
 # ADR 0090: Compaction transfer and turn-finalization boundary
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0090-compaction-transfer-and-turn-boundary.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: session export/import, fork, and compaction persistence
 

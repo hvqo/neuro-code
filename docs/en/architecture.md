@@ -903,6 +903,28 @@ represented once by its check mark. See
 [ADR 0029](adr/0029-auditable-in-place-tool-cards.md), with the presentation
 refinement in [ADR 0108](adr/0108-editorial-tui-presentation.md).
 
+The TUI presentation uses one semantic registry for 13 appearance choices. CSS,
+Rich Markdown and syntax highlighting resolve colors from the same palette,
+without mutable global theme state. Settings → Appearance provides a scrollable
+picker, arrow-key preview, Enter to apply/save, and Esc to restore the original.
+Preview and persistence are separate. `system` uses terminal defaults and ANSI
+colors; other choices use explicit RGB palettes. See [TUI themes](tui-themes.md).
+
+The existing atomic UI preferences port saves the shared `UiTheme` in the `theme`
+field; missing/invalid values fall back to Porcelain. Obsidian keeps the `graphite`
+identifier. Startup and first-run provider setup restore the same choice. Switching
+preserves message widgets, drafts and cursor position. Conversation and composer
+use the terminal width with small insets. The composer has no extra title; its editor
+and action row are separate. Send reuses the existing submission pipeline. Ctrl+J, F2 and a focusable Newline
+button share selection-aware insertion without submitting; disabled/read-only
+editors are not modified. Modified Enter keys depend on terminal forwarding
+and are not universally guaranteed. Dedicated
+theme tokens distinguish composer and user-message fills from ordinary panels, with
+top/left rules for boundaries and readable placeholder, cursor and selection colors.
+The system theme retains default backgrounds and uses foreground-colored rules. Narrow/short terminals compact the
+chrome with bounded multiline height. Permissions, execution and session contracts
+remain unchanged.
+
 The scrollback is a vertical conversation of stable message widgets rather
 than a pre-rendered log plus a temporary streaming surface. User prompts and
 assistant responses have distinct layouts. A pending assistant widget remains
@@ -1126,7 +1148,7 @@ the child, and parent deletion recursively removes linked child sessions. This
 slice remains explicit and synchronous: it does not alter the normal
 `AgentRuntime` loop, reuse parent context, expose CLI/TUI/ACP entrypoints, or
 schedule/retry/recursively spawn children. See
-[ADR 0072](adr/0072-isolated-read-only-subagent-runtime.md).
+[ADR 0072](adr/0167-isolated-read-only-subagent-runtime.md).
 
 Stage5CS adds `ReadOnlySubagentApplicationService` as the narrow caller
 boundary for that runtime.  It requires the persisted parent/child link and
@@ -1135,7 +1157,7 @@ containing only lifecycle IDs, terminal status, step count, optional typed
 outcome, and response text.  Messages, events, tool arguments, credentials,
 and raw child context do not cross this boundary.  The projection is returned
 in memory only; it is not appended to the parent transcript or persisted as a
-second result record.  See [ADR 0073](adr/0073-bounded-read-only-subagent-result-projection.md).
+second result record.  See [ADR 0073](adr/0168-bounded-read-only-subagent-result-projection.md).
 
 Stage5CT adds a read-only parent/child relationship query boundary through
 `SubagentRelationshipQueryService`.  It projects existing `SubagentLink`,
@@ -1147,7 +1169,7 @@ tasks expose labels only, while the existing lifecycle services remain the
 owners of mutation and execution.  The query never loads messages, events,
 tool output, prompts, credentials, or raw child context, adds no schema, and
 does not create a CLI, TUI, ACP, scheduler, replay, or automatic-resume path.
-See [ADR 0074](adr/0074-read-only-parent-child-subagent-relationship-projection.md).
+See [ADR 0074](adr/0169-read-only-parent-child-subagent-relationship-projection.md).
 
 Stage5CU adds one explicit CLI entry,
 `neuro subagent --parent-session SESSION_ID PROMPT`, over the existing
@@ -1881,7 +1903,7 @@ tool-role, synthetic, tool-call-bearing, media-bearing, preserved reasoning,
 and preserved backend-call structures are excluded; assistant visible prose is
 separable from and never carries its `reasoning_content`.
 
-Session schema 30 retains the schema-17 one-to-one insert-only READY relay per
+The Session Store schema retains the schema-17 one-to-one insert-only READY relay per
 writable lease, the durable Task DAG tables described below, the schema-20
 predecessor-result relay table, and the schema-21 Task DAG recovery-claim
 fence; schema 22 adds bounded DAG capacity and scoped Writable lease policy,
@@ -1953,7 +1975,7 @@ Parallel nodes receive fresh Writable application services from a typed
 `asyncio.Lock` while giving each node independent binding, lease, worktree,
 checkpoint, child session, Parent Relay, and worker-scoped LSP state.
 
-The current Session schema 30 stores immutable DAG definitions and bounded node runtime
+The current Session schema stores immutable DAG definitions and bounded node runtime
 projections in `task_dags` and `task_dag_nodes`, plus insert-only
 `task_dag_dependency_relays` and the separate `task_dag_recovery_claims`
 cross-process ownership fence. Definitions and relay publications are
@@ -2032,7 +2054,7 @@ transcript/reasoning/tool arguments/output, Relay payloads, workspace bytes,
 checkpoint bytes, Git diffs, secrets, or arbitrary paths. The current
 parallel-aware extension is specified by ADR 0137 below.
 
-The current Session Store schema 30 retains the schema-19 `leader_attempts` and
+The current Session Store schema retains the schema-19 `leader_attempts` and
 `leader_decisions` projections. An attempt binds the exact DAG generation,
 definition/evidence/objective fingerprints, Leader session, controller owner,
 turn identity, and durable lifecycle. SQLite write transactions and CAS-like
@@ -2088,7 +2110,7 @@ and uses a structured `TaskGroup`. It never fills unused capacity with an
 unselected node. `max_parallel=1` remains compatible with the one-node path.
 
 Session schema 24 added parent-session, selected-node, and selected-generation
-decision projections and migrated populated schema-23 rows; current schema 30
+decision projections and migrated populated schema-23 rows; the current schema
 retains them. A durable wave
 decision can be reused after a crash only when each selected node is still at
 its recorded READY generation or has advanced durably to RUNNING/terminal;
@@ -2135,7 +2157,7 @@ other graph rules are still rejected by the canonical Task DAG service. Model
 text is data and contains no authority fields.
 
 Schema 25 added insert-only `orchestration_planning_attempts` and
-`orchestration_plan_proposals`; current schema 30 retains them. A planning attempt binds the caller's exact
+`orchestration_plan_proposals`; the current schema retains them. A planning attempt binds the caller's exact
 planning ID, actual parent session, objective/context fingerprints, dedicated
 planner session and turn, a preallocated intended DAG ID, provider lifecycle,
 proposal fingerprint, and published DAG identity. Its lifecycle is
@@ -2287,7 +2309,9 @@ deepest ordinary single-agent reasoning/review policy. Only an explicit
 
 The entry uses a bounded deterministic local policy rather than a second model
 classifier call. In this slice the policy is a fixed marker heuristic for
-parallel/decomposition, cross-file, and research wording; it is not semantic
+parallel/decomposition, cross-file, research, and repository-wide improvement
+wording; repository/project-wide scope is paired with explicit improvement
+intent rather than treated as a standalone broad marker. It is not semantic
 task classification or model-level routing intelligence. It makes only the
 typed choice `MAIN_MAX` or `BOUNDED_SWARM`. It cannot choose tools, worker
 count, DAG definitions, sandbox, workspace roots, network, MCP, retry, merge,
@@ -2311,11 +2335,26 @@ Marker-bearing prompts over the boundary select `MAIN_MAX` before the durable
 Ultracode branch claim. This is a pre-decision bound, not a post-claim
 fallback, and recovery continues to reuse an existing durable decision.
 
+The ordinary `normal` profile remains 48 model calls, 48 tool rounds, and 192
+tool calls. When no execution profile was supplied, an Ultracode `MAIN_MAX`
+request receives the canonical deep 96/96/384 budget. An explicit
+`--execution-profile normal`, explicit `deep`, or `--max-steps N` is preserved
+as provenance and wins over that implicit Ultracode upgrade. The effective
+budget is passed as an immutable request-scoped override through the parent
+runtime, so switching `max` and `ultracode` in a long-lived TUI binding cannot
+leak the deep budget into later ordinary turns. A MAIN_MAX durable record
+stores the budget snapshot; a non-terminal legacy record without one fails
+closed, while completed replay retains its prior behavior. The TUI derives a
+recoverable `BUDGET_LIMITED` notice from typed `execution_reason` and the
+latest typed budget telemetry, including used/limit when available; `STUCK`
+uses its existing notice.
+
 Session schema 28 added the insert-once
-`orchestration_ultracode_executions` projection; current schema 30 retains it.
+`orchestration_ultracode_executions` projection; the current schema retains it.
 Schema 30 adds two nullable columns to that existing projection:
 `verification_requirements_json` and
-`verification_requirements_fingerprint`. Both NULL values preserve the
+`verification_requirements_fingerprint`; schema 34 also adds the nullable
+`main_max_execution_budget_json` snapshot. Both NULL requirement values preserve the
 legacy absence of a structured parent requirement forever; a structured row
 must contain both canonical values and the fingerprint must match the
 snapshot. Malformed, partial, oversized, or non-canonical values fail closed.
@@ -3449,3 +3488,23 @@ state, does not produce verification evidence, and does not provide commit,
 branch, worktree, history, checkpoint, rollback, automatic untracked-content
 discovery, recursive submodule inspection, or generic Git GUI behavior. See
 [ADR 0159](adr/0159-read-only-git-change-inspection.md).
+
+## Settings navigation
+
+TUI settings group appearance, models and connections, agent behavior, permissions, and background tasks. Wide terminals show category navigation; terminals narrower than 88 columns use a single scrolling column. Search matches names, current values, and descriptions across all groups; Escape clears search before closing. The overview shows existing preferences or managed global defaults, which provider-specific proxy and wake policies may override. Reasoning shows the requested level, not effective model capability. Detail screens retain existing controllers and persistence ports and return to the overview with entry focus restored. Connection settings retain their reload flow; no runtime configuration merging or permission bypass is introduced. Unimplemented roadmap items are not presented as nonfunctional controls.
+
+## Persistent agent settings
+
+`/settings` adds nine user-scoped TUI preferences: execution profile, model calls per turn, failover, model request timeout, output token limit, search mode, fetch mode, configured LSP enablement, and a default verification command. `UiPreferencesStore` persists validated `AgentPreferences` in the `agent` object of `ui-preferences.json`; other preference writes preserve it. Each page can restore inheritance. Saving neither executes commands nor changes the current task; values apply on the next interactive TUI launch.
+
+Null values inherit existing configuration. Explicit `--max-steps` or `--execution-profile` overrides saved budgets, `--no-failover` overrides failover preferences, and `--verify-command` overrides the saved verification command. Request parameters override TUI provider requests without changing endpoints, authentication, model capabilities, or context capacity. LSP only affects configured servers and installs nothing; web modes still require existing provider capabilities and routes. Noninteractive CLI and ACP do not load these TUI preferences. Execution defaults enter existing composition and verification through `ApplicationSettings`; bootstrap applies tool configuration, preserving permissions and sandbox rules.
+
+## Scoped preferences, context, and interaction settings
+
+Agent preferences now contain 17 fields. Additions cover Enter behavior, input wrapping, completion and failure bells, per-session wake count, wake cooldown, retained compaction items, and summary tokens. Typed and bounded values apply on the next TUI launch. Compaction options enter the existing `ContextCompactionPlanner`, preserving trigger boundaries, tool-pair protection, and context capacity. Wake options use existing `BackgroundWakeLimits` without enabling a disabled wake policy. Bells default off and depend on terminal settings; cancellation does not ring a failure alert. Enter-newline mode uses the Send button; Ctrl+J/F2 retain newline behavior.
+
+All 17 fields support user and current-workspace scopes. Workspace overrides live in the user `ui-preferences.json` under `projects`, keyed by SHA-256 of the normalized absolute workspace path. Repository configuration is neither read nor written, and checkout instructions are not implicitly accepted. Non-null workspace values override user values; null inherits. Existing base-configuration and explicit CLI precedence is preserved. Saving reloads the scope and changes only current-page fields; atomic storage retains other pages, scopes, and unknown top-level fields. Switching scope discards unsaved edits. The advanced overview shows startup preferences, saved values, and sources, explicitly distinguishing preferences from CLI-overridden effective runtime values. Verification command content is omitted.
+
+Wide settings navigation initially focuses Appearance; All settings and cross-category search remain available. Groups use subtle surfaces with separated rows and more whitespace, while detail forms distinguish field labels from help text. Narrow terminals retain all categories in one scrolling column.
+
+Text uses independently mapped semantic colors per theme: blue headings and links, cyan inline code and tool activity, orange numbers and decorators, violet keywords, green strings and success states, and warm yellow warnings. Prose retains its neutral foreground. Light themes use darker text accents; dark themes use gentler bright colors. Matrix retains a green emphasis and System uses ANSI colors. Code, Markdown, and diffs share theme mappings without changing message content.

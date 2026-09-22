@@ -1,6 +1,8 @@
 # ADR 0092: Explicit Runtime compaction safe boundary
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0092-runtime-compaction-safe-boundary.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: application memory boundary for future Runtime integration
 

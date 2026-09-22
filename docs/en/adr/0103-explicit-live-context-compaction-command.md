@@ -1,6 +1,8 @@
 # ADR 0103: Explicit live-context compaction command
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0103-explicit-live-context-compaction-command.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: `AgentRuntime` and `AgentConversation`
 

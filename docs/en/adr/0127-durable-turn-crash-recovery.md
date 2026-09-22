@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0127-durable-turn-crash-recovery.md) · **English**
 
-## Status
-
-Accepted for the current pre-alpha runtime.
+- Status: Accepted for the current pre-alpha runtime
+- Date: 2026-08-22
 
 ## Context
 

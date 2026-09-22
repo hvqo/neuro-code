@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0026-stable-localized-tui-conversation.md) · **English**
 
-## Status
-
-Accepted.
+- Status: Accepted
+- Date: 2026-07-18
 
 ## Context
 

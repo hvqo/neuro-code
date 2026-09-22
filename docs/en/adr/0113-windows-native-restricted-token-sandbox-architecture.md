@@ -1,8 +1,11 @@
 # ADR 0113: Windows native restricted-token sandbox architecture
 
-## Status
+[简体中文](../../zh-CN/adr/0113-windows-native-restricted-token-sandbox-architecture.md) · **English**
 
-Accepted as the W1 foundation and W2 setup-authority record. This ADR
+- Status: Accepted as the W1 foundation and W2 setup-authority record
+- Date: 2026-08-13
+
+This ADR
 establishes typed capability, restricted-token, installation setup, and
 filesystem/firewall authority primitives; it does not connect them to runtime
 child creation or claim a complete Windows sandbox.

@@ -1,5 +1,7 @@
 # ADR 0074: Remove Adapter, Tool, and Flat Domain Facades
 
+[简体中文](../../zh-CN/adr/0074-remove-adapter-tool-domain-facades.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-07
 - Supersedes: the adapter/tool/domain-facade retention decisions in ADR 0049,

@@ -659,6 +659,20 @@ screen 定位 Conversation widget，而不是在当前 Modal 内查找；运行�
 [ADR 0029](adr/0029-auditable-in-place-tool-cards.md)，以及表现层细化
 [ADR 0108](adr/0108-editorial-tui-presentation.md)。
 
+TUI 表现层通过统一语义主题注册表提供 13 个外观选项。CSS、Rich Markdown 和代码
+高亮从同一主题解析颜色，应用之间不共享可变调色板。设置 → 外观主题支持可滚动列表、
+方向键预览、Enter 应用保存和 Esc 恢复；预览与偏好持久化分离。`system` 使用终端
+默认颜色与 ANSI 调色板，其他主题使用明确的 RGB 值。详见 [TUI 外观主题](tui-themes.md)。
+
+现有原子 UI 偏好端口通过共享 `UiTheme` 保存 `theme` 字段，缺失或非法值回退暖瓷白；
+曜石黑保持 `graphite` 标识。启动与首次供应商配置均恢复所选主题。切换保留消息组件、
+草稿和光标。对话与输入区使用可用终端宽度，仅留少量边距；输入区不显示额外标题，编辑
+表面与底部操作行分别呈现，发送按钮复用既有输入提交流程。Ctrl+J、F2 与可聚焦的「换行」按钮共用
+编辑器的选区替换方法，只插入换行而不提交；禁用或只读时不编辑。Alt+Enter /
+Shift+Enter 依赖终端透传，不作为通用保证。独立主题令牌为输入区
+和历史用户消息提供不同于普通面板的底色，配合顶部/左侧细线区分区域。输入占位、
+光标和选区使用清晰的对比色；`system` 保留默认背景，通过前景色细线提供边界。窄或矮终端收紧留白，多行编辑高度有界。表现层变化不改变权限、执行与会话契约。
+
 滚动记录由稳定消息组件组成的纵向对话实现，而不是“预渲染日志 + 临时流式区域”。用户
 提示和助手回答使用不同布局；待完成的助手组件始终位于对话末尾，生命周期通知插入其前，
 文本增量和最终回答都更新同一个组件。只有视口本来就在末尾时才自动跟随。详见
@@ -796,20 +810,20 @@ Stage5CR 在该接缝后增加第一版具体隔离只读运行时. `IsolatedSub
 `read_file`、`read_files`、`list_dir`、`list_tree`、`grep`、`grep_many` 和 `skill`。子步数与墙钟执行时间有界，取消会关闭子运行时，删除父会话
 会递归删除关联子会话. 该切片仍然是显式且同步的：不改变普通 `AgentRuntime` 循环，不复用父上下文，
 不提供 CLI/TUI/ACP 入口，也不调度、重试或递归创建子 Agent. 详见
-[ADR 0072](adr/0072-isolated-read-only-subagent-runtime.md)。
+[ADR 0072](adr/0167-isolated-read-only-subagent-runtime.md)。
 
 Stage5CS 在该运行时之上增加 `ReadOnlySubagentApplicationService` 作为窄的调用方边界。它要求存在持久化
 父子链接，并将子运行投影为脱敏且按 UTF-8 有界的 `SubagentResultProjection`，只包含生命周期 ID、任务终态、
 步数、可选类型化 outcome 和响应文本。消息、事件、工具参数、凭据及原始子上下文不会跨越该边界。投影只在
 内存中返回，不会追加到父 transcript，也不会写成第二条结果记录。参见
-[ADR 0073](adr/0073-bounded-read-only-subagent-result-projection.md)。
+[ADR 0073](adr/0168-bounded-read-only-subagent-result-projection.md)。
 
 Stage5CT 通过 `SubagentRelationshipQueryService` 增加只读的父子关系查询边界。它把已有的
 `SubagentLink`、`SessionTask` 和子会话摘要记录投影为有界的 `SubagentRelationshipProjection`，只包含生命周期
 ID、任务状态、供应商/模型标签、时间戳，以及 `resume`、`fork`、`delete` 能力标签。活动中的子任务不暴露任何
 生命周期操作标签；终态任务只暴露标签，实际变更和执行仍由既有生命周期服务负责。该查询不会读取消息、事件、
 工具输出、提示词、凭据或原始子上下文，不增加 schema，也不创建 CLI、TUI、ACP、调度器、重放或自动恢复路径。
-参见 [ADR 0074](adr/0074-read-only-parent-child-subagent-relationship-projection.md)。
+参见 [ADR 0074](adr/0169-read-only-parent-child-subagent-relationship-projection.md)。
 
 Stage5CU 在现有组合根只读子代理应用服务之上增加一个明确的 CLI 入口：
 `neuro subagent --parent-session SESSION_ID PROMPT`. 该命令先执行父会话恢复预检，随后使用
@@ -1980,7 +1994,7 @@ Writable workflow 现在只从实际 parent `ConversationBinding` 所绑定 sess
 保留 reasoning 与保留 backend-call 的结构都会排除；assistant 可见正文可与
 `reasoning_content` 明确分离，后者绝不进入 Relay。
 
-Session schema 30 保留 schema 17 的每个 writable lease 一条一对一、insert-only READY Relay，
+当前 Session schema 保留 schema 17 的每个 writable lease 一条一对一、insert-only READY Relay，
 以及下述持久化 Task DAG 表、schema 20 的 predecessor-result Relay 表和 schema 21 的 Task DAG
 recovery-claim fence；schema 22 增加有界 DAG capacity 与 scoped Writable lease policy，schema 23
 增加逐节点 execution-owner identity，schema 24 增加 parallel-aware Leader decision projection，
@@ -2034,7 +2048,7 @@ Parallel node 通过 typed `TaskDagWritableWorkerFactory` 获得全新的 Writab
 这样既保留冻结的每 worker `asyncio.Lock`，也使每个节点拥有独立的 binding、lease、worktree、
 checkpoint、child session、Parent Relay 和 worker-scoped LSP state。
 
-当前 Session schema 30 在 `task_dags` 与 `task_dag_nodes` 中保存不可变 DAG 定义和有界节点运行投影，
+当前 Session schema 在 `task_dags` 与 `task_dag_nodes` 中保存不可变 DAG 定义和有界节点运行投影，
 并在 `task_dag_dependency_relays` 中保存 insert-only 的 predecessor-result Relay，同时在独立的
 `task_dag_recovery_claims` 中保存跨进程 ownership fence。定义和 Relay 发布都是 insert-only；graph
 与 node 生命周期更新使用 generation CAS。成功节点记录精确的 worker task、child session、writable lease、
@@ -2088,7 +2102,7 @@ node definition 与 durable outcome metadata，并对 preview 脱敏、带 finge
 transcript/reasoning/tool argument/output、Relay payload、workspace bytes、checkpoint bytes、Git
 diff、secret 或 arbitrary path。
 
-当前 Session Store schema 30 保留 schema 19 新增的 `leader_attempts` 与 `leader_decisions` 投影。Attempt 绑定精确 DAG
+当前 Session Store schema 保留 schema 19 新增的 `leader_attempts` 与 `leader_decisions` 投影。Attempt 绑定精确 DAG
 generation、definition/evidence/objective fingerprint、Leader session、controller owner、turn
 identity 与 durable lifecycle。SQLite write transaction 和 CAS-like state transition 保证同一精确
 snapshot 只有一个 controller 拥有 model request。Controller 必须在 provider call 紧邻之前，使用
@@ -2128,7 +2142,7 @@ CAS；wave seam 只 claim selected ID，创建独立 Writable service，并使�
 填充未选择的 node。`max_parallel=1` 继续兼容 one-node path。
 
 Session schema 24 增加了 parent-session、selected-node 和 selected-generation decision projection，
-并迁移已填充的 schema-23 row；当前 schema 30 保留这些 projection。Crash 后只有每个 selected node 仍在记录的 READY generation，或
+并迁移已填充的 schema-23 row；当前 schema 保留这些 projection。Crash 后只有每个 selected node 仍在记录的 READY generation，或
 已经 durable advanced 到 RUNNING/terminal 时，durable wave decision 才能复用；不会推断 provider
 replay 安全。Partial claim、controller race、failure、cancellation、skipped descendant 和
 indeterminate branch 保留既有 Task DAG recovery semantics。Leader 仍不拥有 Writable、Worktree、
@@ -2161,7 +2175,7 @@ Parser 保留冻结的 Task DAG limits：最多 8 个 node、16 条 edge、每 n
 和其他 graph 规则仍由规范 Task DAG service 拒绝。Model text 只是 data，不包含 authority field。
 
 Schema 25 新增 insert-only 的 `orchestration_planning_attempts` 与 `orchestration_plan_proposals`；当前
-schema 30 保留这些 projection。
+schema 保留这些 projection。
 Planning attempt 绑定调用方精确 planning ID、真实 parent session、objective/context fingerprint、专用
 planner session/turn、预分配 intended DAG ID、provider lifecycle、proposal fingerprint 和已发布 DAG identity。
 生命周期为 `CLAIMED -> PROVIDER_FENCED -> MODEL_COMMITTED -> PROPOSAL_PUBLISHED -> DAG_PUBLISHED ->
@@ -2269,7 +2283,8 @@ reasoning/review 策略；只有显式的 `ReasoningEffort.ULTRACODE` 用户回�
 `low`、`medium`、`high`、`xhigh` 与 `max` 继续使用普通 ConversationRunner 路径。
 
 该入口使用有界、确定性的本地策略，不增加第二次 model classifier 调用。本切片中的策略是针对
-并行/拆分、跨文件和研究措辞的固定 marker heuristic；它不是语义任务分类，也不具备 model-level
+并行/拆分、跨文件、研究以及“项目范围 + 明确优化意图”措辞的固定 marker heuristic；项目/仓库范围
+必须和明确优化意图组合，不能由单独的宽泛词触发；它不是语义任务分类，也不具备 model-level
 routing intelligence。它只做一个 typed 选择：`MAIN_MAX` 或 `BOUNDED_SWARM`。它不能选择 tool、
 worker 数量、DAG definition、sandbox、workspace root、network、MCP、retry、merge 或 provider
 credential。`MAIN_MAX` 调用现有 parent `ConversationRunner` 并保留普通单智能体的 `max` 语义；
@@ -2287,9 +2302,18 @@ Ultracode marker policy 共用这一边界定义。超过边界且包含 marker 
 Ultracode branch claim 之前选择 `MAIN_MAX`。这是决策前的上限，不是 claim 后的 fallback，恢复仍会
 复用已有的 durable decision。
 
-Session schema 28 增加 insert-once 的 `orchestration_ultracode_executions` projection；当前 schema 30 保留该 projection。
+普通 `normal` 档位仍是 48 次模型调用、48 个工具轮次和 192 次工具调用。省略 execution profile 时，
+Ultracode 的 `MAIN_MAX` 请求使用规范的 deep 96/96/384 预算；显式 `--execution-profile normal`、显式
+`deep` 或 `--max-steps N` 会保留其 provenance，并优先于这次隐式升级。有效预算通过 parent runtime 以不可变的
+请求级覆盖传递，因此长生命周期 TUI 在 `max` 与 `ultracode` 之间切换不会把 deep 预算泄漏给后续普通回合。
+MAIN_MAX durable record 会保存预算 snapshot；没有 snapshot 的非终态 legacy record 会 fail closed，已完成 replay
+仍保持原语义。TUI 根据 typed `execution_reason` 和最近的 typed 预算 telemetry 生成可恢复的 `BUDGET_LIMITED`
+提示，能取得时同时显示 used/limit；`STUCK` 继续使用原有提示。
+
+Session schema 28 增加 insert-once 的 `orchestration_ultracode_executions` projection；当前 schema 保留该 projection。
 Schema 30 在该 projection 中增加两个 nullable column：`verification_requirements_json` 与
-`verification_requirements_fingerprint`。两个值均为 NULL 时永久保持 legacy 的无结构化 parent requirement
+`verification_requirements_fingerprint`；schema 34 另外增加 nullable 的 `main_max_execution_budget_json` snapshot。
+两个 requirement 值均为 NULL 时永久保持 legacy 的无结构化 parent requirement
 语义；结构化 row 必须同时包含规范值，且 fingerprint 必须匹配 snapshot。Partial、损坏、超限或非规范值都会
 fail closed。不可变 identity 绑定实际 parent session、精确 parent turn、input/context fingerprint、provider/model/context
 provenance、一个 decision、一个下游 identity，以及存在时精确的 MAIN_MAX parent verification snapshot。`BEGIN IMMEDIATE`、process-liveness ownership
@@ -2338,7 +2362,7 @@ link-like traversal、special file、仅 mode 变化、Neuro 受保护状态、c
 与 root 外 target 都 fail closed。第一版上限为 8 个 source worker、64 个 target file、target image 总计 32 MiB、
 单个 file image 8 MiB 与 relative path 4 KiB。
 
-Session schema 29 增加 insert-only 的 `result_adoptions` 与逐 target 的 `result_adoption_targets` projection；当前 schema 30 保留这些 projection。Durable
+Session schema 29 增加 insert-only 的 `result_adoptions` 与逐 target 的 `result_adoption_targets` projection；当前 schema 保留这些 projection。Durable
 lifecycle 为 `CLAIMED -> VERIFIED -> APPLYING -> VERIFYING -> COMPLETED`，终态包括 `CONFLICT`、`FAILED` 与
 `INDETERMINATE`。每个 target 记录 `NOT_STARTED`、`APPLYING`、`RETRYABLE`、`APPLIED`、`CONFLICT`、`FAILED` 或
 `INDETERMINATE`。在任何可观察 target mutation 前，expected pre-image、desired image、operation、path 与 fingerprint
@@ -2385,3 +2409,23 @@ Adoption identity 从精确的 Ultracode execution 与 Swarm run identity 确定
 或静默 success。Fresh-process A/B/C/D recovery 复用精确 durable identity，保留 worker resource，并避免重放已完成的 lower
 work。集成复用既有 permission、workspace、sandbox 与 `ULTRACODE_DELEGATION_PROGRESS` contract，不暴露 raw patch、
 workspace bytes、secret，也不增加新的 model tool。
+
+## 设置导航
+
+TUI 设置按外观、模型与连接、Agent 行为、权限与安全、后台任务分组。宽终端提供分类侧栏；小于 88 列时采用单列滚动布局。搜索匹配全部分类中的名称、当前值和说明，Esc 先清除搜索再关闭。首页展示已有偏好或受管全局默认值，供应商可能覆盖全局代理与唤醒策略；推理强度展示请求值而非模型有效能力。子页面沿用现有控制器和存储端口，偏好修改后返回设置首页并恢复入口焦点。连接设置仍使用既有重新加载流程，不增加运行时配置合并或权限绕过。尚未实现的规划项不显示为无效开关。
+
+## 可保存的 Agent 设置
+
+`/settings` 新增九项用户级 TUI 偏好：执行档位、每轮模型调用上限、自动备用切换、模型请求超时、输出 token 上限、搜索模式、网页读取模式、已配置 LSP 服务的开关、默认验证命令。它们通过 `UiPreferencesStore` 和经过校验的 `AgentPreferences` 保存至 `ui-preferences.json` 的 `agent` 对象；现有界面偏好写入会保留该对象。每页可恢复继承，保存不会执行命令或改变当前任务，下次启动交互式 TUI 时生效。
+
+空值继承原配置；显式 `--max-steps` 或 `--execution-profile` 优先于已保存的预算设置，`--no-failover` 优先于备用切换偏好，`--verify-command` 优先于默认验证命令。模型请求参数覆盖此 TUI 的供应商请求，但不修改端点、认证、供应商能力或上下文容量。LSP 开关仅影响已配置服务，不安装服务器；网页模式仍依赖已有供应商能力与路由。非交互式 CLI 和 ACP 不读取这些 TUI 偏好。执行配置通过 `ApplicationSettings` 进入既有组合与验证链，工具配置在 bootstrap 中应用，权限和沙箱规则不变。
+
+## 分层偏好、上下文与交互设置
+
+Agent 偏好扩充至 17 项：新增 Enter 行为、输入折行、轮次结束与失败铃声、每会话唤醒上限、唤醒冷却间隔、压缩保留条目数和摘要 token 上限。新增项同样经过类型与范围校验，在下次 TUI 启动生效。压缩参数注入现有 `ContextCompactionPlanner`，不改变触发边界、工具配对保护或上下文容量；唤醒参数使用现有 `BackgroundWakeLimits`，不会开启原本关闭的唤醒策略。铃声默认关闭，受终端配置控制，主动取消不发失败提醒。Enter 换行模式使用发送按钮提交，Ctrl+J/F2 保持换行功能。
+
+所有 17 项支持用户与当前工作区两个保存范围。工作区覆盖保存在用户 `ui-preferences.json` 的 `projects` 对象中，以规范化绝对工作区路径的 SHA-256 为键；不读取或写入仓库配置，不自动接受检出中的执行指令。非空工作区值覆盖用户值，空值继承；基础配置及显式 CLI 参数的既有优先级保持不变。保存界面先重读对应范围，只替换本页字段；其他页面、范围与未知字段由原子存储保留。切换范围会丢弃本页未保存编辑。高级查看页显示启动时加载的偏好、已保存值和来源，明确不将偏好快照当作 CLI 覆盖后的有效运行值；验证命令只显示是否设置。
+
+设置导航的宽屏初始视图聚焦“外观”，仍可主动选择全部设置或跨分类搜索。分类使用柔和底色，条目之间用细线与留白分隔；详细表单加强字段标题和说明间距。窄屏继续以单列展示全部分类。
+
+文字使用按主题分别定义的语义配色：标题和链接为蓝色，行内代码与工具活动为青色，数字与装饰器为橙色，关键字为紫色，字符串和成功状态为绿色，提醒使用暖黄色。正文保持中性前景色。浅色主题采用较深文字色，深色主题采用柔和亮色；Matrix 保留绿色主调，System 使用 ANSI 色。代码、Markdown 和 diff 在切换主题后使用同一套映射，不修改消息内容。

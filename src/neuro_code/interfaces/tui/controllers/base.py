@@ -23,12 +23,14 @@ if TYPE_CHECKING:
     from rich.text import Text
     from textual.worker import Worker
 
+    from neuro_code.application.ports.agent_preferences import AgentPreferences
     from neuro_code.application.ports.provider_catalog import ProviderCatalog
     from neuro_code.application.ports.provider_settings import (
         ManagedProviderSettings,
         ProviderSettingsStore,
     )
     from neuro_code.application.ports.ui_preferences import UiPreferencesStore
+    from neuro_code.application.sessions.attachments import Attachment
     from neuro_code.application.sessions.selection import (
         SessionSelectionService,
     )
@@ -65,10 +67,11 @@ if TYPE_CHECKING:
     from neuro_code.domain.conversation.interaction_mode import InteractionMode
     from neuro_code.domain.conversation.messages import SessionItem
     from neuro_code.domain.conversation.reasoning import ReasoningEffort
-    from neuro_code.domain.execution import SessionExecutionRecord
+    from neuro_code.domain.execution import SessionExecutionRecord, SupervisorReasonCode
     from neuro_code.domain.plans import PlanComment, SessionPlan
     from neuro_code.domain.ultracode import UltracodeDelegationDecision
     from neuro_code.interfaces.tui.clipboard import (
+        ClipboardImageReader,
         ClipboardWriter,
         ClipboardWriteResult,
     )
@@ -80,9 +83,11 @@ if TYPE_CHECKING:
         ProviderController,
         ReasoningController,
         SessionController,
+        SessionLibraryController,
         SessionTaskController,
         TaskController,
     )
+    from neuro_code.interfaces.tui.execution import BudgetUsageProjection
     from neuro_code.interfaces.tui.interaction import TuiUserInteraction
     from neuro_code.interfaces.tui.state import (
         CollapsingPulseAnimation,
@@ -102,6 +107,7 @@ class TuiAppControllerMixin:
     # controller mixins statically composable without moving live state into a
     # second object or weakening the strict mypy configuration.
     if TYPE_CHECKING:
+        theme: str
         _runner: ConversationRunner
         _attached_terminal_session_ids: tuple[str, ...]
         _attached_terminal_selected_id: str | None
@@ -117,6 +123,7 @@ class TuiAppControllerMixin:
         _interaction_mode_controller: InteractionModeController | None
         _session_controller: SessionController | None
         _session_selection_service: SessionSelectionService | None
+        _session_library_service: SessionLibraryController | None
         _task_controller: TaskController | None
         _session_task_controller: SessionTaskController | None
         _plan_controller: PlanController | None
@@ -130,6 +137,7 @@ class TuiAppControllerMixin:
         _socks_supported: bool
         _background_task_wake_policy_override: BackgroundTaskWakePolicy | None
         _background_task_wake_policy: BackgroundTaskWakePolicy
+        _agent_preferences: AgentPreferences
         _background_wake_limits: BackgroundWakeLimits
         _language: UiLanguage
         _initial_items: tuple[SessionItem, ...]
@@ -170,12 +178,19 @@ class TuiAppControllerMixin:
         _queued_interjections: deque[str]
         _active_prompt: str | None
         _active_prompt_entry_index: int | None
+        _pending_attachment_paths: tuple[str, ...]
+        _pending_attachments: tuple[Attachment, ...]
+        _submitted_attachment_paths: tuple[str, ...]
+        _clipboard_image_reader: ClipboardImageReader
+        _clipboard_temp_paths: set[Path]
         _turn_pristine_rewound: bool
         _pending_assistant: ConversationMessage | None
         _reasoning_announced: bool
         _turn_completion: tuple[str, int] | None
         _terminal_execution_status: str | None
         _terminal_execution_recoverable: bool
+        _terminal_execution_reason: SupervisorReasonCode | None
+        _terminal_budget_usage: BudgetUsageProjection | None
         _finalizing: bool
         _turn_usage_reported: bool
         _turn_worker: Worker[None] | None

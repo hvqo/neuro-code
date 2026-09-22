@@ -1,5 +1,7 @@
 # ADR 0116: Windows developer-workload compatibility baseline
 
+[简体中文](../../zh-CN/adr/0116-windows-developer-workload-compatibility.md) · **English**
+
 - Status: Accepted; W5 workload compatibility validated on the production W3/W4 routes
 - Date: 2026-08-16
 - Scope: ordinary Windows developer workloads through the W3 and W4 routes

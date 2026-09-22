@@ -1,5 +1,7 @@
 # ADR 0120：Gemini Interactions 与 Hosted Web Tool
 
+[English](../../en/adr/0120-gemini-interactions-and-hosted-web-tools.md) · **简体中文**
+
 - 状态：已接受；P1.2 纵向切片
 - 日期：2026-08-19
 - 范围：Gemini Interactions、Google Search、URL Context 与 Gemini route 组合

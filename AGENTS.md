@@ -20,11 +20,10 @@
 ## 完成检查 / Completion checks
 
 ```bash
-uv lock --check
-uv run python scripts/check_docs_parity.py
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest --cov=neuro_code --cov-report=term-missing
-uv build
+uv run python scripts/check_all.py
 ```
+
+`scripts/check_all.py` 是完成检查的唯一清单（锁文件、文档 parity 与一致性、Ruff、format、
+mypy、pytest 覆盖率、构建）；新增一项门禁只需修改该脚本，不必同步多份手写清单。
+`scripts/check_all.py` is the single source of truth for the completion checks;
+adding a gate means editing that script rather than several hand-written copies.

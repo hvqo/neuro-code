@@ -25,6 +25,7 @@ from neuro_code.interfaces.tui.theme import (
     TEXT_MUTED,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
+    theme_style,
 )
 from neuro_code.interfaces.tui.widgets import ConversationMessage, ToolFeedbackMessage
 
@@ -53,6 +54,8 @@ class PlanControllerMixin(TuiAppControllerMixin):
         self._turn_completion = None
         self._terminal_execution_status = None
         self._terminal_execution_recoverable = False
+        self._terminal_execution_reason = None
+        self._terminal_budget_usage = None
         self._finalizing = False
         self._turn_usage_reported = False
         self._begin_pending_assistant()
@@ -140,27 +143,27 @@ class PlanControllerMixin(TuiAppControllerMixin):
         body = Text(overflow="fold")
         body.append(
             ui_text(self._language, "plan.heading"),
-            style=f"bold {TEXT_PRIMARY}",
+            style=f"bold {theme_style(self, TEXT_PRIMARY)}",
         )
         if plan.explanation is not None:
             body.append("\n")
             body.append(
                 ui_text(self._language, "plan.purpose", explanation=plan.explanation),
-                style=TEXT_SECONDARY,
+                style=theme_style(self, TEXT_SECONDARY),
             )
         for index, step in enumerate(plan.steps, start=1):
             marker, marker_style = {
-                PlanStepStatus.COMPLETED: (_SUCCESS_MARK, ACCENT_SUCCESS),
-                PlanStepStatus.IN_PROGRESS: (_PROMPT_MARK, ACCENT_CODE),
-                PlanStepStatus.PENDING: ("□", TEXT_SECONDARY),
+                PlanStepStatus.COMPLETED: (_SUCCESS_MARK, theme_style(self, ACCENT_SUCCESS)),
+                PlanStepStatus.IN_PROGRESS: (_PROMPT_MARK, theme_style(self, ACCENT_CODE)),
+                PlanStepStatus.PENDING: ("□", theme_style(self, TEXT_SECONDARY)),
             }[step.status]
             body.append("\n")
             body.append(f"{marker} ", style=marker_style)
-            body.append(step.step, style=TEXT_BODY)
+            body.append(step.step, style=theme_style(self, TEXT_BODY))
             for comment in comments:
                 if comment.step_index == index:
-                    body.append("\n  · ", style=TEXT_MUTED)
-                    body.append(comment.content, style=TEXT_SECONDARY)
+                    body.append("\n  · ", style=theme_style(self, TEXT_MUTED))
+                    body.append(comment.content, style=theme_style(self, TEXT_SECONDARY))
         return body
 
     def _upsert_plan_entry(

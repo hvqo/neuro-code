@@ -1,6 +1,8 @@
 # ADR 0104: Explicit compaction command projection
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0104-explicit-compaction-command-projection.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: application memory and interface serialization
 

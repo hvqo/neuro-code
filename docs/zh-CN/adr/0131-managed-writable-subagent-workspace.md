@@ -1,5 +1,7 @@
 # ADR 0131：串行受管 Writable Subagent 工作区
 
+[English](../../en/adr/0131-managed-writable-subagent-workspace.md) · **简体中文**
+
 - 状态：已接受；在串行 writable-workspace 纵向切片范围内已证明
 - 日期：2026-08-23
 - 范围：一个有界 writable child、一个 Neuro Code 拥有的 managed worktree 和一个保留的 baseline
@@ -37,8 +39,7 @@ exact base SHA、不可变 `WorktreeHandle`、managed worktree ID、canonical ch
 和 baseline checkpoint ID。Child 使用全新的 session 和全新的 binding，其 cwd 与唯一 workspace
 root 都必须是该 managed worktree。
 
-### Child capability
-
+### 子能力
 Effective child tool set 是显式 parent 与 global policy 的安全交集，范围只有：
 
 - read：`read_file`、`read_files`、`list_dir`、`list_tree`、`glob`、`grep`、`grep_many`、`skill`；
@@ -87,8 +88,7 @@ wait 状态后关闭 handle；只有 signalled process 或已证明不存在的 
 denied 与未预期 API 结果都保守地保持 alive。该 probe 不会 kill process、reclaim owner 或删除
 任何数据。
 
-### Result projection
-
+### 结果投影
 调用方只接收有界且脱敏的 projection：parent task 与 child session ID、终态、response、
 steps/outcome、worktree ID、baseline checkpoint ID、exact base SHA、capability/grant
 fingerprint、final workspace fingerprint、changed/count metadata 和 truncation。它不包含完整

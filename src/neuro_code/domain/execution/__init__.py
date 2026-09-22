@@ -14,6 +14,7 @@ from neuro_code.domain.execution.checkpoints import (
 from neuro_code.domain.execution.outcomes import (
     AgentExecutionOutcome,
     AgentExecutionStatus,
+    BudgetLimitDetail,
     ProgressKind,
     SupervisorDecision,
     SupervisorDecisionKind,
@@ -78,6 +79,7 @@ __all__ = [
     "MAX_VERIFICATION_REQUIREMENTS",
     "AgentExecutionOutcome",
     "AgentExecutionStatus",
+    "BudgetLimitDetail",
     "ExecutionBudget",
     "ExecutionBudgetPressure",
     "ExecutionBudgetUsage",

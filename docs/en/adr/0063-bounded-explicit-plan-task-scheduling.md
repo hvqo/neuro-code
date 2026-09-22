@@ -1,6 +1,8 @@
 # ADR 0063: Bounded Explicit Plan Task Scheduling
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0063-bounded-explicit-plan-task-scheduling.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-02
 
 ## Context

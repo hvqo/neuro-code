@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0124-runtime-parity-and-bounded-integration.md) · **English**
 
-## Status
-
-Accepted for the current pre-alpha runtime.
+- Status: Accepted for the current pre-alpha runtime
+- Date: 2026-08-21
 
 ## Context
 

@@ -71,6 +71,8 @@ class CompositionLifecycleMixin(CompositionRootMixin):
         background_tasks = background_supervisor_factory()
         try:
             config = bootstrap_configuration.load_config(settings.cwd)
+            if settings.interactive_preferences is not None:
+                config = settings.interactive_preferences.apply_config(config)
             config = configuration_ports.override_sandbox(config, settings.sandbox)
             config = configuration_ports.override_provider(
                 config,

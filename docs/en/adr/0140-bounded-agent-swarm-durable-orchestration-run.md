@@ -1,6 +1,8 @@
 # ADR 0140: Bounded Agent Swarm / Durable Orchestration Run
 
-- Status: implemented as an explicit internal P0 vertical slice; final validation is recorded by PR #67 CI, and live/paid provider validation remains out of scope
+[简体中文](../../zh-CN/adr/0140-bounded-agent-swarm-durable-orchestration-run.md) · **English**
+
+- Status: Accepted; implemented as an explicit internal P0 vertical slice; final validation is recorded by PR #67 CI, and live/paid provider validation remains out of scope
 - Date: 2026-08-27
 - Scope: one bounded Planner → Leader → Task DAG → Writable worker orchestration run with at most one existing DAG Replan successor
 - Depends on: ADR 0131, ADR 0132, ADR 0133, ADR 0134, ADR 0135, ADR 0136, ADR 0137, ADR 0138, and ADR 0139

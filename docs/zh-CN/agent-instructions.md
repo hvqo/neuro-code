@@ -24,14 +24,12 @@
 实现改动必须执行：
 
 ```bash
-uv lock --check
-uv run python scripts/check_docs_parity.py
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest --cov=neuro_code --cov-report=term-missing
-uv build
+uv run python scripts/check_all.py
 ```
+
+`scripts/check_all.py` 是完成检查的唯一清单（锁文件校验、文档 parity 与一致性、Ruff、
+format、mypy、pytest 覆盖率、构建）。新增一项门禁只需修改该脚本，不必同步多份手写清单。
+`--quick` 跳过测试与构建。
 
 每当可观察兼容行为或稳定内部边界发生变化时，必须同时更新中英文兼容矩阵以及相关
 架构文档或 ADR。

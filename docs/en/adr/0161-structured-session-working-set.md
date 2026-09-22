@@ -1,5 +1,7 @@
 # ADR 0161: Structured session Working Set
 
+[简体中文](../../zh-CN/adr/0161-structured-session-working-set.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: CM2 bounded durable task-state projection

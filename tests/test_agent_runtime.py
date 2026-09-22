@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
+from neuro_code.application.execution_policy import (
+    DEEP_EXECUTION_BUDGET,
+    NORMAL_EXECUTION_BUDGET,
+    ExecutionBudgetSource,
+)
 from neuro_code.application.memory.compaction import (
     CompactionContextUsage,
     ContextCompactionPlanner,
@@ -462,6 +467,15 @@ class MinimalToolCollection:
     def definitions(self) -> tuple[ToolDefinition, ...]:
         return tuple(tool.definition for tool in self._tools.values())
 
+    def has_synthetic_intent(self, name: str) -> bool:
+        """Mirror the registry rule for this built-in-only test collection."""
+
+        tool = self._tools.get(name)
+        if tool is None:
+            return False
+        properties = tool.definition.input_schema.get("properties") or {}
+        return getattr(tool, "side_effecting", False) and "intent" not in properties
+
 
 class FixtureWorkspaceChangeCheckpoint(WorkspaceChangeCheckpoint):
     """Opaque checkpoint used to prove the runtime does not need snapshots.
@@ -794,6 +808,62 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 (60, 60, 240),
             )
+
+    async def test_per_turn_budget_override_uses_deep_limits_without_mutating_base_runtime(
+        self,
+    ) -> None:
+        scripts = (
+            *(
+                (
+                    ModelToolCall(ToolCall(f"inspect-{step}", "inspect", {})),
+                    ModelCompleted("tool_calls"),
+                )
+                for step in range(49)
+            ),
+            (ModelTextDelta("done"), ModelCompleted("stop")),
+        )
+        provider = ScriptedProvider(scripts)
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = AgentRuntime(
+                provider=provider,
+                tools=MinimalToolCollection(
+                    (IncrementingEvidenceFixtureTool("inspect", "evidence"),)
+                ),
+                workspace_change_observer=EmptyWorkspaceChangeObserver(),
+                permissions=PermissionManager(),
+                tool_context=ToolContext(Path(directory)),
+                execution_budget=NORMAL_EXECUTION_BUDGET,
+                execution_budget_source=ExecutionBudgetSource.IMPLICIT_PROFILE,
+                execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
+                final_output_gate_enabled=False,
+                normal_requirements_enabled=False,
+            )
+
+            result = await runtime.run(
+                "inspect the repository",
+                execution_budget_override=DEEP_EXECUTION_BUDGET,
+            )
+
+        self.assertEqual(result.response, "done")
+        self.assertEqual(result.steps, 50)
+        self.assertEqual(len(provider.calls), 50)
+        usage_events = [
+            event
+            for event in result.events
+            if event.kind is AgentEventKind.EXECUTION_BUDGET_UPDATED
+        ]
+        self.assertTrue(usage_events)
+        self.assertTrue(
+            all(
+                event.data["model_calls_limit"] == 96
+                and event.data["tool_rounds_limit"] == 96
+                and event.data["tool_calls_limit"] == 384
+                for event in usage_events
+            )
+        )
+        self.assertIs(runtime.execution_budget, NORMAL_EXECUTION_BUDGET)
+        self.assertEqual(runtime._loop_runner._max_steps, 48)
+        self.assertEqual(runtime._loop_runner._segment_policy.model_calls, 24)
 
     async def test_batch_first_runtime_guidance_is_request_scoped(self) -> None:
         provider = ScriptedProvider(((ModelTextDelta("done"), ModelCompleted("stop")),))
@@ -3651,6 +3721,52 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(denial[0].content, "permission denied: not now")
             self.assertEqual(observer.capture_roots, [])
 
+    async def test_model_supplied_intent_reaches_the_approval_request_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "note.txt"
+            target.write_text("original", encoding="utf-8")
+            provider = ScriptedProvider(
+                (
+                    (
+                        ModelTextDelta("I will update the note."),
+                        ModelToolCall(
+                            ToolCall(
+                                "edit",
+                                "search_replace",
+                                {
+                                    "path": "note.txt",
+                                    "old": "original",
+                                    "new": "changed",
+                                    "intent": "把 note.txt 的内容改为 changed",
+                                },
+                            )
+                        ),
+                        ModelCompleted("tool_calls"),
+                    ),
+                    (ModelTextDelta("Done."), ModelCompleted("stop")),
+                )
+            )
+            approver = ImmediateApprover(PermissionApproval.allow_once())
+            runtime = AgentRuntime(
+                provider=provider,
+                tools=default_tool_registry(),
+                workspace_change_observer=EmptyWorkspaceChangeObserver(),
+                permissions=PermissionManager(interactive=True),
+                tool_context=ToolContext(root),
+                approver=approver,
+            )
+
+            result = await runtime.run("Edit note.txt")
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "changed")
+            self.assertEqual(len(approver.requests), 1)
+            self.assertEqual(approver.requests[0].intent, "把 note.txt 的内容改为 changed")
+            requested = next(
+                event for event in result.events if event.kind is AgentEventKind.TOOL_REQUESTED
+            )
+            self.assertNotIn("intent", requested.data["arguments"])
+
     async def test_cancelling_an_approval_wait_never_starts_the_tool(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -4477,6 +4593,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     "execution_status": "budget_limited",
                     "execution_reason": "model_call_budget",
                     "recoverable": True,
+                    "execution_detail": None,
                 },
             )
             kinds = [event.kind for event in result.events]
@@ -5331,6 +5448,10 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         runtime.set_interaction_mode(InteractionMode.AUTO)
         self.assertEqual(permissions.mode, PermissionMode.ACCEPT_EDITS)
         self.assertFalse(runtime.auto_mode_unrestricted)
+
+        runtime.set_interaction_mode(InteractionMode.AUTO, unrestricted_auto=True)
+        self.assertEqual(permissions.mode, PermissionMode.BYPASS)
+        self.assertTrue(runtime.auto_mode_unrestricted)
 
         explicit = PermissionManager(mode=PermissionMode.BYPASS, interactive=True)
         explicit_runtime = AgentRuntime(

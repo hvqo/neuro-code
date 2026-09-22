@@ -1,6 +1,8 @@
 # ADR 0093: Enforced context-compaction wall-clock timeout
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0093-enforced-context-compaction-timeout.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: application memory boundary for future Runtime integration
 

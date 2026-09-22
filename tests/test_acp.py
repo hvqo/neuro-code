@@ -458,8 +458,13 @@ class RunnerFixture:
     def auto_mode_unrestricted(self) -> bool:
         return False
 
-    def set_interaction_mode(self, mode: InteractionMode) -> None:
-        del mode
+    def set_interaction_mode(
+        self,
+        mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
+    ) -> None:
+        del mode, unrestricted_auto
 
     async def run(
         self,

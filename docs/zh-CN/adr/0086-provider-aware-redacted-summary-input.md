@@ -1,5 +1,7 @@
 # ADR 0086：Provider 感知的脱敏摘要输入
 
+[English](../../en/adr/0086-provider-aware-redacted-summary-input.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：Stage5DF

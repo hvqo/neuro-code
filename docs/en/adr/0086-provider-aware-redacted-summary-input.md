@@ -1,6 +1,8 @@
 # ADR 0086: Provider-Aware Redacted Summary Input
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0086-provider-aware-redacted-summary-input.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: Stage5DF
 

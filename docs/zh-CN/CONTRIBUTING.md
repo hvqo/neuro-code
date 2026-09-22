@@ -8,14 +8,12 @@ Neuro Code 是行为重写项目，而不是机械翻译项目。修改兼容敏
 ## 必须通过的检查
 
 ```bash
-uv lock --check
-uv run python scripts/check_docs_parity.py
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest --cov=neuro_code --cov-report=term-missing
-uv build
+uv run python scripts/check_all.py
 ```
+
+`scripts/check_all.py` 集中执行锁文件校验、文档 parity 与一致性、Ruff、format、mypy、
+pytest 覆盖率与构建。`--quick` 跳过测试与构建，`--no-uv` 跳过需要 uv 的步骤。新增一项
+门禁只需修改该脚本，不必同步多份手写清单。
 
 所有检查必须在 Python 3.12 上通过。平台相关改动还必须通过 Linux、macOS 和 Windows
 CI 矩阵。

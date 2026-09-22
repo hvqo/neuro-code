@@ -1,8 +1,9 @@
 # ADR 0070：ACP 会话作用域工具输出 artifact 扩展
 
-## 状态
+[English](../../en/adr/0070-acp-session-tool-output-artifact-extension.md) · **简体中文**
 
-阶段 5BQ 接受.
+- 状态：已接受（Stage5BQ）
+- 日期：2026-08-07
 
 ## 背景
 

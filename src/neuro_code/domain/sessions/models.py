@@ -16,6 +16,7 @@ from neuro_code.domain.conversation.messages import Message, SessionItem
 from neuro_code.domain.sandbox.models import SandboxProfile
 
 MAX_SESSION_TITLE_CHARS = 200
+MAX_PROJECT_NAME_CHARS = 120
 
 
 def normalize_session_title(title: str) -> str:
@@ -29,6 +30,53 @@ def normalize_session_title(title: str) -> str:
     return normalized[:MAX_SESSION_TITLE_CHARS]
 
 
+def normalize_project_name(name: str) -> str:
+    """Normalize a persisted project name and enforce the domain invariant.
+
+    规范化持久化的项目名称,并强制执行领域不变量."""
+
+    if not isinstance(name, str):
+        raise ValueError("project name must be text")
+    normalized = " ".join(name.split())
+    if not normalized:
+        raise ValueError("project name must not be empty")
+    if "\x00" in normalized:
+        raise ValueError("project name must not contain NUL characters")
+    return normalized[:MAX_PROJECT_NAME_CHARS]
+
+
+@dataclass(frozen=True, slots=True)
+class SessionProject:
+    """A named group that optional sessions can be organized under.
+
+    Sessions are never required to belong to a project, and deleting a project
+    only detaches its sessions.
+
+    可选会话可以归属的具名分组.会话不强制归属项目,删除项目只解除归属."""
+
+    id: str
+    name: str
+    cwd: str
+    created_at: datetime
+    updated_at: datetime
+
+    def __post_init__(self) -> None:
+        if not all((self.id, self.cwd)):
+            raise ValueError("project identity fields must not be empty")
+        object.__setattr__(self, "name", normalize_project_name(self.name))
+        if self.created_at.tzinfo is None or self.updated_at.tzinfo is None:
+            raise ValueError("project timestamps must be timezone-aware")
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "cwd": self.cwd,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class SessionSummary:
     id: str
@@ -40,6 +88,7 @@ class SessionSummary:
     context_affinity: str | None = None
     sandbox_profile: SandboxProfile | None = None
     title: str | None = None
+    project_id: str | None = None
 
     def __post_init__(self) -> None:
         if not all((self.id, self.cwd, self.provider, self.model)):
@@ -48,6 +97,8 @@ class SessionSummary:
             raise ValueError("session timestamps must be timezone-aware")
         if self.context_affinity == "":
             raise ValueError("session context affinity must not be empty")
+        if self.project_id == "":
+            raise ValueError("session project id must not be empty")
         if self.title is not None:
             object.__setattr__(self, "title", normalize_session_title(self.title))
         if self.sandbox_profile is not None and not isinstance(
@@ -68,6 +119,7 @@ class SessionSummary:
                 self.sandbox_profile.value if self.sandbox_profile is not None else None
             ),
             "title": self.title,
+            "project_id": self.project_id,
         }
 
 
@@ -85,8 +137,11 @@ class SessionSnapshot:
 
 
 __all__ = [
+    "MAX_PROJECT_NAME_CHARS",
     "MAX_SESSION_TITLE_CHARS",
+    "SessionProject",
     "SessionSnapshot",
     "SessionSummary",
+    "normalize_project_name",
     "normalize_session_title",
 ]

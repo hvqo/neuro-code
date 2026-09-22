@@ -29,6 +29,7 @@ from neuro_code.application.sessions.binding import (
 )
 from neuro_code.application.sessions.contracts import (
     InteractionModeSelectionResult,
+    NewSessionResult,
     ReasoningEffortSelectionResult,
     SessionOption,
     SessionSelectionResult,
@@ -429,6 +430,8 @@ class ProfileConversationController:
     async def set_interaction_mode(
         self,
         mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
     ) -> InteractionModeSelectionResult:
         if not isinstance(mode, InteractionMode):
             raise TypeError("interaction mode must be an InteractionMode")
@@ -440,7 +443,9 @@ class ProfileConversationController:
                 previous = self._interaction_mode
                 self._interaction_mode = mode
                 try:
-                    self._binding.runner.set_interaction_mode(mode)
+                    self._binding.runner.set_interaction_mode(
+                        mode, unrestricted_auto=unrestricted_auto
+                    )
                 except BaseException:
                     self._interaction_mode = previous
                     self._binding.runner.set_interaction_mode(previous)
@@ -573,6 +578,33 @@ class ProfileConversationController:
                 stopped_background_tasks=stopped_background_tasks,
             )
 
+    async def start_new_session(self) -> NewSessionResult:
+        """Replace the bound conversation with a fresh, unpersisted one.
+
+        The new session stays lazily persisted: it is written on the first
+        turn, exactly like the session created by a cold start.
+
+        用一个全新的、尚未持久化的会话替换当前绑定.新会话保持惰性持久化:
+        与冷启动创建的会话一样,在首个回合写入."""
+        if self._turn_lock.locked():
+            raise ConfigurationError("cannot start a new session while a turn is running")
+        async with self._turn_lock:
+            previous_session_id = self.session_id
+            binding = await self._binding_factory(self._selected_profile)
+            if binding.runner.session_id is not None:
+                await self._shutdown_binding_tasks(binding)
+                raise ConfigurationError("a new session must start without a session id")
+            try:
+                self._apply_conversation_policies(binding)
+            except BaseException:
+                await self._shutdown_binding_tasks(binding)
+                raise
+            stopped_background_tasks = await self._replace_binding(binding)
+            return NewSessionResult(
+                previous_session_id=previous_session_id,
+                stopped_background_tasks=stopped_background_tasks,
+            )
+
     async def rename_session(self, title: str) -> SessionSummary:
         if self._turn_lock.locked():
             raise ConfigurationError("cannot rename a session while a turn is running")
@@ -645,6 +677,7 @@ class ProfileConversationController:
             selectable=current or (selectable and sandbox_profile_match),
             sandbox_profile=summary.sandbox_profile,
             sandbox_profile_match=sandbox_profile_match,
+            project_id=summary.project_id,
             title=summary.title,
             matched_fields=matched_fields,
             snippet=snippet,

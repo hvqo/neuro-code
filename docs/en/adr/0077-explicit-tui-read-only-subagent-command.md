@@ -1,8 +1,9 @@
 # ADR 0077: Explicit TUI read-only subagent command
 
-## Status
+[简体中文](../../zh-CN/adr/0077-explicit-tui-read-only-subagent-command.md) · **English**
 
-Accepted for Stage5CW.
+- Status: Accepted for Stage5CW
+- Date: 2026-08-08
 
 ## Context
 

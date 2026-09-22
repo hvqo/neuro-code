@@ -1,5 +1,7 @@
 # ADR 0121：Local Safe Web Fetch
 
+[English](../../en/adr/0121-local-safe-web-fetch.md) · **简体中文**
+
 - 状态：已接受；P2 纵向切片
 - 日期：2026-08-19
 - 范围：公网 HTTP(S) 文本抓取、SSRF 防护、有界提取与 MAIN-facing 路由

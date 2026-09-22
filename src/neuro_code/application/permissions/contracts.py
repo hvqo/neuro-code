@@ -17,6 +17,8 @@ from neuro_code.application.permissions.scopes import (
 )
 from neuro_code.domain.permissions.bash_commands import analyze_bash_command
 
+_MAX_INTENT_CHARS = 400
+
 
 class PermissionApprovalKind(StrEnum):
     ALLOW_ONCE = "allow_once"
@@ -88,6 +90,7 @@ class PermissionRequest:
     scope_key: str | None
     scope_candidates: tuple[PermissionScopeCandidate, ...] = ()
     scope_context: PermissionScopeContext | None = None
+    intent: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.call_id, str) or not self.call_id or "\x00" in self.call_id:
@@ -98,6 +101,10 @@ class PermissionRequest:
             value = getattr(self, name)
             if not isinstance(value, str) or not value:
                 raise ValueError(f"permission request {name} must be non-empty")
+        if self.intent is not None and (
+            not isinstance(self.intent, str) or not self.intent or "\x00" in self.intent
+        ):
+            raise ValueError("permission request intent must be non-empty when present")
         if self.scope_key is not None and (
             not isinstance(self.scope_key, str) or not self.scope_key or "\x00" in self.scope_key
         ):
@@ -192,6 +199,7 @@ def build_permission_request(
     *,
     scope_candidates: tuple[PermissionScopeCandidate, ...] = (),
     scope_context: PermissionScopeContext | None = None,
+    intent: str | None = None,
 ) -> PermissionRequest:
     """Build a bounded UI description and opaque exact-action session scope.
 
@@ -240,6 +248,9 @@ def build_permission_request(
         scope_key = None
     else:
         scope_key = hashlib.sha256(scope_payload.encode("utf-8")).hexdigest() if cacheable else None
+    bounded_intent: str | None = None
+    if isinstance(intent, str) and intent.strip():
+        bounded_intent = " ".join(intent.split())[:_MAX_INTENT_CHARS]
     return PermissionRequest(
         call_id,
         tool_name,
@@ -248,6 +259,7 @@ def build_permission_request(
         scope_key,
         tuple(scope_candidates),
         scope_context,
+        bounded_intent,
     )
 
 

@@ -1,6 +1,8 @@
 # ADR 0129: Application-owned managed Git worktree capability
 
-- Status: accepted for the first local lifecycle slice
+[简体中文](../../zh-CN/adr/0129-managed-git-worktree-capability.md) · **English**
+
+- Status: Accepted for the first local lifecycle slice
 - Date: 2026-08-22
 - Scope: local Git worktree creation, ownership, inspection, reconciliation, and safe removal
 

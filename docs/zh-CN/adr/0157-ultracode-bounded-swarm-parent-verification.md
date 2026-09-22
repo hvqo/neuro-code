@@ -1,6 +1,8 @@
 # ADR 0157：结构化 BOUNDED_SWARM parent verification
 
-- 状态：Accepted
+[English](../../en/adr/0157-ultracode-bounded-swarm-parent-verification.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-09-08
 - 范围：VF-4c 结构化 UltraCode parent verification
 

@@ -1,5 +1,7 @@
 # ADR 0118：Hosted Web Search 执行与 Sidecar Routing
 
+[English](../../en/adr/0118-hosted-web-search-execution-and-sidecar-routing.md) · **简体中文**
+
 - 状态：已接受；P1 纵向切片
 - 日期：2026-08-19
 - 范围：Canonical Web Search、OpenAI/xAI hosted search、route 选择和 MAIN tool 接线

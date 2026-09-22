@@ -16,6 +16,7 @@ from neuro_code.interfaces.tui.state import (
 from neuro_code.interfaces.tui.text import ui_text
 from neuro_code.interfaces.tui.theme import (
     TOOL_DETAIL_STYLE,
+    theme_style,
 )
 from neuro_code.interfaces.tui.tool_activity import (
     ToolDisclosureLevel,
@@ -265,7 +266,7 @@ class ToolActivityEventsMixin(TuiAppControllerMixin):
             return
         group = self._tool_activity_group_by_entry.get(state.entry_index)
         if group is None:
-            body = Text(self._tool_summary_line(state), style=TOOL_DETAIL_STYLE)
+            body = Text(self._tool_summary_line(state), style=theme_style(self, TOOL_DETAIL_STYLE))
             self._entries[state.entry_index] = TranscriptEntry("tool", body.plain)
             widget = self._entry_widgets[state.entry_index]
             widget.update(self._render_tool_feedback(state, body=body))

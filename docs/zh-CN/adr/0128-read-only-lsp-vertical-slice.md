@@ -1,9 +1,11 @@
 # ADR 0128：只读 LSP 纵向切片
 
-## 状态
+[English](../../en/adr/0128-read-only-lsp-vertical-slice.md) · **简体中文**
 
-接受 `codex/lsp-vertical-slice` stacked implementation。本切片刻意保持只读，
-不宣称支持工作树、检查点、rename、format、code action 或 workspace edit。
+- 状态：已接受（`codex/lsp-vertical-slice` stacked implementation）
+- 日期：2026-08-22
+
+本切片刻意保持只读， 不宣称支持工作树、检查点、rename、format、code action 或 workspace edit。
 
 ## 决策
 

@@ -1,5 +1,7 @@
 # ADR 0084：确定性上下文压缩评估契约
 
+[English](../../en/adr/0084-context-compaction-assessment-contract.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：Stage5DD

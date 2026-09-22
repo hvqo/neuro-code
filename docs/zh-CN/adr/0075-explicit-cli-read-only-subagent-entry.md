@@ -1,8 +1,9 @@
 # ADR 0075：显式 CLI 只读子代理入口
 
-## 状态
+[English](../../en/adr/0075-explicit-cli-read-only-subagent-entry.md) · **简体中文**
 
-Stage5CU 已接受.
+- 状态：已接受（Stage5CU）
+- 日期：2026-08-08
 
 ## 背景
 

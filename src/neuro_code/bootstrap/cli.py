@@ -11,11 +11,13 @@ import argparse
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from neuro_code.application.acp.contracts import AcpSessionMetadata
 from neuro_code.application.acp.service import AcpApplicationService
+from neuro_code.application.execution_policy import ExecutionBudgetSource, ExecutionProfile
 from neuro_code.application.permissions.broker import SessionApprovalBroker
 from neuro_code.application.ports.configuration import AppConfig, override_provider
 from neuro_code.application.ports.git_inspection import GitInspectionApplication
@@ -239,6 +241,7 @@ class BootstrapCliServices:
                     provider_catalog=provider_catalog,
                     socks_supported=socks_support_available(),
                     language=await ui_preferences.load_language(),
+                    ui_theme=await ui_preferences.load_theme(),
                     first_run=not managed_provider_settings.profiles,
                     initial_profile=(
                         preflight_config.selected_provider
@@ -255,7 +258,45 @@ class BootstrapCliServices:
                     return 0
                 continue
 
-            application = await self.open_application(settings)
+            preferences = await ui_preferences.load_effective_agent_preferences(
+                preflight_config.cwd
+            )
+            budget_explicit = (
+                getattr(args, "max_steps", None) is not None
+                or getattr(args, "execution_profile", None) is not None
+            )
+            interactive_settings = settings
+            if not budget_explicit and (
+                preferences.max_steps is not None or preferences.execution_profile is not None
+            ):
+                interactive_settings = replace(
+                    settings,
+                    max_steps=preferences.max_steps,
+                    execution_profile=ExecutionProfile(preferences.execution_profile or "normal"),
+                    execution_budget_source=(
+                        ExecutionBudgetSource.EXPLICIT_MAX_STEPS
+                        if preferences.max_steps is not None
+                        else ExecutionBudgetSource.EXPLICIT_PROFILE
+                    ),
+                )
+            interactive_settings = replace(
+                interactive_settings,
+                max_steps=(
+                    interactive_settings.max_steps
+                    if interactive_settings.execution_budget_source
+                    is ExecutionBudgetSource.EXPLICIT_MAX_STEPS
+                    else None
+                ),
+                interactive_preferences=preferences,
+                failover=False
+                if args.no_failover
+                else (
+                    preferences.failover if preferences.failover is not None else settings.failover
+                ),
+                verification_command=settings.verification_command
+                or preferences.verification_command,
+            )
+            application = await self.open_application(interactive_settings)
             try:
                 user_interaction = TuiUserInteraction()
                 if args.resume is not None:
@@ -391,6 +432,7 @@ class BootstrapCliServices:
                 session_selection_service = application.bind_session_selection_controller(
                     controller
                 )
+                session_library_service = application.bind_session_library_service(controller)
                 plan_execution_service = application.bind_plan_execution_controller(controller)
                 plan_scheduling_service = application.bind_plan_scheduling_controller(controller)
                 queued_plan_execution_service = application.bind_queued_plan_execution_controller(
@@ -443,6 +485,7 @@ class BootstrapCliServices:
                     interaction_mode_controller=controller,
                     session_controller=controller,
                     session_selection_service=session_selection_service,
+                    session_library_service=session_library_service,
                     task_controller=controller,
                     session_task_controller=controller,
                     plan_controller=controller,
@@ -455,10 +498,12 @@ class BootstrapCliServices:
                     subagent_relationship_query=subagent_relationship_query,
                     subagent_relationship_lifecycle=subagent_relationship_lifecycle,
                     ui_preferences=ui_preferences,
+                    agent_preferences=preferences,
                     provider_settings_store=provider_settings_store,
                     provider_catalog=provider_catalog,
                     managed_provider_settings=managed_provider_settings,
                     language=language,
+                    ui_theme=await ui_preferences.load_theme(),
                     initial_items=controller.items,
                     provider_name=controller.provider_name,
                     model_name=controller.model_name,

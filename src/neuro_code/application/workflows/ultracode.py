@@ -21,6 +21,11 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from neuro_code.application.execution_policy import (
+    NORMAL_EXECUTION_BUDGET,
+    ExecutionBudgetPolicy,
+    ExecutionBudgetSource,
+)
 from neuro_code.application.ports.result_adoption import ResultAdoptionRecord
 from neuro_code.application.ports.storage import SessionStore
 from neuro_code.application.ports.ultracode import (
@@ -44,6 +49,7 @@ from neuro_code.domain.conversation.messages import ContentPart, SessionItem
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.conversation.request import context_fingerprints
 from neuro_code.domain.execution import (
+    ExecutionBudget,
     TurnCancellationPolicy,
     TurnInput,
     TurnRecoveryAttempt,
@@ -171,6 +177,56 @@ class UltracodeDelegationPolicy:
             len(prompt.encode("utf-8")) <= MAX_SWARM_OBJECTIVE_BYTES
         ):
             return UltracodeDelegationDecision.BOUNDED_SWARM
+        scope_markers = (
+            "entire codebase",
+            "whole codebase",
+            "entire repository",
+            "whole repository",
+            "entire project",
+            "whole project",
+            "repository-wide",
+            "codebase-wide",
+            "project-wide",
+            "整个代码库",
+            "整个仓库",
+            "整个项目",
+            "全代码库",
+            "全仓库",
+            "全项目",
+            "项目代码",
+            "仓库代码",
+            "项目的代码",
+            "仓库的代码",
+        )
+        improvement_markers = (
+            "analyze",
+            "analysis",
+            "review",
+            "audit",
+            "inspect",
+            "optimization",
+            "optimize",
+            "improvement",
+            "improvements",
+            "improve",
+            "issue",
+            "issues",
+            "risk",
+            "risks",
+            "分析",
+            "审查",
+            "检查",
+            "优化",
+            "改进",
+            "问题",
+            "风险",
+        )
+        if (
+            any(marker in bounded for marker in scope_markers)
+            and any(marker in bounded for marker in improvement_markers)
+            and len(prompt.encode("utf-8")) <= MAX_SWARM_OBJECTIVE_BYTES
+        ):
+            return UltracodeDelegationDecision.BOUNDED_SWARM
         # The bounded Swarm objective contract is shared with AgentSwarm
         # validation. Keep larger valid Ultracode prompts on MAIN_MAX at
         # decision time so they never enter a downstream request that rejects
@@ -184,6 +240,12 @@ class UltracodeParentRunner(Protocol):
 
     @property
     def reasoning_effort(self) -> ReasoningEffort: ...
+
+    @property
+    def execution_budget(self) -> ExecutionBudget: ...
+
+    @property
+    def execution_budget_source(self) -> ExecutionBudgetSource: ...
 
     @property
     def items(self) -> tuple[SessionItem, ...]: ...
@@ -203,6 +265,7 @@ class UltracodeParentRunner(Protocol):
         verification_requirements: VerificationRequirementsSnapshot | None = None,
         verification_workspace_mutation_id: str | None = None,
         resume_existing_attempt: bool = False,
+        execution_budget_override: ExecutionBudget | None = None,
     ) -> AgentRunResult: ...
 
     async def commit_external_turn(
@@ -355,6 +418,7 @@ class UltracodeDelegationApplicationService:
         execution_id = ultracode_execution_id(session_id, turn_id)
         swarm_id = ultracode_swarm_run_id(execution_id)
         context_fp = _context_fingerprint(runner.items)
+        requested_main_max_budget = self._main_max_budget(runner)
         async with self._lock:
             existing = await self._store.get_ultracode_execution(execution_id)
             if existing is not None:
@@ -384,6 +448,7 @@ class UltracodeDelegationApplicationService:
                 decision=decision,
                 swarm_id=swarm_id,
                 verification_requirements=effective_requirements,
+                requested_main_max_budget=requested_main_max_budget,
             )
             if run.state is UltracodeExecutionState.COMPLETED:
                 return await self._recover_completed(run, request, sink=sink)
@@ -454,6 +519,21 @@ class UltracodeDelegationApplicationService:
             raise ConfigurationError("Ultracode parent runner does not expose the required seam")
         return cast(UltracodeParentRunner, runner)
 
+    @staticmethod
+    def _main_max_budget(runner: UltracodeParentRunner) -> ExecutionBudget:
+        """Resolve one request-scoped MAIN_MAX budget without mutating the runner."""
+
+        budget = getattr(runner, "execution_budget", NORMAL_EXECUTION_BUDGET)
+        source = getattr(
+            runner,
+            "execution_budget_source",
+            ExecutionBudgetSource.EXPLICIT_PROFILE,
+        )
+        try:
+            return ExecutionBudgetPolicy.for_ultracode_main_max(budget, source)
+        except (TypeError, ValueError) as error:
+            raise ConfigurationError(f"Ultracode execution budget is invalid: {error}") from error
+
     def _require_deterministic_runner(self) -> UltracodeParentRunner:
         runner = self._require_runner()
         if not callable(getattr(runner, "commit_deterministic_turn", None)):
@@ -484,6 +564,7 @@ class UltracodeDelegationApplicationService:
         decision: UltracodeDelegationDecision | None,
         swarm_id: str,
         verification_requirements: VerificationRequirementsSnapshot | None,
+        requested_main_max_budget: ExecutionBudget,
     ) -> UltracodeExecution:
         existing = await self._store.get_ultracode_execution(execution_id)
         if existing is not None:
@@ -508,6 +589,21 @@ class UltracodeDelegationApplicationService:
             provider_name = existing.provider_name
             model_name = existing.model_name
             context_affinity = existing.context_affinity
+            if existing.decision is UltracodeDelegationDecision.MAIN_MAX:
+                if existing.terminal:
+                    main_max_execution_budget = existing.main_max_execution_budget
+                elif existing.main_max_execution_budget is None:
+                    raise ConfigurationError(
+                        "Ultracode MAIN_MAX recovery requires a durable execution budget"
+                    )
+                elif existing.main_max_execution_budget != requested_main_max_budget:
+                    raise ConfigurationError(
+                        "Ultracode MAIN_MAX execution budget identity conflicts"
+                    )
+                else:
+                    main_max_execution_budget = existing.main_max_execution_budget
+            else:
+                main_max_execution_budget = None
         else:
             if decision is None:
                 decision = self._policy.decide(turn_input.prompt)
@@ -518,6 +614,11 @@ class UltracodeDelegationApplicationService:
             provider_name = provider.provider_name
             model_name = provider.model_name
             context_affinity = getattr(provider, "context_affinity", None)
+            main_max_execution_budget = (
+                requested_main_max_budget
+                if decision is UltracodeDelegationDecision.MAIN_MAX
+                else None
+            )
         if decision is None:
             raise ConfigurationError("Ultracode delegation decision is missing")
         now = self._clock().astimezone(UTC)
@@ -541,6 +642,7 @@ class UltracodeDelegationApplicationService:
             created_at=now,
             updated_at=now,
             verification_requirements=verification_requirements,
+            main_max_execution_budget=main_max_execution_budget,
         )
         try:
             claim = await self._store.claim_ultracode_execution(
@@ -615,6 +717,7 @@ class UltracodeDelegationApplicationService:
             turn_id=run.parent_turn_id,
             ultracode_execution_id=run.execution_id,
             verification_requirements=run.verification_requirements,
+            execution_budget_override=run.main_max_execution_budget,
         )
         response = _response(result.response)
         completed = await self._transition(

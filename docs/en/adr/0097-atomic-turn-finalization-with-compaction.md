@@ -1,6 +1,8 @@
 # ADR 0097: Explicit atomic turn finalization with compaction
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0097-atomic-turn-finalization-with-compaction.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: `SessionStore` and SQLite persistence
 

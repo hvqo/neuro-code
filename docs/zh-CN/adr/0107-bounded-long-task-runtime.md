@@ -1,8 +1,9 @@
 # ADR 0107：有界长任务 Runtime 指引、压缩与分段
 
-## 状态
+[English](../../en/adr/0107-bounded-long-task-runtime.md) · **简体中文**
 
-已接受。
+- 状态：已接受
+- 日期：2026-08-09
 
 ## 背景
 

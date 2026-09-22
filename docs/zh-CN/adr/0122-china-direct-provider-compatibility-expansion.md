@@ -1,5 +1,7 @@
 # ADR 0122：中国直连 Provider 兼容性扩展
 
+[English](../../en/adr/0122-china-direct-provider-compatibility-expansion.md) · **简体中文**
+
 - 状态：已接受；P3A 纵向切片
 - 日期：2026-08-20
 - 范围：Kimi/Moonshot、GLM/Zhipu、MiniMax 的直连 OpenAI-compatible Chat API
@@ -102,8 +104,7 @@ context affinity 包含 profile、service、protocol、canonical endpoint 与 mo
 fallback 只能使用 canonical provider-neutral projection，不能把 Kimi thinking state 或
 MiniMax `reasoning_details` replay 给另一家。
 
-### Web integration
-
+### Web 集成
 Kimi、GLM、MiniMax 仍是普通 MAIN Chat Provider。现有 composition 会通过配置的 WEB_SEARCH
 sidecar 解析 local `web_search`，并在 mode 允许时注册 P2 local `web_fetch`。因此三家都能
 通过同一条 permission-owned Web architecture 获得外部知识能力，但本轮不声称 Kimi

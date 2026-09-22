@@ -1,6 +1,8 @@
 # ADR 0137: Parallel-aware Leader / bounded wave scheduling
 
-- Status: implemented as an explicit internal P0 vertical slice; final rating waits for merge-ref CI
+[简体中文](../../zh-CN/adr/0137-parallel-aware-leader-bounded-wave-scheduling.md) · **English**
+
+- Status: Accepted; implemented as an explicit internal P0 vertical slice; final rating waits for merge-ref CI
 - Date: 2026-08-26
 - Scope: one zero-tool Leader over one already-published bounded Task DAG
 - Supersedes: the serialized execution portion of ADR 0135; ADR 0135 remains the historical decision contract

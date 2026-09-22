@@ -1,10 +1,11 @@
-# ADR 0074：只读父子子 Agent 关系投影
+# ADR 0169：只读父子子 Agent 关系投影
 
-[English](../../en/adr/0074-read-only-parent-child-subagent-relationship-projection.md) · **简体中文**
+[English](../../en/adr/0169-read-only-parent-child-subagent-relationship-projection.md) · **简体中文**
 
-## 状态
+> 为保持 ADR 编号唯一，由 ADR 0074 重编号而来；决策内容未变。
 
-Stage5CT 已接受。
+- 状态：已接受（Stage5CT）
+- 日期：2026-08-08
 
 ## 背景
 

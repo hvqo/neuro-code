@@ -1,6 +1,8 @@
 # ADR 0088：Provider 驱动的有界上下文摘要生成
 
-- 状态：接受 Stage5DH 垂直切片
+[English](../../en/adr/0088-provider-backed-bounded-context-summary-generation.md) · **简体中文**
+
+- 状态：已接受（Stage5DH 垂直切片）
 - 日期：2026-08-08
 - 范围：application memory 与现有 ModelProvider 端口
 

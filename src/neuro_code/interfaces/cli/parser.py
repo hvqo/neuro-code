@@ -30,6 +30,13 @@ EXECUTION_CONTROL_CHOICES = {
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-p", "--single", "--print", dest="prompt", metavar="PROMPT")
     parser.add_argument("--cwd", type=Path, help="working directory")
+    parser.add_argument(
+        "--attach",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="attach a file or image to the prompt (repeatable)",
+    )
     parser.add_argument("-m", "--model", help="model identifier")
     parser.add_argument("--provider", help="named provider profile")
     parser.add_argument("--base-url", help="provider API base URL")
@@ -59,7 +66,7 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--execution-profile",
         choices=tuple(profile.value for profile in ExecutionProfile),
-        default=ExecutionProfile.NORMAL.value,
+        default=None,
         help="ordinary Agent execution budget profile",
     )
     parser.add_argument(
@@ -121,7 +128,7 @@ def _add_acp_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--execution-profile",
         choices=tuple(profile.value for profile in ExecutionProfile),
-        default=ExecutionProfile.NORMAL.value,
+        default=None,
         help="ordinary Agent execution budget profile",
     )
     parser.add_argument(

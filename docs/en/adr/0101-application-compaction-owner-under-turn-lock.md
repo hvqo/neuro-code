@@ -1,6 +1,8 @@
 # ADR 0101: Application compaction owner under the turn lock
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0101-application-compaction-owner-under-turn-lock.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: `AgentConversation` and `ConversationRunner`
 

@@ -1,5 +1,7 @@
 # ADR 0158: Turn workspace checkpoint and undo
 
+[简体中文](../../zh-CN/adr/0158-turn-workspace-checkpoint-undo.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-11
 - Scope: B1 latest-only normal-turn workspace undo

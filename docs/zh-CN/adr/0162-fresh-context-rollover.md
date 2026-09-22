@@ -1,6 +1,8 @@
 # ADR 0162：Fresh active-context rollover
 
-- 状态：Accepted
+[English](../../en/adr/0162-fresh-context-rollover.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-09-15
 - 范围：CM3a 有界 normal-agent context lifecycle control
 

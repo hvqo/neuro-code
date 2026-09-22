@@ -2,7 +2,7 @@
 
 [简体中文](../../zh-CN/adr/0035-partial-acp-v1-stdio.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-07-19
 
 ## Context

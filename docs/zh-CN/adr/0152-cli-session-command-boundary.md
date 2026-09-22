@@ -1,12 +1,13 @@
 # ADR 0152：CLI Session Command 边界
 
-- 状态：Accepted
+[English](../../en/adr/0152-cli-session-command-boundary.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-08-31
 - 范围：叠加在 PR #80 之上的有界 CLI session-command execution 切片
 - 依赖：PR #80 以及既有 CLI/bootstrap 和 session application boundary
 
-## Context
-
+## 背景
 精确冻结的 PR #80 head 是
 `11a6c610fe7f9e949d5a5c2f3aab2adb2358385f`，其 base 是
 `codex/acp-transport-boundary` 的
@@ -23,8 +24,7 @@ consolidation 必须足够小且可审计，不能改变 CLI grammar、applicati
 
 审计针对 PR #80 exact head 完成，并在移动代码前结束。
 
-### Boundary symbol
-
+### 边界符号
 `neuro_code.cli` 中属于 session 的 execution symbol 是：
 
 - `_sessions_command`，解析后的 command 的唯一 async implementation；
@@ -84,8 +84,7 @@ behavior，包括 JSON/plain projection 与 validation。本切片增加 direct 
 dispatch equivalence、error mapping、JSON/plain equivalence、compact/recovery retry cleanup、
 identity alias 和 import-direction coverage。
 
-## Decision
-
+## 决策
 `neuro_code.interfaces.cli.sessions` 是 `run_sessions_command(args, services)` 的 canonical owner。
 它拥有已经解析的以下 operation 的 validation、application-service selection、execution 和
 presentation：

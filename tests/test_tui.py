@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import inspect
 import tempfile
 import unittest
@@ -12,7 +13,7 @@ from unittest.mock import patch
 
 from pygments.token import Keyword, Name, Number, String
 from textual import events
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.geometry import Size
 from textual.widgets import Button, Input, Label, Static, TextArea
 from textual.widgets.text_area import Selection
@@ -28,6 +29,7 @@ from neuro_code.application.permissions.scopes import (
     PermissionScopeContext,
     PermissionScopeKind,
 )
+from neuro_code.application.ports.agent_preferences import AgentPreferences
 from neuro_code.application.ports.http import HttpClientPolicy
 from neuro_code.application.ports.provider_catalog import (
     ProviderCatalogError,
@@ -52,6 +54,7 @@ from neuro_code.application.ports.tools import (
 from neuro_code.application.providers import ChangeProviderRequest, ProviderChangeService
 from neuro_code.application.runtime.agent import AgentRunResult, EventSink
 from neuro_code.application.sessions import SessionTurnService
+from neuro_code.application.sessions.contracts import NewSessionResult
 from neuro_code.application.sessions.profile_conversation import (
     InteractionModeSelectionResult,
     ProviderOption,
@@ -94,6 +97,7 @@ from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.messages import (
     ContentPart,
+    ContentPartKind,
     ContextItemKind,
     Message,
     PreservedContextItem,
@@ -114,7 +118,7 @@ from neuro_code.domain.execution import (
 from neuro_code.domain.plans import PlanComment, PlanStep, PlanStepStatus, SessionPlan
 from neuro_code.domain.sandbox import SandboxProfile
 from neuro_code.domain.session_tasks import SessionTask, SessionTaskKind, SessionTaskStatus
-from neuro_code.domain.sessions import SessionSummary
+from neuro_code.domain.sessions import SessionProject, SessionSummary
 from neuro_code.domain.workspace_undo import (
     WorkspaceUndoResult,
     WorkspaceUndoState,
@@ -122,28 +126,38 @@ from neuro_code.domain.workspace_undo import (
 from neuro_code.infrastructure.providers.provider_settings import JsonProviderSettingsStore
 from neuro_code.interfaces.tui import recoverable_terminal_status
 from neuro_code.interfaces.tui.app import NeuroCodeApp
-from neuro_code.interfaces.tui.clipboard import ClipboardWriteResult
+from neuro_code.interfaces.tui.clipboard import ClipboardImage, ClipboardWriteResult
 from neuro_code.interfaces.tui.screens import (
     BackgroundWakeSettingsScreen,
+    ConfirmActionScreen,
+    FullAccessConfirmScreen,
     InteractionModeScreen,
     LanguageSettingsScreen,
     NetworkProxySettingsScreen,
     PermissionApprovalScreen,
+    PermissionSettingsScreen,
+    ProjectPickerScreen,
     ProviderSelectionScreen,
     ProviderSettingsScreen,
     ProviderSetupApp,
     ReasoningEffortScreen,
+    SessionLibraryScreen,
     SessionSelectionScreen,
     SettingsScreen,
+    TextValueScreen,
     TranscriptCopyScreen,
 )
 from neuro_code.interfaces.tui.state import TUI_RELOAD_PROVIDER_SETTINGS, CollapsingPulseAnimation
+from neuro_code.interfaces.tui.text import ui_text
 from neuro_code.interfaces.tui.theme import (
+    ACCENT,
+    ACCENT_BLUE,
     ACCENT_CODE,
     ACCENT_ERROR,
     ACCENT_LINK,
     ACCENT_NUMBER,
     ACCENT_SUCCESS,
+    ACCENT_VIOLET,
     ACCENT_WARNING,
     BACKGROUND,
     BORDER_FOCUS,
@@ -162,12 +176,14 @@ from neuro_code.interfaces.tui.widgets import (
     AssistantMarkdown,
     AssistantMessage,
     ConversationMessage,
+    MenuOptionButton,
     PromptInput,
     ToolFeedbackMessage,
     TranscriptScroll,
 )
-from neuro_code.shared.errors import ProviderError
+from neuro_code.shared.errors import ConfigurationError, ProviderError
 from neuro_code.shared.ui_language import UiLanguage
+from neuro_code.shared.ui_theme import UiTheme
 
 
 def rendered_text(app: NeuroCodeApp, renderable: object, *, width: int = 120) -> str:
@@ -732,6 +748,54 @@ class FinalizingTuiConversation:
         )
 
 
+class BudgetLimitedTuiConversation:
+    @property
+    def session_id(self) -> str:
+        return "budget-limited-session"
+
+    async def run(
+        self,
+        prompt: str,
+        *,
+        sink: EventSink | None = None,
+        cancellation_policy: TurnCancellationPolicy = TurnCancellationPolicy.RETAIN,
+    ) -> AgentRunResult:
+        del prompt, cancellation_policy
+        events = (
+            AgentEvent.create(
+                1,
+                AgentEventKind.EXECUTION_BUDGET_UPDATED,
+                {
+                    "model_calls_used": 3,
+                    "model_calls_limit": 48,
+                    "tool_rounds_used": 2,
+                    "tool_rounds_limit": 48,
+                    "tool_calls_used": 7,
+                    "tool_calls_limit": 8,
+                    "pressure": "final_stage",
+                },
+            ),
+            AgentEvent.create(2, AgentEventKind.TEXT_DELTA, {"text": "bounded response"}),
+            AgentEvent.create(
+                3,
+                AgentEventKind.TURN_COMPLETED,
+                {
+                    "step": 3,
+                    "duration_seconds": 0.25,
+                    "execution_status": "budget_limited",
+                    "execution_reason": "tool_call_budget",
+                    "recoverable": True,
+                },
+            ),
+        )
+        if sink is not None:
+            for event in events:
+                outcome = sink(event)
+                if inspect.isawaitable(outcome):
+                    await outcome
+        return AgentRunResult(self.session_id, "bounded response", (), (), events, 3)
+
+
 class GatedTuiConversation:
     """Project the runtime's committed event boundary into the TUI fixture."""
 
@@ -825,9 +889,19 @@ class UnknownTerminalMetadataTuiConversation:
 
 class UiPreferencesFixture:
     def __init__(self) -> None:
+        self.saved_themes: list[UiTheme] = []
         self.saved: list[UiLanguage] = []
         self.saved_efforts: list[ReasoningEffort] = []
         self.saved_modes: list[InteractionMode] = []
+        self.agent_preferences = AgentPreferences()
+        self.project_agent_preferences = AgentPreferences()
+        self.saved_agent_preferences: list[tuple[AgentPreferences, Path | None]] = []
+
+    async def load_theme(self) -> UiTheme:
+        return UiTheme.PORCELAIN
+
+    async def save_theme(self, theme: UiTheme) -> None:
+        self.saved_themes.append(theme)
 
     async def load_language(self) -> UiLanguage:
         return UiLanguage.ENGLISH
@@ -846,6 +920,31 @@ class UiPreferencesFixture:
 
     async def save_interaction_mode(self, mode: InteractionMode) -> None:
         self.saved_modes.append(mode)
+
+    async def load_agent_preferences(self, workspace: Path | None = None) -> AgentPreferences:
+        if workspace is not None:
+            return self.project_agent_preferences
+        return self.agent_preferences
+
+    async def save_agent_preferences(
+        self, preferences: AgentPreferences, workspace: Path | None = None
+    ) -> None:
+        self.saved_agent_preferences.append((preferences, workspace))
+        if workspace is not None:
+            self.project_agent_preferences = preferences
+        else:
+            self.agent_preferences = preferences
+
+    async def load_effective_agent_preferences(self, workspace: Path) -> AgentPreferences:
+        values: dict[str, object] = {}
+        for source in (self.agent_preferences, self.project_agent_preferences):
+            for name, value in (
+                (field.name, getattr(source, field.name))
+                for field in dataclasses.fields(AgentPreferences)
+            ):
+                if value is not None:
+                    values[name] = value
+        return AgentPreferences(**values)
 
 
 class ProviderCatalogFixture:
@@ -909,6 +1008,7 @@ class ProfileTuiController:
         self.selections: list[str] = []
         self.effort_selections: list[ReasoningEffort] = []
         self.mode_selections: list[InteractionMode] = []
+        self.unrestricted_requests: list[InteractionMode] = []
         self.plan_execution_calls = 0
         self._reasoning_effort = ReasoningEffort.HIGH
         self._interaction_mode = InteractionMode.NORMAL
@@ -1004,14 +1104,18 @@ class ProfileTuiController:
     async def set_interaction_mode(
         self,
         mode: InteractionMode,
+        *,
+        unrestricted_auto: bool = False,
     ) -> InteractionModeSelectionResult:
         changed = mode is not self._interaction_mode
         self.mode_selections.append(mode)
         self._interaction_mode = mode
+        if unrestricted_auto:
+            self.unrestricted_requests.append(mode)
         return InteractionModeSelectionResult(
             requested=mode,
             changed=changed,
-            auto_unrestricted=False,
+            auto_unrestricted=unrestricted_auto,
         )
 
     async def schedule_plan(self) -> SessionTask:
@@ -1239,6 +1343,172 @@ class SessionTuiController:
             timestamp,
             title=title,
         )
+
+
+class AttachmentCapturingTuiConversation(TuiConversation):
+    """Records the content parts handed to the runner for attachment tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.captured_parts: tuple[ContentPart, ...] | None = None
+
+    async def run(
+        self,
+        prompt: str,
+        *,
+        sink: EventSink | None = None,
+        cancellation_policy: TurnCancellationPolicy = TurnCancellationPolicy.RETAIN,
+        content_parts: tuple[ContentPart, ...] = (),
+    ) -> AgentRunResult:
+        self.captured_parts = content_parts
+        return await super().run(
+            prompt,
+            sink=sink,
+            cancellation_policy=cancellation_policy,
+        )
+
+
+class SessionLibraryTuiController:
+    """In-memory session/project library used by the management-screen tests.
+
+    供管理界面测试使用的内存会话/项目库."""
+
+    def __init__(self, *, current_session: str | None = "current-session") -> None:
+        timestamp = datetime(2026, 7, 18, 9, 30, tzinfo=UTC)
+        self._current_session = current_session
+        self.timestamp = timestamp
+        self.projects: list[SessionProject] = [
+            SessionProject("project-1", "Alpha", "/workspace", timestamp, timestamp)
+        ]
+        self.options = (
+            SessionOption(
+                "current-session",
+                "first",
+                "first-model",
+                timestamp,
+                "first",
+                current_session == "current-session",
+                True,
+                True,
+                title="Current workspace session",
+                project_id="project-1",
+            ),
+            SessionOption(
+                "target-session-123456789",
+                "second",
+                "second-model",
+                timestamp,
+                "second",
+                current_session == "target-session-123456789",
+                True,
+                True,
+                title="Escaped quoted session",
+            ),
+        )
+        self.queries: list[str | None] = []
+        self.created_projects: list[tuple[str, str]] = []
+        self.renamed_projects: list[tuple[str, str]] = []
+        self.deleted_projects: list[str] = []
+        self.renamed_sessions: list[tuple[str, str]] = []
+        self.deleted_sessions: list[str] = []
+        self.assignments: list[tuple[str, str | None]] = []
+        self.new_session_calls = 0
+
+    def active_session_id(self) -> str | None:
+        return self._current_session
+
+    async def list_projects(self) -> tuple[SessionProject, ...]:
+        return tuple(self.projects)
+
+    async def list_sessions(self, query: str | None = None) -> tuple[SessionOption, ...]:
+        self.queries.append(query)
+        if query is None:
+            return self.options
+        return tuple(
+            option
+            for option in self.options
+            if query.casefold() in f"{option.title or ''}".casefold()
+        )
+
+    async def create_project(self, name: str, cwd: str) -> SessionProject:
+        self.created_projects.append((name, cwd))
+        project = SessionProject(
+            f"project-{len(self.projects) + 1}",
+            name,
+            cwd,
+            self.timestamp,
+            self.timestamp,
+        )
+        self.projects.append(project)
+        return project
+
+    async def rename_project(self, project_id: str, name: str) -> SessionProject:
+        self.renamed_projects.append((project_id, name))
+        renamed = SessionProject(
+            project_id,
+            name,
+            "/workspace",
+            self.timestamp,
+            self.timestamp,
+        )
+        self.projects = [
+            renamed if project.id == project_id else project for project in self.projects
+        ]
+        return renamed
+
+    async def delete_project(self, project_id: str) -> None:
+        self.deleted_projects.append(project_id)
+        self.projects = [project for project in self.projects if project.id != project_id]
+        self.options = tuple(
+            replace(option, project_id=None) if option.project_id == project_id else option
+            for option in self.options
+        )
+
+    async def rename_session(self, session_id: str, title: str) -> SessionSummary:
+        self.renamed_sessions.append((session_id, title))
+        self.options = tuple(
+            replace(option, title=title) if option.session_id == session_id else option
+            for option in self.options
+        )
+        return SessionSummary(
+            session_id,
+            "/workspace",
+            "first",
+            "first-model",
+            self.timestamp,
+            self.timestamp,
+            title=title,
+        )
+
+    async def assign_session_project(
+        self,
+        session_id: str,
+        project_id: str | None,
+    ) -> SessionSummary:
+        self.assignments.append((session_id, project_id))
+        self.options = tuple(
+            replace(option, project_id=project_id) if option.session_id == session_id else option
+            for option in self.options
+        )
+        return SessionSummary(
+            session_id,
+            "/workspace",
+            "first",
+            "first-model",
+            self.timestamp,
+            self.timestamp,
+            project_id=project_id,
+        )
+
+    async def delete_session(self, session_id: str) -> None:
+        self.deleted_sessions.append(session_id)
+        self.options = tuple(option for option in self.options if option.session_id != session_id)
+
+    async def start_new_session(self) -> NewSessionResult:
+        self.new_session_calls += 1
+        previous = self._current_session
+        self._current_session = None
+        return NewSessionResult(previous)
 
 
 class TaskTuiController:
@@ -1799,10 +2069,17 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(80, 24)) as pilot:
             prompt = app.query_one("#prompt", PromptInput)
             prompt.post_message(events.Paste("first line\nsecond line\r\nthird line"))
-            await pilot.pause()
+            for _ in range(40):
+                await pilot.pause(0.01)
+                if prompt.value == "first line\nsecond line\nthird line":
+                    break
 
             self.assertEqual(prompt.value, "first line\nsecond line\nthird line")
             self.assertEqual(prompt.text.splitlines(), ["first line", "second line", "third line"])
+            for _ in range(40):
+                await pilot.pause(0.01)
+                if prompt.region.height > 1:
+                    break
             self.assertGreater(prompt.region.height, 1)
             self.assertLessEqual(prompt.region.height, 8)
 
@@ -1834,7 +2111,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("r")
             self.assertEqual(prompt.value, "r")
 
-    async def test_monochrome_theme_uses_the_compact_custom_chrome(self) -> None:
+    async def test_porcelain_theme_uses_readable_compact_chrome(self) -> None:
         app = NeuroCodeApp(
             TuiConversation(),
             provider_name="fixture",
@@ -1845,11 +2122,15 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
 
-            self.assertEqual(app.theme, "neuro-code-mono")
+            self.assertEqual(app.theme, "neuro-code-porcelain")
+            self.assertFalse(TEXTUAL_THEME.dark)
             self.assertEqual(app.screen.styles.background.hex.lower(), BACKGROUND.lower())
-            self.assertEqual(BORDER_FOCUS, ACCENT_CODE)
+            # Focus chrome uses the shared accent while code keeps its own cyan:
+            # the compact layout does not reuse one hue for every signal.
+            self.assertEqual(BORDER_FOCUS, ACCENT)
+            self.assertNotEqual(BORDER_FOCUS, ACCENT_CODE)
             self.assertNotIn("#F0F0F0", NeuroCodeApp.CSS)
-            self.assertIn("background: $text-muted", NeuroCodeApp.CSS)
+            self.assertIn("background: $text-primary", NeuroCodeApp.CSS)
             self.assertTrue(
                 {
                     "bg-0",
@@ -1876,14 +2157,17 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(len(list(app.query("#header"))), 1)
             self.assertEqual(len(list(app.query("#prompt-row"))), 1)
-            self.assertEqual(len(list(app.query("#prompt-mark"))), 1)
-            self.assertEqual(
-                app.query_one("#prompt-mark", Static).renderable,
-                "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}",
+            self.assertEqual(len(list(app.query("#prompt-mark"))), 0)
+            composer = app.query_one("#prompt-row", Horizontal)
+            self.assertIsNone(composer.border_title)
+            self.assertEqual(len(list(app.query("#prompt-caption"))), 0)
+            self.assertIn(
+                "/ commands", str(app.query_one("#prompt-caption-hint", Static).renderable)
             )
-            for color in MONO_COLORS:
-                red, green, blue = (int(color[index : index + 2], 16) for index in (1, 3, 5))
-                self.assertEqual((red, green, blue), (red, red, red))
+            self.assertLess(composer.region.bottom, app.screen.region.bottom)
+            self.assertEqual(composer.styles.border_top[0], "")
+            self.assertEqual(composer.styles.border_left[0], "")
+            self.assertTrue(all(color.startswith("#") for color in MONO_COLORS))
             entry_styles = {
                 str(app._render_entry(category, "content").style)
                 for category in ("assistant", "system", "tool", "user")
@@ -1909,7 +2193,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
-    async def test_wide_transcript_messages_use_available_width_without_a_hard_cap(self) -> None:
+    async def test_prompt_hint_hides_while_the_input_is_focused(self) -> None:
         app = NeuroCodeApp(
             TuiConversation(),
             provider_name="fixture",
@@ -1917,7 +2201,154 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             cwd=Path("/workspace"),
         )
 
-        async with app.run_test(size=(160, 30)) as pilot:
+        async with app.run_test(size=(100, 30)) as pilot:
+            hint = app.query_one("#prompt-caption-hint", Static)
+            prompt = app.query_one("#prompt", PromptInput)
+
+            prompt.focus()
+            await pilot.pause()
+            self.assertTrue(prompt.has_focus)
+            self.assertTrue(hint.has_class("hint-hidden"))
+
+            app.query_one("#prompt-send", Button).focus()
+            await pilot.pause()
+            self.assertFalse(hint.has_class("hint-hidden"))
+
+    async def test_permission_approval_shows_the_model_intent_instead_of_the_policy(self) -> None:
+        request = build_permission_request(
+            "call-intent",
+            "bash",
+            {"command": "git rev-parse --show-toplevel"},
+            "interactive approval required",
+            intent="I will locate the repository root before inspecting the ADR files.",
+        )
+        app = NeuroCodeApp(
+            TuiConversation(),
+            language=UiLanguage.SIMPLIFIED_CHINESE,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(110, 40)) as pilot:
+            app.push_screen(
+                PermissionApprovalScreen(request, language=UiLanguage.SIMPLIFIED_CHINESE)
+            )
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, PermissionApprovalScreen):
+                    break
+
+            screen = app.screen
+            assert isinstance(screen, PermissionApprovalScreen)
+            intent = screen.query_one("#approval-intent", Static)
+            summary = screen.query_one("#approval-summary", Static)
+            self.assertIn("locate the repository root", str(intent.renderable))
+            self.assertIn(
+                "需要工具授权", str(screen.query_one("#approval-title", Label).renderable)
+            )
+            self.assertEqual(list(screen.query("#approval-reason")), [])
+            self.assertIn("git rev-parse", str(summary.renderable))
+
+    async def test_permission_approval_hides_intent_when_the_preference_is_disabled(self) -> None:
+        request = build_permission_request(
+            "call-intent-off",
+            "bash",
+            {"command": "git status"},
+            "interactive approval required",
+            intent="I will check the working tree state.",
+        )
+        app = NeuroCodeApp(
+            TuiConversation(),
+            agent_preferences=AgentPreferences(show_tool_intent=False),
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(110, 40)) as pilot:
+            app.push_screen(
+                PermissionApprovalScreen(
+                    request,
+                    language=UiLanguage.ENGLISH,
+                    show_intent=False,
+                )
+            )
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, PermissionApprovalScreen):
+                    break
+
+            screen = app.screen
+            assert isinstance(screen, PermissionApprovalScreen)
+            self.assertEqual(list(screen.query("#approval-intent")), [])
+            self.assertIn(
+                "git status", str(screen.query_one("#approval-summary", Static).renderable)
+            )
+
+    async def test_permission_approval_omits_the_intent_block_without_model_narration(self) -> None:
+        request = build_permission_request(
+            "call-no-intent",
+            "bash",
+            {"command": "git status"},
+            "interactive approval required",
+        )
+        app = NeuroCodeApp(
+            TuiConversation(),
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(110, 40)) as pilot:
+            app.push_screen(PermissionApprovalScreen(request, language=UiLanguage.ENGLISH))
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, PermissionApprovalScreen):
+                    break
+
+            screen = app.screen
+            assert isinstance(screen, PermissionApprovalScreen)
+            self.assertEqual(list(screen.query("#approval-intent")), [])
+            self.assertEqual(list(screen.query("#approval-reason")), [])
+            self.assertIn(
+                "git status", str(screen.query_one("#approval-summary", Static).renderable)
+            )
+
+    async def test_known_application_errors_are_localized_in_the_transcript(self) -> None:
+        class _UnpersistedCompactionConversation(TuiConversation):
+            async def compact_now(self):
+                raise ConfigurationError("explicit compaction requires a persisted session")
+
+        app = NeuroCodeApp(
+            _UnpersistedCompactionConversation(),
+            language=UiLanguage.SIMPLIFIED_CHINESE,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(110, 30)) as pilot:
+            prompt = app.query_one("#prompt", PromptInput)
+            prompt.value = "/compact"
+            await pilot.press("enter")
+            await pilot.pause()
+
+        errors = [entry for entry in app.entries if entry.category == "error"]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("上下文压缩失败", errors[0].text)
+        self.assertIn("尚未持久化", errors[0].text)
+        self.assertNotIn("persisted session", errors[0].text)
+
+    async def test_wide_transcript_and_composer_use_the_available_terminal_width(self) -> None:
+        app = NeuroCodeApp(
+            TuiConversation(),
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(220, 30)) as pilot:
             prompt = app.query_one("#prompt", PromptInput)
             prompt.value = "inspect the repository"
             await pilot.press("enter")
@@ -1938,10 +2369,13 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("You:", user_text)
             self.assertNotIn("Assistant:", assistant_text)
             tool = next(message for message in messages if message.category == "tool")
-            self.assertEqual({user.region.x, assistant.region.x, tool.region.x}, {4})
-            self.assertLessEqual(user.region.width, 120)
-            self.assertGreater(assistant.region.width, 116)
-            self.assertGreater(tool.region.width, 116)
+            composer = app.query_one("#prompt-row", Horizontal)
+            self.assertEqual({user.region.x, assistant.region.x, tool.region.x}, {3})
+            self.assertEqual(composer.region.x, 4)
+            self.assertEqual(user.region.width, assistant.region.width)
+            self.assertEqual(tool.region.width, assistant.region.width)
+            self.assertGreater(assistant.region.width, app.screen.size.width - 10)
+            self.assertLessEqual(abs(composer.region.width - assistant.region.width), 2)
 
     async def test_transcript_messages_fit_a_narrow_terminal(self) -> None:
         app = NeuroCodeApp(
@@ -1963,6 +2397,55 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(
                 all(message.region.width <= transcript.region.width for message in messages)
             )
+
+    async def test_porcelain_composer_resizes_without_clipping_or_losing_chinese_input(
+        self,
+    ) -> None:
+        app = NeuroCodeApp(
+            TuiConversation(),
+            language=UiLanguage.SIMPLIFIED_CHINESE,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+        content = "请保留权限和快捷键。" * 12 + "\n第二行包含 path/to/file.py 和中文。"
+        async with app.run_test(size=(160, 40)) as pilot:
+            prompt = app.query_one("#prompt", PromptInput)
+            prompt.value = content
+            for width, height in ((160, 40), (54, 24), (80, 18), (128, 40)):
+                await pilot.resize_terminal(width, height)
+                await pilot.pause()
+                composer = app.query_one("#prompt-row", Horizontal)
+                status = app.query_one("#runtime-bar")
+                self.assertEqual(prompt.value, content)
+                self.assertTrue(prompt.has_focus)
+                self.assertGreater(prompt.region.height, 0)
+                self.assertLessEqual(prompt.region.height, 8)
+                self.assertLessEqual(prompt.region.right, composer.content_region.right)
+                self.assertLessEqual(prompt.region.bottom, composer.content_region.bottom)
+                self.assertLessEqual(status.region.bottom, height)
+                self.assertGreater(app.query_one("#transcript").region.height, 0)
+
+    async def test_action_button_variants_keep_a_visible_keyboard_focus(self) -> None:
+        app = NeuroCodeApp(
+            TuiConversation(),
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+        async with app.run_test(size=(100, 30)) as pilot:
+            for variant in ("default", "primary", "success", "warning", "error"):
+                button = Button("Action")
+                button.add_class(f"-{variant}")
+                await app.screen.mount(button)
+                app.query_one("#prompt", PromptInput).focus()
+                await pilot.pause()
+                unfocused = button.styles.background
+                button.focus()
+                await pilot.pause()
+                self.assertTrue(button.has_focus)
+                self.assertNotEqual(button.styles.background, unfocused, variant)
+                await button.remove()
 
     async def test_assistant_markdown_uses_semantic_styles_without_markup_injection(
         self,
@@ -1993,7 +2476,9 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("code", plain)
             self.assertIn("[red]literal[/red]", plain)
             self.assertNotIn("**bold**", plain)
-            self.assertIn(TEXT_EMPHASIS.lower(), styled["Important"].lower())
+            # Headings are accented, strong text stays primary, inline code is
+            # the code accent.
+            self.assertIn(ACCENT_BLUE.lower(), styled["Important"].lower())
             self.assertIn(TEXT_PRIMARY.lower(), styled["bold"].lower())
             self.assertIn(ACCENT_CODE.lower(), styled["code"].lower())
 
@@ -2038,11 +2523,11 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertIn("Sample", plain)
             self.assertIn(
-                ACCENT_LINK.lower(),
+                ACCENT_VIOLET.lower(),
                 str(MONO_SYNTAX_THEME.get_style_for_token(Keyword)).lower(),
             )
             self.assertIn(
-                ACCENT_CODE.lower(),
+                ACCENT_BLUE.lower(),
                 str(MONO_SYNTAX_THEME.get_style_for_token(Name.Function)).lower(),
             )
             self.assertIn(
@@ -2050,7 +2535,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 str(MONO_SYNTAX_THEME.get_style_for_token(String)).lower(),
             )
             self.assertIn(
-                TEXT_EMPHASIS.lower(),
+                ACCENT_NUMBER.lower(),
                 str(MONO_SYNTAX_THEME.get_style_for_token(Number)).lower(),
             )
 
@@ -2225,6 +2710,27 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(prompt.disabled)
                     prompt.value = "continue with new instructions"
                     self.assertEqual(prompt.value, "continue with new instructions")
+
+    async def test_budget_limited_notice_uses_typed_reason_and_usage_once(self) -> None:
+        app = NeuroCodeApp(
+            BudgetLimitedTuiConversation(),
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(100, 30)) as pilot:
+            prompt = app.query_one("#prompt", PromptInput)
+            prompt.value = "stop at the bounded limit"
+            await pilot.press("enter")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if any(entry.category == "recoverable" for entry in app.entries):
+                    break
+
+        notices = [entry for entry in app.entries if entry.category == "recoverable"]
+        self.assertEqual(len(notices), 1)
+        self.assertIn("The tool-call budget was reached (7/8)", notices[0].text)
 
     async def test_gated_completion_renders_only_the_committed_response_once(self) -> None:
         app = NeuroCodeApp(
@@ -2513,10 +3019,9 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(app.screen, SettingsScreen)
             self.assertEqual(list(app.screen.query("#provider-settings-form")), [])
             self.assertEqual(list(app.screen.query("#settings-languages")), [])
-            self.assertTrue(app.screen.query_one("#settings-dialog").has_class("modal-m"))
+            self.assertIsInstance(app.screen.query_one("#settings-search", Input), Input)
             language_row = app.screen.query_one("#settings-category-language", Button)
             language_row_text = rendered_text(app, language_row.render(), width=72)
-            self.assertIn("\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}", language_row_text)
             self.assertIn("Interface language", language_row_text)
             self.assertIn("English", language_row_text)
             self.assertNotIn("████", language_row_text)
@@ -2538,8 +3043,17 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(preferences.saved, [UiLanguage.SIMPLIFIED_CHINESE])
             self.assertEqual(app.sub_title, "终端编程智能体")
-            self.assertIn("输入 /help", prompt.placeholder)
-            self.assertEqual(len(app.query("#shortcut-bar")), 0)
+            self.assertEqual(
+                prompt.placeholder, ui_text(UiLanguage.SIMPLIFIED_CHINESE, "prompt.placeholder")
+            )
+            main_screen = app.screen_stack[0]
+            composer = main_screen.query_one("#prompt-row", Horizontal)
+            self.assertIsNone(composer.border_title)
+            self.assertEqual(len(list(main_screen.query("#prompt-caption"))), 0)
+            self.assertIn(
+                "/ 命令", str(main_screen.query_one("#prompt-caption-hint", Static).renderable)
+            )
+            self.assertEqual(len(main_screen.query("#shortcut-bar")), 0)
             self.assertTrue(app.entries[0].text.startswith("已就绪"))
             self.assertIn(
                 "literal model response",
@@ -2547,6 +3061,9 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertIn("界面语言已切换", app.entries[-1].text)
 
+            app.pop_screen()
+            await pilot.pause()
+            prompt.focus()
             prompt.value = "/status"
             await pilot.press("enter")
             await pilot.pause()
@@ -2566,63 +3083,117 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
         )
 
         async with app.run_test(size=(110, 40)) as pilot:
+
+            async def open_category(term: str, category: str) -> None:
+                await app.action_open_settings()
+                await pilot.pause()
+                search = app.screen.query_one("#settings-search", Input)
+                search.value = term
+                await pilot.pause()
+                app.screen.query_one(f"#settings-category-{category}", Button).focus()
+                await pilot.press("enter")
+                await pilot.pause()
+
             await app.action_open_settings()
             await pilot.pause()
             self.assertIsInstance(app.screen, SettingsScreen)
-            self.assertEqual(
-                app.focused.id if app.focused is not None else None, "settings-category-language"
-            )
+            self.assertIsInstance(app.screen.query_one("#settings-search", Input), Input)
             reasoning_row = app.screen.query_one("#settings-category-agent-reasoning", Button)
             mode_row = app.screen.query_one("#settings-category-agent-interaction-mode", Button)
-            self.assertIn("Agent / Reasoning", rendered_text(app, reasoning_row.render()))
+            self.assertIn("Reasoning level", rendered_text(app, reasoning_row.render()))
             self.assertIn("high", rendered_text(app, reasoning_row.render()))
-            self.assertIn("Agent / Interaction mode", rendered_text(app, mode_row.render()))
+            self.assertIn("Interaction mode", rendered_text(app, mode_row.render()))
             self.assertIn("normal", rendered_text(app, mode_row.render()))
 
-            await pilot.press("tab")
-            self.assertEqual(
-                app.focused.id if app.focused is not None else None,
-                "settings-category-agent-reasoning",
-            )
-            await pilot.press("enter")
-            for _ in range(20):
-                await pilot.pause(0.01)
-                if isinstance(app.screen, ReasoningEffortScreen):
-                    break
+            await open_category("reasoning", "agent-reasoning")
             self.assertIsInstance(app.screen, ReasoningEffortScreen)
             await pilot.press("escape")
             await pilot.pause()
             self.assertNotIsInstance(app.screen, ReasoningEffortScreen)
 
-            await app.action_open_settings()
-            await pilot.pause()
-            await pilot.click("#settings-category-agent-reasoning")
-            for _ in range(20):
-                await pilot.pause(0.01)
-                if isinstance(app.screen, ReasoningEffortScreen):
-                    break
+            await open_category("reasoning", "agent-reasoning")
             self.assertIsInstance(app.screen, ReasoningEffortScreen)
             self.assertTrue(await pilot.click("#effort-choice-0"))
             await pilot.pause()
             self.assertEqual(profiles.effort_selections, [ReasoningEffort.LOW])
             self.assertEqual(preferences.saved_efforts, [ReasoningEffort.LOW])
 
-            await app.action_open_settings()
-            await pilot.pause()
-            self.assertTrue(await pilot.click("#settings-category-agent-interaction-mode"))
-            for _ in range(20):
-                await pilot.pause(0.01)
-                if isinstance(app.screen, InteractionModeScreen):
-                    break
+            await open_category("interaction", "agent-interaction-mode")
             self.assertIsInstance(app.screen, InteractionModeScreen)
             self.assertTrue(await pilot.click("#interaction-mode-choice-2"))
             await pilot.pause()
             self.assertEqual(profiles.mode_selections, [InteractionMode.PLAN])
             self.assertEqual(preferences.saved_modes, [InteractionMode.PLAN])
-            self.assertIn(
-                "plan",
-                rendered_text(app, app.query_one("#runtime-primary", Static).renderable),
+            runtime_primary = app.screen_stack[0].query_one("#runtime-primary", Static)
+            self.assertIn("plan", rendered_text(app, runtime_primary.renderable))
+
+    async def test_permission_approval_settings_gate_full_access_behind_confirmation(self) -> None:
+        profiles = ProfileTuiController()
+        preferences = UiPreferencesFixture()
+        app = NeuroCodeApp(
+            TuiConversation(),
+            provider_controller=profiles,
+            ui_preferences=preferences,
+            provider_name="first",
+            model_name="first-model",
+            cwd=Path("/workspace"),
+        )
+
+        async def open_permission_settings() -> None:
+            await app.action_open_settings()
+            await pilot.pause()
+            search = app.screen.query_one("#settings-search", Input)
+            search.value = "permission"
+            await pilot.pause()
+            app.screen.query_one("#settings-category-agent-permissions", Button).focus()
+            await pilot.press("enter")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, PermissionSettingsScreen):
+                    break
+
+        async with app.run_test(size=(110, 40)) as pilot:
+            await app.action_open_settings()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, SettingsScreen)
+            permission_row = app.screen.query_one("#settings-category-agent-permissions", Button)
+            self.assertIn("Permission approval", rendered_text(app, permission_row.render()))
+            self.assertIn("Ask approval", rendered_text(app, permission_row.render()))
+
+            await open_permission_settings()
+            self.assertIsInstance(app.screen, PermissionSettingsScreen)
+            self.assertTrue(await pilot.click("#permission-choice-auto"))
+            await pilot.pause()
+            self.assertEqual(profiles.mode_selections, [InteractionMode.ACCEPT_EDITS])
+            self.assertEqual(preferences.saved_modes, [InteractionMode.ACCEPT_EDITS])
+            self.assertEqual(profiles.unrestricted_requests, [])
+
+            await open_permission_settings()
+            self.assertIsInstance(app.screen, PermissionSettingsScreen)
+            self.assertTrue(await pilot.click("#permission-choice-full"))
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, FullAccessConfirmScreen):
+                    break
+            self.assertIsInstance(app.screen, FullAccessConfirmScreen)
+            self.assertTrue(await pilot.click("#full-access-cancel"))
+            await pilot.pause()
+            self.assertEqual(profiles.unrestricted_requests, [])
+            self.assertIsInstance(app.screen, PermissionSettingsScreen)
+
+            self.assertTrue(await pilot.click("#permission-choice-full"))
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, FullAccessConfirmScreen):
+                    break
+            self.assertTrue(await pilot.click("#full-access-accept"))
+            await pilot.pause()
+            self.assertEqual(profiles.unrestricted_requests, [InteractionMode.AUTO])
+            self.assertEqual(
+                preferences.saved_modes,
+                [InteractionMode.ACCEPT_EDITS, InteractionMode.AUTO],
             )
+            self.assertTrue(app._auto_mode_unrestricted)
 
     async def test_first_run_settings_save_a_provider_without_echoing_its_key(self) -> None:
         self.assertEqual(
@@ -3063,7 +3634,11 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 await app.action_open_settings()
                 await pilot.pause()
                 self.assertIsInstance(app.screen, SettingsScreen)
-                self.assertTrue(await pilot.click("#settings-category-network"))
+                search = app.screen.query_one("#settings-search", Input)
+                search.value = "network"
+                await pilot.pause()
+                app.screen.query_one("#settings-category-network", Button).focus()
+                await pilot.press("enter")
                 for _ in range(20):
                     await pilot.pause(0.01)
                     if isinstance(app.screen, NetworkProxySettingsScreen):
@@ -3135,7 +3710,11 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 await app.action_open_settings()
                 await pilot.pause()
                 self.assertIsInstance(app.screen, SettingsScreen)
-                self.assertTrue(await pilot.click("#settings-category-background-wake"))
+                search = app.screen.query_one("#settings-search", Input)
+                search.value = "background"
+                await pilot.pause()
+                app.screen.query_one("#settings-category-background-wake", Button).focus()
+                await pilot.press("enter")
                 for _ in range(20):
                     await pilot.pause(0.01)
                     if isinstance(app.screen, BackgroundWakeSettingsScreen):
@@ -3208,7 +3787,11 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 await app.action_open_settings()
                 await pilot.pause()
                 self.assertIsInstance(app.screen, SettingsScreen)
-                await pilot.click("#settings-category-providers")
+                search = app.screen.query_one("#settings-search", Input)
+                search.value = "provider"
+                await pilot.pause()
+                app.screen.query_one("#settings-category-providers", Button).focus()
+                await pilot.press("enter")
                 for _ in range(20):
                     await pilot.pause(0.01)
                     if isinstance(app.screen, ProviderSettingsScreen):
@@ -3269,7 +3852,11 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(110, 44)) as pilot:
                 await app.action_open_settings()
                 await pilot.pause()
-                await pilot.click("#settings-category-providers")
+                search = app.screen.query_one("#settings-search", Input)
+                search.value = "provider"
+                await pilot.pause()
+                app.screen.query_one("#settings-category-providers", Button).focus()
+                await pilot.press("enter")
                 for _ in range(20):
                     await pilot.pause(0.01)
                     if isinstance(app.screen, ProviderSettingsScreen):
@@ -3294,6 +3881,59 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([profile.name for profile in remaining.profiles], ["first"])
             self.assertEqual(remaining.default_provider, "first")
             self.assertEqual(app.return_code, TUI_RELOAD_PROVIDER_SETTINGS)
+
+    async def test_provider_error_indicator_stays_hidden_without_a_message(self) -> None:
+        settings = ManagedProviderSettings(
+            profiles=(
+                ManagedProviderProfile(
+                    name="deepseek",
+                    protocol="openai-chat",
+                    model="deepseek-flash",
+                    base_url="https://api.deepseek.com/v1",
+                ),
+            ),
+            default_provider="deepseek",
+            proxy_defaults=ManagedProxyPolicy("environment", None),
+            background_task_wake_policy=BackgroundTaskWakePolicy.DISABLED,
+        )
+        app = NeuroCodeApp(
+            TuiConversation(),
+            managed_provider_settings=settings,
+            provider_name="deepseek",
+            model_name="deepseek-flash",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(104, 40)) as pilot:
+            app.push_screen(
+                ProviderSettingsScreen(
+                    language=UiLanguage.SIMPLIFIED_CHINESE,
+                    provider_settings=settings,
+                    provider_settings_store=None,
+                )
+            )
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, ProviderSettingsScreen):
+                    break
+            await pilot.pause()
+
+            screen = app.screen
+            assert isinstance(screen, ProviderSettingsScreen)
+            error = screen.query_one("#provider-settings-error", Static)
+            self.assertTrue(error.has_class("empty"))
+            self.assertEqual(error.styles.border_left[0], "")
+            self.assertEqual(str(error.renderable), "")
+
+            screen._show_provider_error("连接失败")
+            await pilot.pause()
+            self.assertFalse(error.has_class("empty"))
+            self.assertEqual(error.styles.border_left[0], "tall")
+
+            screen._show_provider_error("")
+            await pilot.pause()
+            self.assertTrue(error.has_class("empty"))
+            self.assertEqual(error.styles.border_left[0], "")
 
     async def test_runtime_bar_is_compact_semantic_and_label_free(self) -> None:
         profiles = ProfileTuiController()
@@ -3642,35 +4282,43 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(90, 24)) as pilot:
             prompt = app.query_one("#prompt", PromptInput)
             hints = app.query_one("#command-hints", Static)
+
+            async def wait_for_hints(condition) -> None:
+                for _ in range(40):
+                    await pilot.pause(0.01)
+                    if condition():
+                        return
+
             prompt.value = "/eff"
-            await pilot.pause()
+            await wait_for_hints(lambda: hints.display and "/effort LEVEL" in str(hints.renderable))
             self.assertTrue(hints.display)
             self.assertIn("/effort LEVEL", str(hints.renderable))
 
             await pilot.press("tab")
-            await pilot.pause()
+            await wait_for_hints(lambda: prompt.value == "/effort")
             self.assertEqual(prompt.value, "/effort")
+            await wait_for_hints(lambda: "/effort low" in str(hints.renderable))
             self.assertIn("/effort low", str(hints.renderable))
 
             await pilot.press("tab")
-            await pilot.pause()
+            await wait_for_hints(lambda: prompt.value == "/effort low")
             self.assertEqual(prompt.value, "/effort low")
 
             prompt.value = "/provider"
             await pilot.pause()
             await pilot.press("tab")
-            await pilot.pause()
+            await wait_for_hints(lambda: prompt.value == "/provider first")
             self.assertEqual(prompt.value, "/provider first")
 
             prompt.value = "/resume"
-            await pilot.pause()
+            await wait_for_hints(lambda: "/resume SESSION_ID" in str(hints.renderable))
             self.assertIn("/resume SESSION_ID", str(hints.renderable))
             await pilot.press("tab")
-            await pilot.pause()
+            await wait_for_hints(lambda: prompt.value == "/resume ")
             self.assertEqual(prompt.value, "/resume ")
 
             prompt.value = "ordinary prompt"
-            await pilot.pause()
+            await wait_for_hints(lambda: not hints.display)
             self.assertFalse(hints.display)
             self.assertEqual(runner.prompts, [])
 
@@ -6898,6 +7546,456 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("ctrl+c")
             await pilot.pause()
             self.assertNotIsInstance(app.screen, SessionSelectionScreen)
+
+    async def test_session_library_renames_regroups_and_deletes_sessions(self) -> None:
+        library = SessionLibraryTuiController()
+        app = NeuroCodeApp(
+            TuiConversation(),
+            session_library_service=library,
+            provider_name="first",
+            model_name="first-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(120, 50)) as pilot:
+            prompt = app.query_one("#prompt", PromptInput)
+            prompt.value = "/sessions"
+            await pilot.press("enter")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+
+            self.assertIsInstance(app.screen, SessionLibraryScreen)
+            screen = app.screen
+            assert isinstance(screen, SessionLibraryScreen)
+            self.assertEqual(library.queries, [None])
+            labels = "\n".join(str(button.label) for button in screen.query(MenuOptionButton))
+            self.assertIn("Current workspace session", labels)
+            self.assertIn("Escaped quoted session", labels)
+
+            await pilot.click("#library-session-1")
+            await pilot.pause()
+            self.assertEqual(screen.selected_session_id, "target-session-123456789")
+            await pilot.click("#library-rename-session")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, TextValueScreen):
+                    break
+            self.assertIsInstance(app.screen, TextValueScreen)
+            app.screen.query_one("#text-value-input", Input).value = "Renamed from library"
+            await pilot.click("#text-value-accept")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+
+            self.assertEqual(
+                library.renamed_sessions,
+                [("target-session-123456789", "Renamed from library")],
+            )
+            self.assertIsInstance(app.screen, SessionLibraryScreen)
+            screen = app.screen
+            assert isinstance(screen, SessionLibraryScreen)
+
+            await pilot.click("#library-session-1")
+            await pilot.pause()
+            await pilot.click("#library-move-session")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, ProjectPickerScreen):
+                    break
+            self.assertIsInstance(app.screen, ProjectPickerScreen)
+            await pilot.click("#project-picker-0")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+
+            self.assertEqual(
+                library.assignments,
+                [("target-session-123456789", "project-1")],
+            )
+
+            screen = app.screen
+            assert isinstance(screen, SessionLibraryScreen)
+            await pilot.click("#library-session-1")
+            await pilot.pause()
+            await pilot.click("#library-move-session")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, ProjectPickerScreen):
+                    break
+            await pilot.click("#project-picker-detach")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+
+            self.assertEqual(
+                library.assignments,
+                [
+                    ("target-session-123456789", "project-1"),
+                    ("target-session-123456789", None),
+                ],
+            )
+
+            screen = app.screen
+            assert isinstance(screen, SessionLibraryScreen)
+            await pilot.click("#library-session-1")
+            await pilot.pause()
+            await pilot.click("#library-delete-session")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, ConfirmActionScreen):
+                    break
+            self.assertIsInstance(app.screen, ConfirmActionScreen)
+            await pilot.click("#confirm-action-cancel")
+            await pilot.pause()
+            self.assertEqual(library.deleted_sessions, [])
+            self.assertIsInstance(app.screen, SessionLibraryScreen)
+
+            screen = app.screen
+            assert isinstance(screen, SessionLibraryScreen)
+            await pilot.click("#library-session-1")
+            await pilot.pause()
+            await pilot.click("#library-delete-session")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, ConfirmActionScreen):
+                    break
+            await pilot.click("#confirm-action-accept")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+
+            self.assertEqual(library.deleted_sessions, ["target-session-123456789"])
+            self.assertIn("Session deleted", app.entries[-1].text)
+            # The manager is refreshed in place: the same screen instance stays
+            # mounted, so deleting never flashes the main screen.
+            self.assertIs(app.screen, screen)
+            labels = "\n".join(str(button.label) for button in screen.query(MenuOptionButton))
+            self.assertNotIn("Renamed from library", labels)
+            self.assertIn("Current workspace session", labels)
+            await pilot.press("escape")
+
+    async def test_session_library_creates_renames_and_deletes_projects(self) -> None:
+        library = SessionLibraryTuiController()
+        app = NeuroCodeApp(
+            TuiConversation(),
+            session_library_service=library,
+            provider_name="first",
+            model_name="first-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(120, 50)) as pilot:
+            await app._open_session_library(view="projects")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+            self.assertIsInstance(app.screen, SessionLibraryScreen)
+
+            await pilot.click("#library-new-project")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, TextValueScreen):
+                    break
+            app.screen.query_one("#text-value-input", Input).value = "Beta"
+            await pilot.click("#text-value-accept")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+
+            self.assertEqual(library.created_projects, [("Beta", str(Path("/workspace")))])
+            screen = app.screen
+            assert isinstance(screen, SessionLibraryScreen)
+            self.assertEqual(screen.view, "projects")
+            labels = "\n".join(str(button.label) for button in screen.query(MenuOptionButton))
+            self.assertIn("Beta", labels)
+
+            await pilot.click("#library-project-1")
+            await pilot.pause()
+            self.assertEqual(screen.selected_project_id, "project-2")
+            await pilot.click("#library-rename-project")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, TextValueScreen):
+                    break
+            app.screen.query_one("#text-value-input", Input).value = "Beta two"
+            await pilot.click("#text-value-accept")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+
+            self.assertEqual(library.renamed_projects, [("project-2", "Beta two")])
+            self.assertIn("Project renamed", app.entries[-1].text)
+            # The project view is preserved in place instead of being re-opened.
+            self.assertIs(app.screen, screen)
+            self.assertEqual(screen.view, "projects")
+
+            await pilot.click("#library-project-1")
+            await pilot.pause()
+            await pilot.click("#library-delete-project")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, ConfirmActionScreen):
+                    break
+            await pilot.click("#confirm-action-accept")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+
+            self.assertEqual(library.deleted_projects, ["project-2"])
+            self.assertIn("Project deleted", app.entries[-1].text)
+            self.assertIs(app.screen, screen)
+
+    async def test_session_library_project_actions_do_not_parse_as_row_indices(self) -> None:
+        # ``library-project-sessions`` starts with the project-row prefix, so it
+        # must be matched as an action before the index parsing runs.
+        library = SessionLibraryTuiController()
+        app = NeuroCodeApp(
+            TuiConversation(),
+            session_library_service=library,
+            provider_name="first",
+            model_name="first-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(120, 50)) as pilot:
+            await app._open_session_library(view="projects")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+            screen = app.screen
+            assert isinstance(screen, SessionLibraryScreen)
+            self.assertEqual(screen.view, "projects")
+
+            await pilot.click("#library-project-0")
+            await pilot.pause()
+            self.assertEqual(screen.selected_project_id, "project-1")
+
+            await pilot.click("#library-project-sessions")
+            await pilot.pause()
+            self.assertIs(app.screen, screen)
+            self.assertEqual(screen.view, "sessions")
+            self.assertEqual(screen.selected_session_id, "current-session")
+
+            await pilot.click("#library-tab-projects")
+            await pilot.pause()
+            self.assertEqual(screen.view, "projects")
+            self.assertIs(app.screen, screen)
+
+    async def test_session_library_moves_a_session_with_no_projects_available(self) -> None:
+        library = SessionLibraryTuiController()
+        library.projects = []
+        app = NeuroCodeApp(
+            TuiConversation(),
+            session_library_service=library,
+            provider_name="first",
+            model_name="first-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(120, 50)) as pilot:
+            await app._open_session_library()
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+            screen = app.screen
+            assert isinstance(screen, SessionLibraryScreen)
+            await pilot.click("#library-session-1")
+            await pilot.pause()
+            await pilot.click("#library-move-session")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, ProjectPickerScreen):
+                    break
+
+            # With no projects the picker still opens and only offers detaching.
+            self.assertIsInstance(app.screen, ProjectPickerScreen)
+            picker = app.screen
+            assert isinstance(picker, ProjectPickerScreen)
+            self.assertEqual(picker.projects, ())
+            await pilot.click("#project-picker-detach")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+
+            self.assertEqual(library.assignments, [("target-session-123456789", None)])
+            self.assertIs(app.screen, screen)
+
+    async def test_attach_command_sends_content_parts_with_the_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "shot.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"payload" * 8)
+            runner = AttachmentCapturingTuiConversation()
+            app = NeuroCodeApp(
+                runner,
+                provider_name="fixture",
+                model_name="fixture-model",
+                cwd=root,
+            )
+
+            async with app.run_test(size=(120, 40)) as pilot:
+                prompt = app.query_one("#prompt", PromptInput)
+                prompt.value = f"/attach {image}"
+                await pilot.press("enter")
+                await pilot.pause()
+
+                tray = app.query_one("#attachment-tray", Horizontal)
+                self.assertTrue(tray.display)
+                labels = "\n".join(str(button.label) for button in tray.query(Button))
+                self.assertIn("shot.png", labels)
+                self.assertIsNone(runner.captured_parts)
+
+                prompt.value = "what is in this image"
+                await pilot.press("enter")
+                for _ in range(20):
+                    await pilot.pause(0.01)
+                    if runner.captured_parts is not None:
+                        break
+
+                self.assertIsNotNone(runner.captured_parts)
+                parts = runner.captured_parts or ()
+                self.assertEqual(parts[0].kind, ContentPartKind.TEXT)
+                self.assertEqual(parts[0].text, "what is in this image")
+                self.assertEqual(parts[1].kind, ContentPartKind.IMAGE)
+                self.assertTrue(parts[1].url.startswith("data:image/png;base64,"))
+                self.assertFalse(app.query_one("#attachment-tray", Horizontal).display)
+                user_entries = [entry for entry in app.entries if entry.category == "user"]
+                self.assertTrue(user_entries)
+                self.assertIn("📎 shot.png", user_entries[-1].text)
+
+    async def test_attach_command_rejects_missing_files_without_losing_the_prompt(self) -> None:
+        runner = AttachmentCapturingTuiConversation()
+        app = NeuroCodeApp(
+            runner,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            prompt = app.query_one("#prompt", PromptInput)
+            prompt.value = "/attach missing.png"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            self.assertIn("Attachment rejected", app.entries[-1].text)
+            self.assertFalse(app.query_one("#attachment-tray", Horizontal).display)
+
+            prompt.value = "hello"
+            await pilot.press("enter")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if runner.captured_parts is not None:
+                    break
+
+            self.assertEqual(runner.captured_parts, ())
+            user_entries = [entry for entry in app.entries if entry.category == "user"]
+            self.assertTrue(user_entries)
+            self.assertIn("hello", user_entries[-1].text)
+
+    async def test_clipboard_image_paste_attaches_the_image(self) -> None:
+        class ScriptedClipboardImageReader:
+            def __init__(self) -> None:
+                self.image = None
+
+            def read_image(self):
+                return self.image
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reader = ScriptedClipboardImageReader()
+            runner = AttachmentCapturingTuiConversation()
+            app = NeuroCodeApp(
+                runner,
+                provider_name="fixture",
+                model_name="fixture-model",
+                cwd=root,
+                clipboard_image_reader=reader,
+            )
+
+            async with app.run_test(size=(120, 40)) as pilot:
+                # No image yet: the shortcut reports instead of failing.
+                await pilot.press("ctrl+v")
+                await pilot.pause()
+                self.assertTrue(any("No image found" in entry.text for entry in app.entries))
+                self.assertFalse(app.query_one("#attachment-tray", Horizontal).display)
+
+                reader.image = ClipboardImage(
+                    media_type="image/png",
+                    data=b"\x89PNG\r\n\x1a\n" + b"payload" * 8,
+                )
+                await pilot.press("ctrl+v")
+                for _ in range(20):
+                    await pilot.pause(0.01)
+                    if app.query_one("#attachment-tray", Horizontal).display:
+                        break
+
+                tray = app.query_one("#attachment-tray", Horizontal)
+                self.assertTrue(tray.display)
+                self.assertIn("clipboard-", "\n".join(str(b.label) for b in tray.query(Button)))
+
+                prompt = app.query_one("#prompt", PromptInput)
+                prompt.value = "look"
+                await pilot.press("enter")
+                for _ in range(20):
+                    await pilot.pause(0.01)
+                    if runner.captured_parts is not None:
+                        break
+
+                parts = runner.captured_parts or ()
+                self.assertEqual(parts[0].kind, ContentPartKind.TEXT)
+                self.assertEqual(parts[1].kind, ContentPartKind.IMAGE)
+                self.assertTrue(parts[1].url.startswith("data:image/png;base64,"))
+
+    async def test_session_library_starts_a_fresh_session_without_reopening(self) -> None:
+        library = SessionLibraryTuiController()
+        app = NeuroCodeApp(
+            TypedTuiConversation(),
+            session_library_service=library,
+            provider_name="first",
+            model_name="first-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            prompt = app.query_one("#prompt", PromptInput)
+            prompt.value = "first question"
+            await pilot.press("enter")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if app.entries:
+                    break
+            self.assertTrue(app.entries)
+
+            await app._open_session_library()
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+            self.assertIsInstance(app.screen, SessionLibraryScreen)
+            await pilot.click("#library-new-session")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if library.new_session_calls:
+                    break
+
+            self.assertEqual(library.new_session_calls, 1)
+            self.assertNotIsInstance(app.screen, SessionLibraryScreen)
+            self.assertIn("Started a new session", app.entries[-1].text)
+            self.assertEqual(app._plan, None)
 
     async def test_sessions_command_searches_titles_and_content_before_opening_picker(self) -> None:
         controller = SessionTuiController()

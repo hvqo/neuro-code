@@ -2,9 +2,8 @@
 
 [English](../../en/adr/0066-session-scoped-tool-output-artifacts.md) · **简体中文**
 
-## 状态
-
-已接受——Stage5BM，2026-08-06。
+- 状态：已接受——Stage5BM，2026-08-06
+- 日期：2026-08-07
 
 ## 背景
 

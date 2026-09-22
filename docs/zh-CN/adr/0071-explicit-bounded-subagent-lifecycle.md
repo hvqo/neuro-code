@@ -2,9 +2,8 @@
 
 [English](../../en/adr/0071-explicit-bounded-subagent-lifecycle.md) · **简体中文**
 
-## 状态
-
-Stage5CQ 接受。
+- 状态：已接受（Stage5CQ）
+- 日期：2026-08-07
 
 ## 背景
 

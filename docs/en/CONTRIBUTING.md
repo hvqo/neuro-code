@@ -9,14 +9,13 @@ in the pinned Rust tree and update the compatibility matrix.
 ## Required checks
 
 ```bash
-uv lock --check
-uv run python scripts/check_docs_parity.py
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest --cov=neuro_code --cov-report=term-missing
-uv build
+uv run python scripts/check_all.py
 ```
+
+`scripts/check_all.py` runs the lock check, documentation parity and consistency,
+Ruff, format, mypy, pytest with coverage, and the build. It accepts `--quick` to
+skip the slow test run and build, and `--no-uv` to skip uv-only steps. Adding a
+gate means editing that script, not several hand-written copies.
 
 All checks must pass on Python 3.12. Platform-sensitive work also requires the
 Linux, macOS, and Windows CI matrix.

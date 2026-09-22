@@ -2,9 +2,8 @@
 
 **简体中文** · [English](../../en/adr/0108-editorial-tui-presentation.md)
 
-## 状态
-
-已接受。
+- 状态：已接受
+- 日期：2026-08-12
 
 ## 背景
 

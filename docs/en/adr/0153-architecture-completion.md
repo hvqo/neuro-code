@@ -1,5 +1,7 @@
 # ADR 0153: Architecture Completion Before v1
 
+[简体中文](../../zh-CN/adr/0153-architecture-completion.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-02
 - Scope: the final pre-v1 modular-monolith and ports-and-adapters consolidation

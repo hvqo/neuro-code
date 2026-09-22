@@ -1,5 +1,7 @@
 # ADR 0118: Hosted Web Search execution and sidecar routing
 
+[简体中文](../../zh-CN/adr/0118-hosted-web-search-execution-and-sidecar-routing.md) · **English**
+
 - Status: Accepted; P1 vertical slice
 - Date: 2026-08-19
 - Scope: Canonical Web Search, OpenAI/xAI hosted search, route selection, and MAIN tool wiring

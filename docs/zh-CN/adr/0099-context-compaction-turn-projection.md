@@ -1,5 +1,7 @@
 # ADR 0099：类型化上下文压缩回合投影
 
+[English](../../en/adr/0099-context-compaction-turn-projection.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：`application.memory.compaction_runtime`

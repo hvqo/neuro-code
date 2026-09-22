@@ -1,8 +1,11 @@
 # ADR 0109：规范本地进程沙箱边界
 
-## 状态
+[English](../../en/adr/0109-canonical-local-process-sandbox-boundary.md) · **简体中文**
 
-已接受。PR 1 建立了规范端口；PR 2 已交付 Linux 子进程范围的 Bash 迁移；PR 3 已交付 Linux 子进程范围的 stdio MCP 迁移；PR 4 已让本地 PTY/ConPTY 创建通过同一端口；PR 5 已删除旧的 controller 范围 Bubblewrap 重执行和命名空间 attestation。
+- 状态：已接受
+- 日期：2026-08-12
+
+PR 1 建立了规范端口；PR 2 已交付 Linux 子进程范围的 Bash 迁移；PR 3 已交付 Linux 子进程范围的 stdio MCP 迁移；PR 4 已让本地 PTY/ConPTY 创建通过同一端口；PR 5 已删除旧的 controller 范围 Bubblewrap 重执行和命名空间 attestation。
 
 ## 背景
 

@@ -1,6 +1,8 @@
 # ADR 0094: Runtime compaction failure projection
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0094-runtime-compaction-failure-projection.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: application memory contract for a future Runtime integration
 

@@ -19,7 +19,7 @@ from neuro_code.interfaces.tui.state import (
     ToolFeedbackState,
     TranscriptEntry,
 )
-from neuro_code.interfaces.tui.text import ui_text
+from neuro_code.interfaces.tui.text import localize_error_text, ui_text
 from neuro_code.interfaces.tui.theme import (
     ACCENT_SUCCESS,
     ASSISTANT_TEXT_STYLE,
@@ -28,7 +28,6 @@ from neuro_code.interfaces.tui.theme import (
     ERROR_LABEL_STYLE,
     ERROR_TEXT_STYLE,
     MODE_STYLES,
-    MONO_SYNTAX_THEME,
     RECOVERABLE_LABEL_STYLE,
     RECOVERABLE_TEXT_STYLE,
     STATUS_LABEL_STYLE,
@@ -44,6 +43,8 @@ from neuro_code.interfaces.tui.theme import (
     TOOL_LABEL_STYLE,
     TOOL_TEXT_STYLE,
     USER_TEXT_STYLE,
+    syntax_theme,
+    theme_style,
 )
 from neuro_code.interfaces.tui.widgets import (
     AssistantMarkdown,
@@ -53,7 +54,7 @@ from neuro_code.interfaces.tui.widgets import (
 )
 
 
-def _markdown_code_theme() -> str:
+def _markdown_code_theme(owner: TuiAppControllerMixin) -> str:
     """Contain Rich Markdown's narrow annotation without changing the runtime theme.
 
     Markdown forwards the value to Syntax, whose runtime API accepts a
@@ -63,7 +64,7 @@ def _markdown_code_theme() -> str:
     通过局部类型辅助函数容纳 Rich Markdown 的窄类型注解,不改变运行时主题.
     """
 
-    return cast(str, MONO_SYNTAX_THEME)
+    return cast(str, syntax_theme(owner))
 
 
 class TranscriptControllerMixin(TuiAppControllerMixin):
@@ -179,38 +180,37 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
             f"{content[:_RESTORED_MESSAGE_LIMIT]}\n{ui_text(self._language, 'restore.truncated')}"
         )
 
-    @staticmethod
-    def _semantic_value_style(name: str, value: object) -> str | None:
+    def _semantic_value_style(self, name: str, value: object) -> str | None:
         if name in {"provider", "model", "profile", "source"}:
-            return f"bold {TEXT_EMPHASIS}"
+            return f"bold {theme_style(self, TEXT_EMPHASIS)}"
         if name in {"name", "task_id", "session_id", "title"}:
-            return f"bold {TEXT_EMPHASIS}"
+            return f"bold {theme_style(self, TEXT_EMPHASIS)}"
         if name == "path":
-            return TEXT_SECONDARY
+            return theme_style(self, TEXT_SECONDARY)
         if name == "cwd":
-            return TEXT_SECONDARY
+            return theme_style(self, TEXT_SECONDARY)
         if name in {"effect", "outcome", "status"}:
-            return f"bold {ACCENT_SUCCESS}"
+            return f"bold {theme_style(self, ACCENT_SUCCESS)}"
         if name in {"duration", "steps", "step"}:
-            return f"bold {TEXT_SECONDARY}"
+            return f"bold {theme_style(self, TEXT_SECONDARY)}"
         if name == "context":
-            return f"bold {TEXT_SECONDARY}"
+            return f"bold {theme_style(self, TEXT_SECONDARY)}"
         if name in {"effort", "requested", "effective"}:
             try:
                 effort = ReasoningEffort(str(value))
             except ValueError:
-                return f"bold {TEXT_EMPHASIS}"
-            return f"bold {EFFORT_STYLES[effort.value]}"
+                return f"bold {theme_style(self, TEXT_EMPHASIS)}"
+            return f"bold {theme_style(self, EFFORT_STYLES[effort.value])}"
         if name == "mode":
             try:
                 mode = InteractionMode(str(value))
             except ValueError:
-                return f"bold {TEXT_EMPHASIS}"
-            return f"bold {MODE_STYLES[mode.value]}"
+                return f"bold {theme_style(self, TEXT_EMPHASIS)}"
+            return f"bold {theme_style(self, MODE_STYLES[mode.value])}"
         if name == "policy":
-            return TEXT_SECONDARY
+            return theme_style(self, TEXT_SECONDARY)
         if name in {"message", "reason", "error"}:
-            return ERROR_TEXT_STYLE
+            return theme_style(self, ERROR_TEXT_STYLE)
         return None
 
     def _render_entry(
@@ -222,37 +222,43 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
         ui_values: tuple[tuple[str, object], ...] = (),
     ) -> RenderableType:
         if category == "user":
-            return Text(content, style=USER_TEXT_STYLE, overflow="fold")
+            return Text(content, style=theme_style(self, USER_TEXT_STYLE), overflow="fold")
         if category == "assistant":
             return AssistantMarkdown(
                 content,
-                code_theme=_markdown_code_theme(),
-                style=ASSISTANT_TEXT_STYLE,
+                code_theme=_markdown_code_theme(self),
+                style=theme_style(self, ASSISTANT_TEXT_STYLE),
                 hyperlinks=False,
             )
 
         labels = {
-            "error": (f"{_ERROR_MARK} {ui_text(self._language, 'label.error')}", ERROR_LABEL_STYLE),
-            "recoverable": ("!", RECOVERABLE_LABEL_STYLE),
-            "status": ("·", STATUS_LABEL_STYLE),
-            "system": ("NEURO", SYSTEM_LABEL_STYLE),
-            "tool": ("•", TOOL_LABEL_STYLE),
+            "error": (
+                f"{_ERROR_MARK} {ui_text(self._language, 'label.error')}",
+                theme_style(self, ERROR_LABEL_STYLE),
+            ),
+            "recoverable": ("!", theme_style(self, RECOVERABLE_LABEL_STYLE)),
+            "status": ("·", theme_style(self, STATUS_LABEL_STYLE)),
+            "system": ("NEURO", theme_style(self, SYSTEM_LABEL_STYLE)),
+            "tool": ("•", theme_style(self, TOOL_LABEL_STYLE)),
         }
         body_styles = {
-            "error": ERROR_DETAIL_STYLE,
-            "recoverable": RECOVERABLE_TEXT_STYLE,
-            "status": STATUS_TEXT_STYLE,
-            "system": SYSTEM_TEXT_STYLE,
-            "tool": TOOL_TEXT_STYLE,
+            "error": theme_style(self, ERROR_DETAIL_STYLE),
+            "recoverable": theme_style(self, RECOVERABLE_TEXT_STYLE),
+            "status": theme_style(self, STATUS_TEXT_STYLE),
+            "system": theme_style(self, SYSTEM_TEXT_STYLE),
+            "tool": theme_style(self, TOOL_TEXT_STYLE),
         }
         if category == "plan" and self._plan is not None:
             return self._render_plan(self._plan, self._plan_comments)
-        label, label_style = labels.get(category, (category.title(), f"bold {TEXT_PRIMARY}"))
+        content = localize_error_text(self._language, content)
+        label, label_style = labels.get(
+            category, (category.title(), f"bold {theme_style(self, TEXT_PRIMARY)}")
+        )
         body = Text(overflow="fold")
         body.append(label, style=label_style)
-        body.append("  ", style=TEXT_DIM)
+        body.append("  ", style=theme_style(self, TEXT_DIM))
         content_start = len(body)
-        body.append(content, style=body_styles.get(category, TEXT_BODY))
+        body.append(content, style=body_styles.get(category, theme_style(self, TEXT_BODY)))
         for name, value in ui_values:
             style = self._semantic_value_style(name, value)
             rendered_value = str(value)
@@ -272,7 +278,7 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
         return (
             body
             if body is not None
-            else Text(self._tool_summary_line(state), style=TOOL_DETAIL_STYLE)
+            else Text(self._tool_summary_line(state), style=theme_style(self, TOOL_DETAIL_STYLE))
         )
 
     def _write_ui_entry(self, category: str, key: str, **values: object) -> None:
@@ -294,7 +300,12 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
     ) -> None:
         if category != "tool" or tool_state is None:
             self._active_tool_activity_group = None
-        entry = TranscriptEntry(category, content, ui_key, ui_values)
+        entry = TranscriptEntry(
+            category,
+            localize_error_text(self._language, content),
+            ui_key,
+            ui_values,
+        )
         if tool_state is not None:
             group = self._tool_activity_group_by_entry.get(tool_state.entry_index)
             is_group_leader = group is None or group.entry_index == tool_state.entry_index

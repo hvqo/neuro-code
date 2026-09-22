@@ -1,5 +1,7 @@
 # ADR 0072：架构冻结后移除 Provider 兼容 facade
 
+[English](../../en/adr/0072-remove-provider-compatibility-facades.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-07
 - 取代：ADR 0049 中关于保留 Provider facade 的决定

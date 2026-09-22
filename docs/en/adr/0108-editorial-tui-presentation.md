@@ -2,9 +2,8 @@
 
 [简体中文](../../zh-CN/adr/0108-editorial-tui-presentation.md) · **English**
 
-## Status
-
-Accepted.
+- Status: Accepted
+- Date: 2026-08-12
 
 ## Context
 

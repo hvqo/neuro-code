@@ -1,6 +1,8 @@
 # ADR 0072: Remove Provider Compatibility Facades After Architecture Freeze
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0072-remove-provider-compatibility-facades.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-07
 - Supersedes: the provider-facade retention decision in ADR 0049
 

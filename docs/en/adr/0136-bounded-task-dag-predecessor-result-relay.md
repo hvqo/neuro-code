@@ -1,6 +1,8 @@
 # ADR 0136: Bounded Task DAG predecessor-result relay
 
-- Status: PROVEN within current vertical-slice scope
+[简体中文](../../zh-CN/adr/0136-bounded-task-dag-predecessor-result-relay.md) · **English**
+
+- Status: Accepted; pROVEN within current vertical-slice scope
 - Date: 2026-08-24
 - Scope: direct completed-predecessor result projection for one bounded static Task DAG, including bounded fan-out/fan-in execution
 

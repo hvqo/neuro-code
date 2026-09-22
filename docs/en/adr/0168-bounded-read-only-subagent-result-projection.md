@@ -1,10 +1,11 @@
-# ADR 0073: Bounded read-only subagent result projection
+# ADR 0168: Bounded read-only subagent result projection
 
-[简体中文](../../zh-CN/adr/0073-bounded-read-only-subagent-result-projection.md) · **English**
+[简体中文](../../zh-CN/adr/0168-bounded-read-only-subagent-result-projection.md) · **English**
 
-## Status
+> Renumbered from ADR 0073 so every ADR number is unique; the decision itself is unchanged.
 
-Accepted for Stage5CS.
+- Status: Accepted for Stage5CS
+- Date: 2026-08-08
 
 ## Context
 

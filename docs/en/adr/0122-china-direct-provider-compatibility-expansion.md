@@ -1,5 +1,7 @@
 # ADR 0122: China direct provider compatibility expansion
 
+[简体中文](../../zh-CN/adr/0122-china-direct-provider-compatibility-expansion.md) · **English**
+
 - Status: Accepted; P3A vertical slice
 - Date: 2026-08-20
 - Scope: direct Kimi/Moonshot, GLM/Zhipu, and MiniMax OpenAI-compatible Chat APIs

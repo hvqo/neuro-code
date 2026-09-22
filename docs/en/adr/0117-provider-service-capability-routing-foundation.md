@@ -1,5 +1,7 @@
 # ADR 0117: Provider service, capability, and runtime-route foundation
 
+[简体中文](../../zh-CN/adr/0117-provider-service-capability-routing-foundation.md) · **English**
+
 - Status: Accepted; hosted web execution remains intentionally unimplemented
 - Date: 2026-08-19
 - Scope: Provider metadata, capability resolution, model discovery, and role routes

@@ -1,5 +1,7 @@
 # ADR 0157: Structured BOUNDED_SWARM parent verification
 
+[简体中文](../../zh-CN/adr/0157-ultracode-bounded-swarm-parent-verification.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-08
 - Scope: VF-4c structured UltraCode parent verification

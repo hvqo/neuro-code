@@ -9,16 +9,17 @@ from pathlib import Path
 from typing import ClassVar, TypeVar
 
 from rich.text import Text
-from textual import events
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.geometry import Size
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Button, Static
 from textual.worker import Worker
 
 from neuro_code.application.permissions.contracts import PermissionApproval, PermissionRequest
+from neuro_code.application.ports.agent_preferences import AgentPreferences
 from neuro_code.application.ports.provider_catalog import (
     ProviderCatalog,
 )
@@ -27,6 +28,7 @@ from neuro_code.application.ports.provider_settings import (
     ProviderSettingsStore,
 )
 from neuro_code.application.ports.ui_preferences import UiPreferencesStore
+from neuro_code.application.sessions.attachments import Attachment
 from neuro_code.application.sessions.selection import (
     SessionSelectionService,
 )
@@ -67,8 +69,10 @@ from neuro_code.domain.execution import (
 )
 from neuro_code.domain.plans import PlanComment
 from neuro_code.interfaces.tui.clipboard import (
+    ClipboardImageReader,
     ClipboardWriter,
     ClipboardWriteResult,
+    SystemClipboardImageReader,
     SystemClipboardWriter,
 )
 from neuro_code.interfaces.tui.contracts import (
@@ -79,6 +83,7 @@ from neuro_code.interfaces.tui.contracts import (
     ProviderController,
     ReasoningController,
     SessionController,
+    SessionLibraryController,
     SessionTaskController,
     TaskController,
 )
@@ -105,7 +110,6 @@ from neuro_code.interfaces.tui.screens import PermissionApprovalScreen
 from neuro_code.interfaces.tui.state import (
     _DEFAULT_BACKGROUND_WAKE_LIMITS,
     _LOADING_ANIMATION_TICK_SECONDS,
-    _PROMPT_MARK,
     _TASK_POLL_SECONDS,
     _TERMINAL_SIZE_POLL_SECONDS,
     _TOOL_ELAPSED_UPDATE_SECONDS,
@@ -118,9 +122,10 @@ from neuro_code.interfaces.tui.state import (
 from neuro_code.interfaces.tui.text import ui_text
 from neuro_code.interfaces.tui.theme import (
     BRAND_TEXT,
-    MARKDOWN_THEME,
     TEXT_MUTED,
-    TEXTUAL_THEME,
+    TEXTUAL_THEMES,
+    markdown_theme,
+    theme_style,
 )
 from neuro_code.interfaces.tui.widgets import (
     AttachedTerminalPanel,
@@ -129,6 +134,7 @@ from neuro_code.interfaces.tui.widgets import (
     TranscriptScroll,
 )
 from neuro_code.shared.ui_language import UiLanguage
+from neuro_code.shared.ui_theme import UiTheme
 
 
 def _read_terminal_size() -> Size | None:
@@ -178,6 +184,7 @@ class NeuroCodeApp(
     CSS = """
     Screen {
         layout: vertical;
+        align: center top;
         width: 100%;
         height: 100%;
         background: $background;
@@ -195,12 +202,6 @@ class NeuroCodeApp(
         background: $surface-hover;
     }
 
-    Button:focus {
-        background: $surface;
-        color: $text-primary;
-        border-left: tall $border-focus;
-        text-style: none;
-    }
 
     Button.-primary,
     Button.-success,
@@ -222,12 +223,16 @@ class NeuroCodeApp(
         color: $error;
     }
 
-    MenuOptionButton,
-    MenuOptionButton:hover,
-    MenuOptionButton:focus {
+    MenuOptionButton {
         background: $surface;
         border: none;
         text-style: none;
+    }
+
+    MenuOptionButton:hover,
+    MenuOptionButton:focus {
+        background: $surface-selected;
+        border: none;
     }
 
     Button:disabled {
@@ -236,20 +241,27 @@ class NeuroCodeApp(
         border: none;
     }
 
+    Button:focus {
+        background: $surface-selected;
+        color: $text-primary;
+        border: none;
+        text-style: none;
+    }
+
     Input {
         background: $surface;
         color: $text-primary;
-        border: tall $border;
+        border: round $border;
     }
 
     Input:focus {
-        border: tall $border-focus;
+        border: round $border-focus;
     }
 
     .modal-dialog {
         padding: $space-2 $space-3;
         background: $surface;
-        border: solid $border;
+        border: round $border;
     }
 
     .modal-s {
@@ -268,9 +280,15 @@ class NeuroCodeApp(
     }
 
     #header {
+        width: 100%;
         height: 3;
         padding: $space-1 $space-4 $space-0 $space-4;
         background: $background;
+    }
+
+    #conversation-shell {
+        width: 100%;
+        height: 1fr;
     }
 
     #brand {
@@ -292,7 +310,7 @@ class NeuroCodeApp(
     #transcript {
         width: 100%;
         height: 1fr;
-        padding: $space-2 $space-4;
+        padding: $space-1 $space-3;
         background: $background;
         color: $text-body;
         scrollbar-size-vertical: 1;
@@ -309,11 +327,11 @@ class NeuroCodeApp(
     }
 
     .message-user {
-        max-width: 120;
         margin-bottom: $space-2;
-        background: $surface;
+        padding: 1;
+        border-left: solid $user-message-border;
+        background: $user-message-surface;
         color: $text-primary;
-        border-left: solid $border;
         text-style: bold;
     }
 
@@ -333,8 +351,8 @@ class NeuroCodeApp(
     }
 
     .message-tool {
-        margin-bottom: $space-2;
-        color: $text-body;
+        margin-bottom: $space-1;
+        color: $text-secondary;
     }
 
     .message-tool.tool-interactive:hover,
@@ -355,7 +373,7 @@ class NeuroCodeApp(
 
     .message-recoverable {
         color: $text-emphasis;
-        border-left: solid $border;
+        border-left: solid $warning;
     }
 
     .message-error {
@@ -366,8 +384,23 @@ class NeuroCodeApp(
 
     #composer {
         height: auto;
-        padding: $space-0 $space-4 $space-1 $space-4;
+        padding: $space-0 $space-3 $space-1 $space-3;
         background: $background;
+    }
+
+    #attachment-tray {
+        display: none;
+        width: 100%;
+        height: auto;
+        padding: $space-0 $space-1;
+    }
+
+    #attachment-tray Button {
+        height: 1;
+        min-width: 8;
+        margin-right: 1;
+        background: $surface;
+        color: $text-secondary;
     }
 
     #turn-activity {
@@ -388,6 +421,7 @@ class NeuroCodeApp(
         background: $background;
         color: $text-secondary;
         align-vertical: middle;
+        margin-top: 1;
     }
 
     #runtime-primary,
@@ -397,26 +431,83 @@ class NeuroCodeApp(
         overflow: hidden hidden;
     }
 
+    #runtime-primary {
+        width: 2fr;
+        margin-right: 2;
+    }
+
     #runtime-secondary {
         text-align: right;
     }
 
-    #prompt-row {
+    #prompt-surface {
+        width: 100%;
         height: auto;
-        min-height: 3;
-        max-height: 10;
-        padding: $space-0 $space-1;
-        background: $surface;
-        border-left: tall $border;
-        align-vertical: middle;
+        min-height: 6;
+        max-height: 13;
+        padding: 1;
+        background: $composer-surface;
+        border: none;
     }
 
-    #prompt-mark {
-        width: 3;
+    #prompt-caption-hint {
+        width: 1fr;
         height: 1;
-        color: $text-primary;
+        text-align: left;
+        color: $composer-muted;
+        overflow: hidden hidden;
+    }
+
+    #prompt-caption-hint.hint-hidden {
+        opacity: 0;
+    }
+
+    #prompt-actions {
+        height: 1;
+        margin-top: 1;
+        background: $composer-surface;
+    }
+
+    #prompt-send, #prompt-newline {
+        width: auto;
+        min-width: 8;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        margin: 0;
+        border: none;
+        background: $composer-surface;
+        color: $border-focus;
         text-style: bold;
-        content-align: center middle;
+    }
+
+    #prompt-send:hover, #prompt-send:focus {
+        background: $surface-selected;
+        text-style: bold reverse;
+    }
+
+    #prompt-newline {
+        color: $composer-muted;
+        text-style: none;
+        margin-right: 1;
+    }
+
+    #prompt-newline:hover, #prompt-newline:focus {
+        background: $surface-selected;
+        text-style: reverse;
+    }
+
+    .compact-chrome #prompt-actions { margin-top: 0; }
+
+
+    #prompt-row {
+        width: 100%;
+        height: auto;
+        min-height: 1;
+        max-height: 8;
+        padding: 0;
+        background: $composer-surface;
+        border: none;
     }
 
     #prompt {
@@ -426,26 +517,55 @@ class NeuroCodeApp(
         padding: 0;
         margin: 0;
         border: none;
-        background: $surface;
+        background: $composer-surface;
         color: $text-primary;
         scrollbar-size-vertical: 1;
     }
 
     #prompt > .text-area--cursor-line {
-        background: $surface;
+        background: $composer-surface;
     }
 
     #prompt > .text-area--selection {
-        background: $surface-selected;
+        background: $composer-selection;
+        color: $composer-selection-text;
     }
 
     #prompt > .text-area--cursor {
-        color: $surface;
-        background: $text-muted;
+        color: $composer-surface;
+        background: $text-primary;
     }
 
-    #prompt-row:focus-within {
-        border-left: tall $border-focus;
+    .compact-chrome #header {
+        height: 2;
+        padding: 0 2;
+    }
+
+    .compact-chrome #transcript {
+        padding: 1;
+    }
+
+    .compact-chrome #composer {
+        padding: 0 1;
+    }
+
+    .compact-chrome #prompt-surface {
+        min-height: 4;
+        max-height: 11;
+        padding: 0 1;
+    }
+
+    .compact-chrome .message-user {
+        padding: 0 1;
+    }
+
+    .compact-chrome #runtime-bar {
+        margin-top: 0;
+    }
+
+    .compact-chrome #runtime-primary {
+        width: 1fr;
+        margin-right: 1;
     }
 
     #command-hints {
@@ -529,6 +649,8 @@ class NeuroCodeApp(
         interaction_mode_controller: InteractionModeController | None = None,
         session_controller: SessionController | None = None,
         session_selection_service: SessionSelectionService | None = None,
+        session_library_service: SessionLibraryController | None = None,
+        clipboard_image_reader: ClipboardImageReader | None = None,
         task_controller: TaskController | None = None,
         session_task_controller: SessionTaskController | None = None,
         plan_controller: PlanController | None = None,
@@ -540,6 +662,7 @@ class NeuroCodeApp(
         provider_catalog: ProviderCatalog | None = None,
         managed_provider_settings: ManagedProviderSettings | None = None,
         language: UiLanguage = UiLanguage.ENGLISH,
+        ui_theme: UiTheme = UiTheme.PORCELAIN,
         initial_items: Sequence[SessionItem] = (),
         execution_record: SessionExecutionRecord | None = None,
         tool_output_artifact_service: SessionToolOutputArtifactApplicationService | None = None,
@@ -555,6 +678,7 @@ class NeuroCodeApp(
         context_window_tokens: int | None = None,
         background_task_wake_policy: BackgroundTaskWakePolicy | None = None,
         background_wake_limits: BackgroundWakeLimits = _DEFAULT_BACKGROUND_WAKE_LIMITS,
+        agent_preferences: AgentPreferences | None = None,
         user_interaction: TuiUserInteraction | None = None,
         clipboard_writer: ClipboardWriter | None = None,
         socks_supported: bool = False,
@@ -562,8 +686,9 @@ class NeuroCodeApp(
         if context_window_tokens is not None and context_window_tokens <= 0:
             raise ValueError("context window tokens must be positive")
         super().__init__()
-        self.register_theme(TEXTUAL_THEME)
-        self.theme = TEXTUAL_THEME.name
+        for palette in TEXTUAL_THEMES.values():
+            self.register_theme(palette)
+        self.theme = ui_theme.textual_name
         self._runner = runner
         self._user_interaction = user_interaction
         self._turn_service = turn_service
@@ -605,6 +730,12 @@ class NeuroCodeApp(
         self._interaction_mode_controller = interaction_mode_controller
         self._session_controller = session_controller
         self._session_selection_service = session_selection_service
+        self._session_library_service = session_library_service
+        self._clipboard_image_reader = (
+            clipboard_image_reader
+            if clipboard_image_reader is not None
+            else SystemClipboardImageReader()
+        )
         self._task_controller = task_controller
         self._session_task_controller = session_task_controller
         self._plan_controller = plan_controller
@@ -635,7 +766,13 @@ class NeuroCodeApp(
             if managed_provider_settings is not None
             else BackgroundTaskWakePolicy.DISABLED
         )
-        self._background_wake_limits = background_wake_limits
+        self._agent_preferences = agent_preferences or AgentPreferences()
+        self._background_wake_limits = BackgroundWakeLimits(
+            max_wakes_per_session=self._agent_preferences.wake_max_per_session
+            or background_wake_limits.max_wakes_per_session,
+            cooldown_seconds=self._agent_preferences.wake_cooldown_seconds
+            or background_wake_limits.cooldown_seconds,
+        )
         self._language = language
         self._initial_items = tuple(initial_items)
         self._tool_output_artifact_service = tool_output_artifact_service
@@ -697,6 +834,10 @@ class NeuroCodeApp(
         self._first_token_seen = False
         self._queued_interjections: deque[str] = deque()
         self._active_prompt: str | None = None
+        self._pending_attachment_paths: tuple[str, ...] = ()
+        self._submitted_attachment_paths: tuple[str, ...] = ()
+        self._clipboard_temp_paths: set[Path] = set()
+        self._pending_attachments: tuple[Attachment, ...] = ()
         self._active_prompt_entry_index: int | None = None
         self._turn_pristine_rewound = False
         self._pending_assistant: ConversationMessage | None = None
@@ -704,6 +845,8 @@ class NeuroCodeApp(
         self._turn_completion: tuple[str, int] | None = None
         self._terminal_execution_status: str | None = None
         self._terminal_execution_recoverable = False
+        self._terminal_execution_reason = None
+        self._terminal_budget_usage = None
         self._finalizing = False
         self._turn_usage_reported = False
         self._turn_worker: Worker[None] | None = None
@@ -787,25 +930,55 @@ class NeuroCodeApp(
             yield Static(id="brand")
             yield Static(id="header-space")
             yield Static(id="clock")
-        yield TranscriptScroll(id="transcript")
-        yield AttachedTerminalPanel(id="attached-terminal-panel")
-        with Vertical(id="composer"):
-            yield Static(id="turn-activity")
-            with Horizontal(id="prompt-row"):
-                yield Static(_PROMPT_MARK, id="prompt-mark")
-                yield PromptInput(
-                    placeholder=ui_text(self._language, "prompt.placeholder"),
-                    id="prompt",
+        with Vertical(id="conversation-shell"):
+            yield TranscriptScroll(id="transcript")
+            yield AttachedTerminalPanel(id="attached-terminal-panel")
+            with Vertical(id="composer"):
+                yield Horizontal(id="attachment-tray")
+                yield Static(id="turn-activity")
+                with Vertical(id="prompt-surface"):
+                    with Horizontal(id="prompt-row"):
+                        yield PromptInput(
+                            placeholder=ui_text(self._language, "prompt.placeholder"),
+                            id="prompt",
+                            enter_behavior=self._agent_preferences.enter_behavior or "send",
+                            soft_wrap=self._agent_preferences.prompt_soft_wrap is not False,
+                        )
+                    with Horizontal(id="prompt-actions"):
+                        yield Static(id="prompt-caption-hint")
+                        yield Button(ui_text(self._language, "prompt.newline"), id="prompt-newline")
+                        yield Button(ui_text(self._language, "prompt.send"), id="prompt-send")
+                yield Static(id="command-hints")
+                yield Horizontal(
+                    Static(id="runtime-primary"),
+                    Static(id="runtime-secondary"),
+                    id="runtime-bar",
                 )
-            yield Static(id="command-hints")
-            yield Horizontal(
-                Static(id="runtime-primary"),
-                Static(id="runtime-secondary"),
-                id="runtime-bar",
+
+    @on(Button.Pressed, "#prompt-newline")
+    def _insert_composer_newline(self, event: Button.Pressed) -> None:
+        event.stop()
+        prompt = self._main_screen_query_one("#prompt", PromptInput)
+        prompt.insert_prompt_newline()
+        prompt.focus()
+
+    @on(Button.Pressed, "#prompt-send")
+    def _send_composer_message(self, event: Button.Pressed) -> None:
+        event.stop()
+        prompt = self._main_screen_query_one("#prompt", PromptInput)
+        if not prompt.disabled and prompt.value.strip():
+            prompt.post_message(PromptInput.Submitted(prompt, prompt.value))
+        prompt.focus()
+
+    def on_resize(self, event: events.Resize) -> None:
+        if self.screen_stack:
+            self.screen_stack[0].set_class(
+                event.size.width < 80 or event.size.height < 28,
+                "compact-chrome",
             )
 
     def on_mount(self) -> None:
-        self.console.push_theme(MARKDOWN_THEME)
+        self.console.push_theme(markdown_theme(self))
         self._refresh_header()
         self.set_interval(1.0, self._update_clock)
         self._apply_language_to_chrome()
@@ -863,14 +1036,17 @@ class NeuroCodeApp(
 
     def on_unmount(self) -> None:
         self._model_loading = False
+        # Release any clipboard temp file the interface still owns so teardown
+        # never strands one.
+        self._release_clipboard_resources()
         if self._approval_controller is not None:
             self._approval_controller.set_handler(None)
         self.console.pop_theme()
 
     def _refresh_header(self) -> None:
         brand = Text()
-        brand.append("NEURO", style=f"bold {BRAND_TEXT}")
-        brand.append(" / CODE", style=TEXT_MUTED)
+        brand.append("NEURO", style=f"bold {theme_style(self, BRAND_TEXT)}")
+        brand.append(" / CODE", style=theme_style(self, TEXT_MUTED))
         self._main_screen_query_one("#brand", Static).update(brand)
         self._update_clock()
 
@@ -882,7 +1058,11 @@ class NeuroCodeApp(
 
     async def _request_approval(self, request: PermissionRequest) -> PermissionApproval:
         return await self.push_screen_wait(
-            PermissionApprovalScreen(request, language=self._language)
+            PermissionApprovalScreen(
+                request,
+                language=self._language,
+                show_intent=self._agent_preferences.show_tool_intent is not False,
+            )
         )
 
 

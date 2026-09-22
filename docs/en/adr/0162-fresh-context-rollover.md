@@ -1,5 +1,7 @@
 # ADR 0162: Fresh active-context rollover
 
+[简体中文](../../zh-CN/adr/0162-fresh-context-rollover.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: CM3a bounded normal-agent context lifecycle control

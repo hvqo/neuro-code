@@ -2,9 +2,8 @@
 
 [English](../../en/adr/0127-durable-turn-crash-recovery.md) · **简体中文**
 
-## 状态
-
-接受，适用于当前 pre-alpha Runtime。
+- 状态：已接受，适用于当前 pre-alpha Runtime
+- 日期：2026-08-22
 
 ## 背景
 

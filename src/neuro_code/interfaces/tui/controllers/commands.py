@@ -141,12 +141,18 @@ class CommandControllerMixin(TuiAppControllerMixin):
         if command in {"model", "provider"}:
             await self._select_provider(arguments.strip() or None)
             return
-        if command in {"resume", "sessions"}:
-            requested_session = arguments.strip() or None
-            if command == "sessions":
-                await self._select_session(None, query=requested_session)
-            else:
-                await self._select_session(requested_session)
+        if command == "sessions":
+            await self._open_session_library(query=arguments.strip() or None)
+            return
+        if command == "resume":
+            await self._select_session(arguments.strip() or None)
+            return
+        if command == "attach":
+            paths = arguments.split()
+            if not paths:
+                self._write_ui_entry("error", "attachment.usage")
+                return
+            await self._add_attachments(paths)
             return
         if command == "recover":
             await self._dispatch_recovery_command(arguments)
@@ -271,6 +277,8 @@ class CommandControllerMixin(TuiAppControllerMixin):
         self._turn_completion = None
         self._terminal_execution_status = None
         self._terminal_execution_recoverable = False
+        self._terminal_execution_reason = None
+        self._terminal_budget_usage = None
         self._finalizing = False
         self._begin_pending_assistant()
         self._turn_worker = self.run_worker(

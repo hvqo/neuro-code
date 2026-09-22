@@ -1,6 +1,6 @@
 # ADR 0156：Ultracode parent 工作区 freshness projection
 
-- 状态：Accepted
+- 状态：已接受
 - 日期：2026-09-08
 - 范围：VF-4b result-adoption 工作区 projection
 

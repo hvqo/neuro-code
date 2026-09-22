@@ -1,5 +1,7 @@
 # ADR 0085：Provider 感知的上下文窗口与摘要请求
 
+[English](../../en/adr/0085-provider-aware-context-summary-request.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：Stage5DE

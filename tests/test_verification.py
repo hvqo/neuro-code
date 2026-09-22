@@ -208,6 +208,42 @@ class VerificationTrackerTests(unittest.TestCase):
         self.assertIs(observation_value.progress_kind, ProgressKind.NONE)
         self.assertIsNone(observation_value.verification)
 
+    def test_successful_side_effecting_output_counts_as_evidence_progress(self) -> None:
+        class _SideEffectingTool:
+            side_effecting = True
+
+        observation_value = ToolObservationBuilder(()).build(
+            tool_name="bash",
+            arguments={"command": "grep -n textual pyproject.toml"},
+            result=ToolResult('  "textual>=1.0,<2",'),
+            tool=_SideEffectingTool(),
+            change_report=None,
+            plan_fingerprint_before=None,
+            current_plan_fingerprint=None,
+            tool_call_id="call-1",
+            verification_eligible=False,
+        )
+
+        self.assertIs(observation_value.progress_kind, ProgressKind.EVIDENCE)
+
+    def test_successful_side_effecting_empty_output_is_not_evidence_progress(self) -> None:
+        class _SideEffectingTool:
+            side_effecting = True
+
+        observation_value = ToolObservationBuilder(()).build(
+            tool_name="bash",
+            arguments={"command": "cd src"},
+            result=ToolResult(""),
+            tool=_SideEffectingTool(),
+            change_report=None,
+            plan_fingerprint_before=None,
+            current_plan_fingerprint=None,
+            tool_call_id="call-1",
+            verification_eligible=False,
+        )
+
+        self.assertIs(observation_value.progress_kind, ProgressKind.NONE)
+
     def test_normal_requirement_coverage_uses_only_the_trusted_classifier(self) -> None:
         self.assertEqual(
             resolve_verification_coverage(

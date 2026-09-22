@@ -1,5 +1,7 @@
 # ADR 0102：上下文用量快照与过期源请求构造器
 
+[English](../../en/adr/0102-context-usage-snapshot-and-stale-source-builder.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：`neuro_code.application.memory.compaction_runtime`

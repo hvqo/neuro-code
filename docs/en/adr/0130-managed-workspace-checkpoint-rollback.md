@@ -1,6 +1,8 @@
 # ADR 0130: Managed workspace checkpoint and rollback
 
-- Status: accepted for the first internal vertical slice
+[简体中文](../../zh-CN/adr/0130-managed-workspace-checkpoint-rollback.md) · **English**
+
+- Status: Accepted for the first internal vertical slice
 - Date: 2026-08-23
 - Scope: durable source-state checkpoints and exact rollback of one ready, Neuro Code-owned managed worktree
 

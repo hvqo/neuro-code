@@ -33,6 +33,7 @@ from neuro_code.interfaces.tui.theme import (
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     TOOL_COMPLETE_STYLE,
+    theme_style,
 )
 
 
@@ -64,9 +65,15 @@ class MenuOptionButton(Button):
         self._secondary_justify = secondary_justify
 
     def render(self) -> RenderResult:
-        primary_style = TEXT_DISABLED if self.disabled or self._muted else TEXT_PRIMARY
-        secondary_style = TEXT_DISABLED if self.disabled or self._muted else TEXT_SECONDARY
+        primary_style = theme_style(
+            self, TEXT_DISABLED if self.disabled or self._muted else TEXT_PRIMARY
+        )
+        secondary_style = theme_style(
+            self, TEXT_DISABLED if self.disabled or self._muted else TEXT_SECONDARY
+        )
         table = Table.grid(expand=True, padding=(0, 1))
+        if self.has_focus and self.app.ansi_color:
+            table.style = "reverse"
         table.add_column(width=1, no_wrap=True)
         if self._primary_width is None:
             table.add_column(ratio=1, overflow="ellipsis", no_wrap=True)
@@ -80,10 +87,13 @@ class MenuOptionButton(Button):
         )
         table.add_column(width=1, no_wrap=True)
         table.add_row(
-            Text(_PROMPT_MARK if self.has_focus else " ", style=ACCENT_CODE),
+            Text(_PROMPT_MARK if self.has_focus else " ", style=theme_style(self, ACCENT_CODE)),
             Text(self._primary, style=primary_style),
             Text(self._secondary, style=secondary_style),
-            Text(_SUCCESS_MARK if self._selected else " ", style=TOOL_COMPLETE_STYLE),
+            Text(
+                _SUCCESS_MARK if self._selected else " ",
+                style=theme_style(self, TOOL_COMPLETE_STYLE),
+            ),
         )
         return table
 
@@ -323,11 +333,14 @@ class PromptInput(TextArea):
     带有明确提交语义且高度有界的多行提示编辑器.
 
     Terminal bracketed paste is preserved as real document lines. ``Enter``
-    submits the complete prompt, while ``Shift+Enter`` (or ``Ctrl+J``) inserts a
-    newline. Common editor selection remains local to the prompt.
+    submits the complete prompt. ``Ctrl+J`` and ``F2`` insert a newline;
+    modified Enter keys also work when the terminal forwards distinct events.
+    The composer also exposes a focusable newline button for terminals that
+    intercept shortcuts. Common editor selection remains local to the prompt.
 
     终端 bracketed paste 会保留为真实文档行.``Enter`` 提交完整提示,
-    ``Shift+Enter`` (或 ``Ctrl+J``) 插入换行,常用编辑选择操作保持在提示框内.
+    ``Ctrl+J``/``F2`` 插入换行,组合 Enter 仅在终端透传独立事件时可用.
+    输入区还提供可聚焦的换行按钮,供快捷键被拦截时使用.编辑选择保持在提示框内.
     """
 
     @dataclass
@@ -344,13 +357,37 @@ class PromptInput(TextArea):
         def control(self) -> PromptInput:
             return self.input
 
+    @dataclass
+    class ImagePasteRequested(TextualMessage):
+        """The user asked to attach the clipboard image to the next message.
+
+        用户请求把剪贴板图片附加到下一条消息.
+        """
+
+        input: PromptInput
+
+        @property
+        def control(self) -> PromptInput:
+            return self.input
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        # Takes over TextArea's text paste: the app handler falls back to the
+        # text paste when the system clipboard holds no image.
+        #
+        # 接管 TextArea 的文本粘贴:系统剪贴板没有图片时,应用处理器回落到文本粘贴.
+        Binding("ctrl+v", "paste_image", "Paste", show=False),
+    ]
+
     def __init__(
         self,
         *,
         placeholder: str = "",
         id: str | None = None,
+        enter_behavior: str = "send",
+        soft_wrap: bool = True,
     ) -> None:
-        super().__init__(soft_wrap=True, tab_behavior="focus", id=id)
+        super().__init__(soft_wrap=soft_wrap, tab_behavior="focus", id=id)
+        self.enter_behavior = enter_behavior
         self.placeholder = placeholder
 
     @property
@@ -382,24 +419,56 @@ class PromptInput(TextArea):
 
     def get_line(self, line_index: int) -> Text:
         if line_index == 0 and not self.text and self.placeholder:
-            return Text(self.placeholder, style=TEXT_PLACEHOLDER, end="")
+            return Text(self.placeholder, style=theme_style(self, TEXT_PLACEHOLDER), end="")
         return super().get_line(line_index)
+
+    def _on_focus(self, event: events.Focus) -> None:
+        super()._on_focus(event)
+        self._sync_hint_visibility()
+
+    def _on_blur(self, event: events.Blur) -> None:
+        super()._on_blur(event)
+        self._sync_hint_visibility()
+
+    def _sync_hint_visibility(self) -> None:
+        """Hide the newline/command hint while this editor has focus.
+
+        用不透明度而非 display 切换,保持输入区布局不随焦点抖动."""
+
+        for hint in self.screen.query("#prompt-caption-hint"):
+            hint.set_class(self.has_focus, "hint-hidden")
+
+    def action_paste_image(self) -> None:
+        """Ask the app to attach the system clipboard image.
+
+        请求应用附加系统剪贴板图片."""
+
+        self.post_message(self.ImagePasteRequested(self))
 
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "enter":
             event.prevent_default().stop()
-            self.post_message(self.Submitted(self, self.text))
+            if self.enter_behavior == "newline":
+                self.insert_prompt_newline()
+            elif not self.disabled and not self.read_only:
+                self.post_message(self.Submitted(self, self.text))
             return
-        if event.key in {"shift+enter", "ctrl+j"}:
+        if event.key in {"shift+enter", "alt+enter", "ctrl+j", "f2"}:
             event.prevent_default().stop()
-            result = self.replace("\n", *self.selection, maintain_selection_offset=False)
-            self.move_cursor(result.end_location)
+            self.insert_prompt_newline()
             return
         if event.key == "ctrl+a":
             event.prevent_default().stop()
             self.action_select_all()
             return
         await super()._on_key(event)
+
+    def insert_prompt_newline(self) -> None:
+        """Insert at the selection without submitting. / 在选区插入换行,不提交。"""
+        if self.disabled or self.read_only:
+            return
+        result = self.replace("\n", *self.selection, maintain_selection_offset=False)
+        self.move_cursor(result.end_location)
 
     async def _on_paste(self, event: events.Paste) -> None:
         text = event.text.replace("\r\n", "\n").replace("\r", "\n")
@@ -417,7 +486,7 @@ class PromptInput(TextArea):
         visible_lines = max(1, min(self.wrapped_document.height, _PROMPT_MAX_VISIBLE_LINES))
         self.styles.height = visible_lines
         if self.parent is not None:
-            self.parent.styles.height = visible_lines + 2
+            self.parent.styles.height = visible_lines + self.parent.styles.gutter.height
 
     def _on_resize(self) -> None:
         super()._on_resize()

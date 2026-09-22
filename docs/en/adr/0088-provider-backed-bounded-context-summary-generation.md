@@ -1,6 +1,8 @@
 # ADR 0088: Provider-backed bounded context-summary generation
 
-- Status: accepted for the Stage5DH vertical slice
+[简体中文](../../zh-CN/adr/0088-provider-backed-bounded-context-summary-generation.md) · **English**
+
+- Status: Accepted for the Stage5DH vertical slice
 - Date: 2026-08-08
 - Scope: application memory and the existing ModelProvider port
 

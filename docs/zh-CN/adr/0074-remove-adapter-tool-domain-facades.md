@@ -1,6 +1,8 @@
 # ADR 0074：删除 Adapter、Tool 和 Domain 平面兼容 Facade
 
-- 状态：Accepted
+[English](../../en/adr/0074-remove-adapter-tool-domain-facades.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-08-07
 - Supersedes：ADR 0049、ADR 0072 和 ADR 0073 中保留 adapter/tool/domain facade 的决定
 

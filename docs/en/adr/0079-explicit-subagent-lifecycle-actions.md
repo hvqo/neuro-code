@@ -1,6 +1,8 @@
 # ADR 0079: Explicit Subagent Lifecycle Actions
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0079-explicit-subagent-lifecycle-actions.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-07
 - Scope: Stage5CY
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 
-from neuro_code.application.execution_policy import ExecutionProfile
+from neuro_code.application.execution_policy import ExecutionBudgetSource, ExecutionProfile
 from neuro_code.application.permissions.policy import (
     PermissionEffect,
     PermissionMode,
@@ -63,6 +63,18 @@ def _application_settings(
     reasoning_effort: ReasoningEffort | None = None,
 ) -> ApplicationSettings:
     _validate_verification_command_surface(args)
+    raw_max_steps = getattr(args, "max_steps", None)
+    raw_execution_profile = getattr(args, "execution_profile", None)
+    execution_profile = ExecutionProfile(raw_execution_profile or ExecutionProfile.NORMAL.value)
+    execution_budget_source = (
+        ExecutionBudgetSource.EXPLICIT_MAX_STEPS
+        if raw_max_steps is not None
+        else (
+            ExecutionBudgetSource.EXPLICIT_PROFILE
+            if raw_execution_profile is not None
+            else ExecutionBudgetSource.IMPLICIT_PROFILE
+        )
+    )
     return ApplicationSettings(
         cwd=args.cwd,
         provider=args.provider,
@@ -77,10 +89,9 @@ def _application_settings(
         ),
         permission_rules=_rules(args),
         permission_rules_path=getattr(args, "permissions_file", None),
-        max_steps=args.max_steps,
-        execution_profile=ExecutionProfile(
-            getattr(args, "execution_profile", ExecutionProfile.NORMAL.value)
-        ),
+        max_steps=raw_max_steps,
+        execution_profile=execution_profile,
+        execution_budget_source=execution_budget_source,
         execution_control_mode=_execution_control_mode(
             getattr(args, "execution_control", "finalize-terminal")
         ),

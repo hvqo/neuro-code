@@ -1,6 +1,8 @@
 # ADR 0139：有界 DAG Revision / Replan
 
-- 状态：作为显式内部 P0 vertical slice 已实现，并由最终 PR merge-ref CI 验证（run 32994963168，23/23 jobs 成功）；该 CI 不是 direct exact-head checkout，live/paid provider validation 仍不在范围内
+[English](../../en/adr/0139-bounded-dag-revision-replan.md) · **简体中文**
+
+- 状态：已接受；作为显式内部 P0 vertical slice 已实现，并由最终 PR merge-ref CI 验证（run 32994963168，23/23 jobs 成功）；该 CI 不是 direct exact-head checkout，live/paid provider validation 仍不在范围内
 - 日期：2026-08-26
 - 范围：将一个显式失败且静默的 Task DAG revision 一次为一个不可变 successor DAG
 - 依赖：ADR 0134、ADR 0135、ADR 0136、ADR 0137 与 ADR 0138
@@ -44,8 +46,7 @@ publication 本身保持不可变。
 `MAX_DAG_REPLAN_DEPTH` 为 `1`。只支持恰好一个 successor revision；recursive replan 与 automatic retry
 不属于本 ADR。
 
-### Replan evidence envelope
-
+### 重规划 evidence envelope
 Application 从 source DAG 构造确定性、脱敏、不可变 envelope。它只包含 source DAG identity/fingerprint/
 generation、canonical node ID 与 ordinal、dependencies、node state、有界 completed result projection、
 typed 有界 failure summary 和安全的有界 metadata。脱敏发生在 fingerprint 与 publication 之前。Envelope
@@ -53,8 +54,7 @@ typed 有界 failure summary 和安全的有界 metadata。脱敏发生在 finge
 32 KiB。它不包含 raw transcript、tool argument/result、log、environment、secret、workspace bytes、
 checkpoint data、diff、path 或 authority instruction。
 
-### Zero-tool replan Planner
-
+### 零工具重规划 Planner
 `ApplicationComposition.create_task_dag_replan_service()` 创建一个 fresh、持久化、one-step Planner
 binding。该 binding 没有 local 或 provider-hosted tool，也没有 filesystem/Bash/terminal/network/MCP/
 LSP/Worktree/Checkpoint/worker/background authority，并使用 `max_steps=1`。Model 只把 evidence 作为

@@ -1,5 +1,7 @@
 # ADR 0145: ACP Prompt Content Boundary Extraction
 
+[简体中文](../../zh-CN/adr/0145-acp-prompt-content-boundary.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-30
 - Scope: first structural slice of V1 Interface Boundary Consolidation

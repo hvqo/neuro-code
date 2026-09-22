@@ -1,6 +1,8 @@
 # ADR 0132: Worker-scoped LSP runtime integration
 
-- Status: implemented as an explicit internal vertical slice; final rating waits for exact-head CI
+[简体中文](../../zh-CN/adr/0132-worker-scoped-lsp-runtime-integration.md) · **English**
+
+- Status: Accepted; implemented as an explicit internal vertical slice; final rating waits for exact-head CI
 - Date: 2026-08-23
 - Scope: serialized writable worker, managed child worktree, and ephemeral read-only LSP runtime
 

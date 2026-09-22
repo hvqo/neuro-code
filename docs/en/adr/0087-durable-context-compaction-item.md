@@ -1,6 +1,8 @@
 # ADR 0087: Durable Context-Compaction Items and Resume Projection
 
-- Status: accepted for the Stage5DG vertical slice
+[简体中文](../../zh-CN/adr/0087-durable-context-compaction-item.md) · **English**
+
+- Status: Accepted for the Stage5DG vertical slice
 - Date: 2026-08-08
 - Scope: application memory, domain conversation values, and SQLite session storage
 

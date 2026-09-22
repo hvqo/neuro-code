@@ -1,6 +1,8 @@
 # ADR 0130：受管工作区 Checkpoint 与 Rollback
 
-- 状态：首个内部纵向切片已接受
+[English](../../en/adr/0130-managed-workspace-checkpoint-rollback.md) · **简体中文**
+
+- 状态：已接受（首个内部纵向切片）
 - 日期：2026-08-23
 - 范围：一个 READY、由 Neuro Code 拥有的受管 worktree 的持久化源状态 checkpoint 与精确 rollback
 
@@ -34,8 +36,7 @@ WorkspaceCheckpointApplicationService
 但本 ADR 不启用面向模型的 tool、自动 policy、TUI command、LSP binding、
 writable subagent、worker coordinator、Relay、DAG 或 integration operation。
 
-### Target authority
-
+### Target 权威
 `CheckpointCreateRequest` 接收 `WorktreeHandle` 或由 `WorktreeId` 得到的 handle，
 从不接收裸 filesystem path。Capture 和 rollback 必须同时满足：
 
@@ -50,8 +51,7 @@ Rollback 只作用于现有 managed worktree。source checkout、external worktr
 `ORPHANED`、`REMOVED`、path reuse、替换后的 repository 或 branch mismatch 都在
 filesystem mutation 之前拒绝。
 
-### Captured projection
-
+### 捕获的投影
 快照是 source-controlled workspace projection，不是任意 filesystem image。它包含：
 
 - repository/worktree identity、HEAD 和 branch/detached 状态；

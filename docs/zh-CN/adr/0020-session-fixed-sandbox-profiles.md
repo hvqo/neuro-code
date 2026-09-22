@@ -1,5 +1,8 @@
 # ADR 0020：会话固定的沙箱 profile
 
+- 状态：已接受
+- 日期：2026-07-18
+
 **简体中文** · [English](../../en/adr/0020-session-fixed-sandbox-profiles.md)
 
 ## 背景

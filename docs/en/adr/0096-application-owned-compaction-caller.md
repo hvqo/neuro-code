@@ -1,6 +1,8 @@
 # ADR 0096: Application-owned explicit compaction caller
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0096-application-owned-compaction-caller.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: `ApplicationComposition` and `AgentConversation`
 

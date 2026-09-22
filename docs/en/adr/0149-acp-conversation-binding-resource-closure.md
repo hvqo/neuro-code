@@ -1,5 +1,7 @@
 # ADR 0149: ACP ConversationBinding Resource Closure Authority
 
+[简体中文](../../zh-CN/adr/0149-acp-conversation-binding-resource-closure.md) · **English**
+
 - Status: Accepted
 - Date: 2026-08-30
 - Scope: bounded correctness closure after the V1 ACP interface-boundary slices

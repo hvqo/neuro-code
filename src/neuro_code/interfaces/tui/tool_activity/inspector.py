@@ -29,7 +29,7 @@ class ToolInspectorScreen(ModalScreen[None]):
     CSS = """
     ToolInspectorScreen {
         align: center middle;
-        background: $background 80%;
+        background: $modal-overlay 25%;
     }
 
     #tool-inspector-dialog {
@@ -38,7 +38,7 @@ class ToolInspectorScreen(ModalScreen[None]):
         height: 90%;
         padding: $space-2 $space-3;
         background: $surface;
-        border: solid $border;
+        border: round $border;
     }
 
     #tool-inspector-title {

@@ -1,10 +1,11 @@
-# ADR 0072: Isolated read-only subagent runtime
+# ADR 0167: Isolated read-only subagent runtime
 
-[简体中文](../../zh-CN/adr/0072-isolated-read-only-subagent-runtime.md) · **English**
+[简体中文](../../zh-CN/adr/0167-isolated-read-only-subagent-runtime.md) · **English**
 
-## Status
+> Renumbered from ADR 0072 so every ADR number is unique; the decision itself is unchanged.
 
-Accepted for Stage5CR.
+- Status: Accepted for Stage5CR
+- Date: 2026-08-08
 
 ## Context
 

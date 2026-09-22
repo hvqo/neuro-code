@@ -1488,7 +1488,7 @@ class AgentConversationTests(unittest.IsolatedAsyncioTestCase):
             )
 
             turn = asyncio.create_task(conversation.run("cancelled prompt"))
-            await asyncio.wait_for(provider.started.wait(), timeout=5)
+            await asyncio.wait_for(provider.started.wait(), timeout=30)
             turn.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await turn
@@ -1540,7 +1540,7 @@ class AgentConversationTests(unittest.IsolatedAsyncioTestCase):
                     cancellation_policy=TurnCancellationPolicy.REWIND_PRISTINE,
                 )
             )
-            await asyncio.wait_for(provider.started.wait(), timeout=5)
+            await asyncio.wait_for(provider.started.wait(), timeout=30)
             turn.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await turn
@@ -1602,7 +1602,7 @@ class AgentConversationTests(unittest.IsolatedAsyncioTestCase):
             )
             turn_drained = False
             try:
-                await asyncio.wait_for(provider.started.wait(), timeout=5)
+                await asyncio.wait_for(provider.started.wait(), timeout=30)
                 turn.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await turn

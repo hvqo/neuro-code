@@ -1,12 +1,13 @@
 # ADR 0153：第一版发布前完成架构迁移
 
-- 状态：Accepted
+[English](../../en/adr/0153-architecture-completion.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-09-02
 - 范围：第一版发布前 modular monolith 与 ports-and-adapters 的最终收敛
 - 依赖：ADR 0049，以及截至 ADR 0152 的 interface/session boundary ADR
 
-## Context
-
+## 背景
 仓库已经建立 `application`、`application/ports`、`domain`、`infrastructure`、
 `interfaces`、`bootstrap` 和 `shared`，但若干大型 canonical implementation 仍位于
 package 根目录。这使 ownership 不清晰：interface package 仍有一部分只是 wrapper，
@@ -16,8 +17,7 @@ configuration 将 value contract 与文件加载混在一起，bootstrap 也同�
 这是第一版发布前的内部架构迁移。因此目标是在源码目录中表达清晰的 ownership，
 同时保持现有 CLI、TUI、ACP、Runtime、Provider、权限、沙箱、会话、持久化和安全行为。
 
-## Decision
-
+## 决策
 package 根目录不再放置 production implementation module。源码根目录只包含
 `__init__.py`、`__main__.py` 以及 `application`、`bootstrap`、`domain`、
 `infrastructure`、`interfaces`、`shared` 这些架构 package。
@@ -78,8 +78,7 @@ Architecture tests 强制执行源码树边界，并扫描 production import，�
 `infrastructure -> interfaces/bootstrap`。现有窄的 entrypoint edge 与明确的 compatibility
 export 都单独测试，不通过扩大 allowlist 隐藏违规。
 
-## Consequences
-
+## 后果
 现在无需依赖 `architecture.md` 解释哪个根级 module 才是权威实现，目录结构本身即可表达
 modular monolith 架构。Interface import 不会装配具体 infrastructure，application port import
 也不会加载 bootstrap configuration 或 provider。

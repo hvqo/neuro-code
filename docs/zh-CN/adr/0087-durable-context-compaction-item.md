@@ -1,6 +1,8 @@
 # ADR 0087：持久化上下文压缩条目与恢复投影
 
-- 状态：Stage5DG 纵向切片已接受
+[English](../../en/adr/0087-durable-context-compaction-item.md) · **简体中文**
+
+- 状态：已接受（Stage5DG 纵向切片）
 - 日期：2026-08-08
 - 范围：应用记忆、会话领域值对象和 SQLite 会话存储
 

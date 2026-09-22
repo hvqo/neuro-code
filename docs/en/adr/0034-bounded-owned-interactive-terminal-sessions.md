@@ -2,7 +2,7 @@
 
 [简体中文](../../zh-CN/adr/0034-bounded-owned-interactive-terminal-sessions.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-07-19
 - Source baseline: `c68e39f60462f28d9be5e683d9cbe2c57b1a5027`
 

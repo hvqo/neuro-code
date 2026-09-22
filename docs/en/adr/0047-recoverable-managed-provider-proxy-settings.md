@@ -2,7 +2,8 @@
 
 **English** · [简体中文](../../zh-CN/adr/0047-recoverable-managed-provider-proxy-settings.md)
 
-Status: accepted
+- Status: Accepted
+- Date: 2026-07-28
 
 ## Context
 

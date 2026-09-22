@@ -1,8 +1,9 @@
 # ADR 0076：显式 ACP 只读子代理扩展
 
-## 状态
+[English](../../en/adr/0076-explicit-acp-read-only-subagent-extension.md) · **简体中文**
 
-Stage5CV 已接受.
+- 状态：已接受（Stage5CV）
+- 日期：2026-08-08
 
 ## 背景
 

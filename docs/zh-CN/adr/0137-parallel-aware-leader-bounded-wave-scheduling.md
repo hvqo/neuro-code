@@ -1,6 +1,8 @@
 # ADR 0137：Parallel-aware Leader / 有界 wave scheduling
 
-- 状态：作为显式内部 P0 vertical slice 实现；最终评级等待 merge-ref CI
+[English](../../en/adr/0137-parallel-aware-leader-bounded-wave-scheduling.md) · **简体中文**
+
+- 状态：已接受；作为显式内部 P0 vertical slice 实现；最终评级等待 merge-ref CI
 - 日期：2026-08-26
 - 范围：一个作用于已发布 bounded Task DAG 的 zero-tool Leader
 - 取代范围：ADR 0135 中的串行执行部分；ADR 0135 仍保留为历史 decision contract
@@ -51,8 +53,7 @@ Unknown/duplicate ID、terminal node selection、过期 graph/node generation、
 overflow、malformed 或 unknown JSON 都 fail closed。Typed invalid output 作为 durable
 历史保留，绝不 replay provider request。
 
-### Evidence contract
-
+### 证据契约
 有界 evidence envelope 包含 parent session、DAG ID 与 definition fingerprint、graph
 generation、不可变 `max_parallel`、durable `running_node_ids`、计算得到的
 `available_capacity`、canonical READY ID 以及每个 node 的有界 projection。每个 node

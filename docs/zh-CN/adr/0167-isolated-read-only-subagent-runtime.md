@@ -1,10 +1,11 @@
-# ADR 0072：隔离的只读子代理运行时
+# ADR 0167：隔离的只读子代理运行时
 
-[English](../../en/adr/0072-isolated-read-only-subagent-runtime.md) · **简体中文**
+[English](../../en/adr/0167-isolated-read-only-subagent-runtime.md) · **简体中文**
 
-## 状态
+> 为保持 ADR 编号唯一，由 ADR 0072 重编号而来；决策内容未变。
 
-Stage5CR 接受.
+- 状态：已接受（Stage5CR）
+- 日期：2026-08-08
 
 ## 背景
 

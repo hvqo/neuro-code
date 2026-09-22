@@ -1,11 +1,12 @@
 # ADR 0164：面向模型的工具结果保护边界
 
-- Status：Accepted
-- Date：2026-09-16
-- Scope：CM4a 普通 Agent 的有界工具结果上下文投影
+[English](../../en/adr/0164-model-facing-tool-result-guard.md) · **简体中文**
 
-## Context
+- 状态：已接受
+- 日期：2026-09-16
+- 范围：CM4a 普通 Agent 的有界工具结果上下文投影
 
+## 背景
 现有各工具已经提供有用的输出上限，部分工具还会把更大的脱敏结果
 持久化到既有的会话作用域输出 artifact store。这些上限并不能覆盖扩展工具
 或所有终态路径。此前 Runtime 会直接把 `ToolResult.content` 放入
@@ -15,8 +16,7 @@
 因此，面向模型的上下文需要一个确定性的投影边界，同时不能创建第二个执行事实
 所有者或第二个 artifact store。
 
-## Decision
-
+## 决策
 `ToolResult` 继续是规范执行结果。`ToolResultContextProjection` 是类型化、
 Provider 无关的值，描述可以放入面向模型工具消息的有界内容和计量值。应用 Runtime
 在 `application/runtime/tool_result_guard.py` 中拥有纯函数
@@ -56,8 +56,7 @@ custom/MCP 工具不能仅通过选择这些 key 伪造该声明。CM4a 不创�
 既有 artifact store、脱敏、读取、权限、会话关联或垃圾回收契约。Artifact 是外部重新读取
 界面，不是模型上下文。
 
-## Invariants and non-goals
-
+## 不变量与非目标
 - 规范 `ToolResult` 不等于面向模型的投影。有界 `Role.TOOL` 消息不能替代验证、监督、
   最终化或 UI/ACP 终态投影使用的完整规范证据。
 - 下一次请求仍然从投影后的 `Role.TOOL` 消息正常构建并执行 preflight，不绕过或特殊化
@@ -73,8 +72,7 @@ custom/MCP 工具不能仅通过选择这些 key 伪造该声明。CM4a 不创�
 - 不包含 LLM 摘要、语义检索、自动清除旧结果、新 artifact 数据库、跨会话 artifact
   检索、结果重写、CM3 变更、UltraCode 重设计或子代理策略扩展。
 
-## Compatibility and validation
-
+## 兼容性与验证
 本变更不增加持久化 schema，也不增加新的 durable result owner。既有 artifact 元数据和
 终态事件消费者保持兼容，因为规范 `content`、`is_error`、metadata 和
 `execution_result` 字段语义不变；投影事实只是新增的事件字段。聚焦回归覆盖透传、

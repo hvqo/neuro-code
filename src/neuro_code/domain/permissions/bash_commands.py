@@ -492,6 +492,68 @@ def classify_bash_command_family(script: str) -> BashCommandFamily | None:
     return None
 
 
+_READ_ONLY_INSPECTION_PROGRAMS = frozenset({"grep", "rg", "cat", "head", "tail", "wc"})
+_COMPOSITION_SEPARATORS = frozenset({"&&", "||", ";"})
+
+
+def _safe_inspection_argument(value: str) -> bool:
+    """Reject shell metacharacters while still allowing inspection paths.
+
+    拒绝 Shell 元字符,但仍允许只读检查命令使用路径参数."""
+
+    if not value or "\x00" in value:
+        return False
+    return not any(char in value for char in _UNSAFE_ARGUMENT_CHARS)
+
+
+def classify_bash_read_only_inspection(script: str) -> bool:
+    """Return True only for trusted read-only repository inspection commands.
+
+    Every analyzed segment must be a recognized read-only inspection program, a
+    canonical git-read subcommand, or an already-recognized test/static-check
+    family.  This fails closed for redirection, unknown programs, nested
+    interpreters, ambiguous shell composition, assignments, and incomplete
+    parsing, so non-empty output from a mutating or unknown shell shape never
+    looks like progress.
+
+    仅当脚本是可信的只读仓库检查命令时返回 True.每个片段都必须是已识别的只读检查程序、
+    规范的 git 读子命令,或已识别的测试/静态检查族;对重定向、未知程序、嵌套解释器、
+    有歧义的 Shell 组合、赋值与不完整解析一律失败关闭,因此变更型或未知 Shell 形状的
+    非空输出永远不会看起来像进展.
+    """
+
+    # Only pipelines of provably read-only segments are trusted; sequencing with
+    # `&&`, `||`, or `;` stays ambiguous and must fail closed.
+    tokens = _tokenize(script)
+    if tokens is None or any(token in _COMPOSITION_SEPARATORS for token in tokens):
+        return False
+    analysis = analyze_bash_command(script)
+    if not analysis.complete or not analysis.segments:
+        return False
+    for segment in analysis.segments:
+        if segment.contains_assignment:
+            return False
+        words = segment.words
+        if not words:
+            return False
+        program = _basename(words[0])
+        if program == "git":
+            if not _classify_git_read(("git", *words[1:])):
+                return False
+            continue
+        if program in _READ_ONLY_INSPECTION_PROGRAMS:
+            if not all(_safe_inspection_argument(argument) for argument in words[1:]):
+                return False
+            continue
+        if classify_bash_command_family(" ".join(words)) in (
+            BashCommandFamily.TEST,
+            BashCommandFamily.STATIC_CHECK,
+        ):
+            continue
+        return False
+    return True
+
+
 def validate_verification_command(value: object) -> str:
     """Validate one explicit command against the trusted verification shapes.
 

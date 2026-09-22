@@ -1,6 +1,8 @@
 # ADR 0134：持久化有界并行 Task DAG
 
-- 状态：在当前纵向切片范围内 PROVEN
+[English](../../en/adr/0134-durable-serialized-task-dag.md) · **简体中文**
+
+- 状态：已接受；在当前纵向切片范围内 PROVEN
 - 日期：2026-08-24
 - 范围：一个由调用方定义、节点复用既有 Writable Subagent pipeline 的有界 DAG；`max_parallel` 为 1..4
 

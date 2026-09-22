@@ -1,5 +1,7 @@
 # ADR 0159: Read-only Git change inspection
 
+[简体中文](../../zh-CN/adr/0159-read-only-git-change-inspection.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-13
 - Scope: B2 bounded read-only Git inspection for normal Agent runs

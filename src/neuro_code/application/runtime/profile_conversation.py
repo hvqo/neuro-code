@@ -10,6 +10,7 @@ from neuro_code.application.sessions.binding import (
 )
 from neuro_code.application.sessions.contracts import (
     InteractionModeSelectionResult,
+    NewSessionResult,
     ReasoningEffortSelectionResult,
     SessionOption,
     SessionSelectionResult,
@@ -24,6 +25,7 @@ ConversationRunner = _ConversationRunner
 __all__ = [
     "ConversationBinding",
     "InteractionModeSelectionResult",
+    "NewSessionResult",
     "ProfileConversationController",
     "ProviderOption",
     "ProviderSelectionResult",

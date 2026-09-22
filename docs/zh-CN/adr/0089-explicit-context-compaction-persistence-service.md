@@ -1,5 +1,7 @@
 # ADR 0089：显式上下文压缩持久化服务
 
+[English](../../en/adr/0089-explicit-context-compaction-persistence-service.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：application memory 与 SessionStore 边界

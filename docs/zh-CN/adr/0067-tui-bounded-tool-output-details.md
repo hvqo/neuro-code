@@ -1,8 +1,9 @@
 # ADR 0067：TUI 中会话作用域的有界工具输出详情
 
-## 状态
+[English](../../en/adr/0067-tui-bounded-tool-output-details.md) · **简体中文**
 
-阶段 5BN 已接受。
+- 状态：已接受（Stage5BN）
+- 日期：2026-08-07
 
 ## 背景
 

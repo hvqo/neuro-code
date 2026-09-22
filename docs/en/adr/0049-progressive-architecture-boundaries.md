@@ -2,13 +2,23 @@
 
 [简体中文](../../zh-CN/adr/0049-progressive-architecture-boundaries.md) · **English**
 
-- Status: accepted
+- Status: Accepted
 - Date: 2026-07-22
 - Source baseline: `c68e39f60462f28d9be5e683d9cbe2c57b1a5027`
 - Provider-facade retention portions are superseded by ADR 0072 after
   Architecture Freeze v1.
 - Adapter, tool, and flat-domain-facade retention portions are superseded by
   ADR 0074 after the compatibility cleanup audit.
+
+> **Reading guide.** Most of this record's length is an append-only implementation log
+> rather than decision text. Read `## Context` and `## Decision` first (about 100 lines);
+> the decision, its `## Consequences`, and `## Rejected alternatives` occupy roughly 120
+> lines in total. The `### Implementation status` section is a dated log of the migration
+> stages that followed and runs to about 1,185 lines; consult it only when you need the
+> history of one specific boundary. The retention portions are superseded by
+> [ADR 0072](0072-remove-provider-compatibility-facades.md),
+> [ADR 0073](0073-remove-root-compatibility-facades.md), and
+> [ADR 0074](0074-remove-adapter-tool-domain-facades.md).
 
 ## Context
 

@@ -1,5 +1,7 @@
 # ADR 0073：移除过时的根级兼容门面
 
+[English](../../en/adr/0073-remove-root-compatibility-facades.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-07
 - 取代：ADR 0049 中关于这五个模块继续保留根级 facade 的决定

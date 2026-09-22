@@ -1,8 +1,9 @@
 # ADR 0078：显式 TUI 子代理关系视图
 
-## 状态
+[English](../../en/adr/0078-explicit-tui-subagent-relationship-view.md) · **简体中文**
 
-Stage5CX 已接受。
+- 状态：已接受（Stage5CX）
+- 日期：2026-08-08
 
 ## 背景
 

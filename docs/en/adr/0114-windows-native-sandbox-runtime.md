@@ -1,5 +1,7 @@
 # ADR 0114: Windows native non-PTY sandbox runtime
 
+[简体中文](../../zh-CN/adr/0114-windows-native-sandbox-runtime.md) · **English**
+
 - Status: Accepted; W3 merged after focused native acceptance and full CI
 - Date: 2026-08-14
 - Scope: Windows enabled profiles for BASH, background Bash, and MCP stdio

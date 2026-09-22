@@ -1,5 +1,7 @@
 # ADR 0154: Normal-Agent Verification Acquisition Boundary
 
+[简体中文](../../zh-CN/adr/0154-normal-agent-verification-acquisition-boundary.md) · **English**
+
 - Status: Accepted
 - Date: 2026-09-07
 - Scope: VF-3c normal-agent generic verification requirement and trusted coverage acquisition

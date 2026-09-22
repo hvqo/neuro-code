@@ -1,5 +1,7 @@
 # ADR 0092：显式 Runtime 压缩安全边界
 
+[English](../../en/adr/0092-runtime-compaction-safe-boundary.md) · **简体中文**
+
 - 状态：已接受
 - 日期：2026-08-08
 - 范围：未来 Runtime 接入的 application memory 边界

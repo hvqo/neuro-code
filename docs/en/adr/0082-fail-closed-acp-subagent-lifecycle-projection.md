@@ -1,6 +1,8 @@
 # ADR 0082: Fail-Closed ACP Subagent Lifecycle Projection
 
-- Status: accepted
+[简体中文](../../zh-CN/adr/0082-fail-closed-acp-subagent-lifecycle-projection.md) · **English**
+
+- Status: Accepted
 - Date: 2026-08-08
 - Scope: Stage5DB
 

@@ -1,8 +1,9 @@
 # ADR 0070: ACP session-scoped tool-output artifact extension
 
-## Status
+[简体中文](../../zh-CN/adr/0070-acp-session-tool-output-artifact-extension.md) · **English**
 
-Accepted for Stage5BQ.
+- Status: Accepted for Stage5BQ
+- Date: 2026-08-07
 
 ## Context
 

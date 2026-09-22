@@ -1,12 +1,13 @@
 # ADR 0151：ACP Transport 边界
 
-- 状态：Accepted
+[English](../../en/adr/0151-acp-transport-boundary.md) · **简体中文**
+
+- 状态：已接受
 - 日期：2026-08-31
 - 范围：堆叠在 PR #78 之上的 ACP transport 结构切片
 - 依赖：ADR 0145、ADR 0146、ADR 0147、ADR 0148、ADR 0149 和 ADR 0150
 
-## Context
-
+## 背景
 冻结的 PR #78 base 是
 `99af1d1e9339b3baaa657b1a946279a7ecffff61`。在该 base 上，
 `neuro_code.acp` 已经提取 prompt/content conversion、history/live update
@@ -88,8 +89,7 @@ session registry、作 permission decision、校验 workspace、配置 sandbox�
 newline framing、message bounds、writer batching、feeder cancellation 和 per-connection
 cleanup。
 
-## Decision
-
+## 决策
 `neuro_code.interfaces.acp.transport` 是以下内容的 canonical owner：
 
 - SDK router extension 与 `_AcpSdkConnection`；
@@ -120,8 +120,7 @@ Canonical router 继续调用官方 SDK
 它的 `listen`、`close`、`session_update` 和 `request_permission` 方法继续保留既有的
 SDK notification/request schema 与 normalization。
 
-## STDIO boundary
-
+## STDIO 边界
 `serve_stdio` 继续从官方 SDK `stdio_streams` 获取 stream，并传入
 `limit=ACP_STDIO_BUFFER_LIMIT_BYTES`，创建一个 SDK connection，然后等待其 main loop。
 它使用 `asyncio.shield` 关闭 connection，再使用 `asyncio.shield` shutdown 注入 Agent，
@@ -129,8 +128,7 @@ SDK notification/request schema 与 normalization。
 Agent。旧 public wrapper 构造 Agent，并注入历史的 `neuro_code.acp.stdio_streams` alias，
 因此既有 private test patching 继续有效。
 
-## WebSocket boundary
-
+## WebSocket 边界
 `serve_websocket` 保留 host 与 port validation；缺少可选 `websockets` dependency 时，
 仍以既有 `ConfigurationError` 失败关闭。它使用 1 MiB maximum message size 和
 `max_queue=16` 配置官方 server。
