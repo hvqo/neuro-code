@@ -1882,6 +1882,7 @@ def test_canonical_memory_modules_are_the_only_memory_implementations() -> None:
         "neuro_code.application.memory.project_memory",
         "neuro_code.application.memory.project_memory_extraction",
         "neuro_code.application.memory.project_scope",
+        "neuro_code.application.memory.microcompaction",
     }
     assert {
         module for module in modules if module.startswith("neuro_code.application.memory.")

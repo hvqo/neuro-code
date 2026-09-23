@@ -1795,6 +1795,16 @@ Project Memory、Working Set 以及未来的 microcompaction/compaction 都必�
 preservation 和 correctness。这不承诺一定命中缓存：各 Provider 的缓存键、分词方式、保留时间和可缓存
 条件不同；真实项目指令或技能发生变更时，使相应前缀失效正是正确行为。
 
+## Microcompaction V1（微压缩）
+
+Microcompaction 是对模型可见投影执行的确定性清理，与 Full Compaction 不同：它不生成语义摘要，也不修改规范会话条目、artifact、audit、verification 或 recovery fact。一次有界批次可在可执行的上下文压力边界上、Context Preflight 之前或工具批次之后运行。若投影后的请求为 `SAFE`，Runtime 到此停止，不进入 Full Compaction 或 Fresh Context Rollover；压力仍存在时，继续由既有 Full Compaction 和 rollover 路径执行原有安全检查。
+
+一个批次只考虑位于当前用户消息之前、连续且完整的 assistant tool-call group 及其有序结果。结果必须有 Runtime 观测到的成功终态；重复或格式错误的 group 不参与。最近三个历史 group、当前 turn、error、media/binary payload，以及状态未知的结果（例如进程重启后）都会受到保护。选中的结果正文仅在新的 `ModelContext` 中替换成固定且有界的 marker。User/Assistant 原文与 call/result adjacency 保持不变。Marker 不含工具参数、路径、存储 metadata、secret，也不是生成式摘要。
+
+应用层按 session 和 context generation 保存内存快照，记录精确 group fingerprint、稳定条目边界与前缀 fingerprint、compaction identity 和聚合 telemetry。相同快照会稳定重放；只有新的压力触发同时观察到稳定前缀/compaction 边界变化，或有意义的追加（至少八个稳定条目或 2,048 个估算 token）时，才允许建立下一批。每批一次处理全部符合条件的 group，且至少要节省 1,024 个序列化条目字节和 256 个估算 token；收益不足时返回 `NOOP`。扫描最多处理 16,384 个条目和 8 MiB 的保守序列化尺寸上限，嵌套值的深度/数量也有界；单个 assistant group 最多包含 128 个 call 和 256 个 content part。Fingerprint 集合和 Runtime 结果状态账本也有上限。该状态不持久化：进程重启后从规范历史重新投影，没有本次 Runtime 成功证据的结果会 fail closed。已提交的 Fresh Context generation 会清除快照。
+
+不包含正文的聚合 telemetry 附加到既有 Context Preflight event，记录 trigger reason、压缩的 group/result 数量、前后估算字节/token、节省量、稳定边界、可选 `NOOP` reason，以及估算值是否因来源上限而饱和。Microcompaction 不增加 Provider 专属 cache key、新 Runtime Trace 或 durable state 格式。它遵循 `Stable Prefix → Append-only Conversation → Volatile Tail`，并以批量方式改写投影，避免每次请求只清理一个结果。
+
 `ModelCompleted.usage` 现在携带与 Provider 无关的 `ModelUsage` 值：Provider 原始的输入/输出字段，以及可选的
 缓存读取（同时以 `cache_hit_tokens` 作为别名）、缓存写入和缓存未命中 token。输入 token 的语义会被明确标识。
 大多数 Provider 上报总输入；Anthropic 上报缓存断点之后的未缓存尾部，只有 cache-read 与 cache-creation
