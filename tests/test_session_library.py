@@ -14,15 +14,21 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from neuro_code.application.memory.project_memory_extraction import ProjectMemoryExtractionManager
 from neuro_code.application.sessions.contracts import (
     NewSessionResult,
     SessionOption,
 )
 from neuro_code.application.sessions.library import SessionLibraryService
+from neuro_code.domain.memory import ProjectMemory, ProjectMemoryMetadata, ProjectMemoryType
 from neuro_code.domain.sessions import SessionSummary
+from neuro_code.infrastructure.persistence.project_memory_files import FileProjectMemoryStore
 from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionStore
 from neuro_code.shared.errors import ConfigurationError
 
@@ -35,6 +41,7 @@ class LibraryOwnerFixture:
         self.options: tuple[SessionOption, ...] = ()
         self.queries: list[str | None] = []
         self.new_session_calls = 0
+        self.active_project_id: str | None = None
 
     @property
     def session_id(self) -> str | None:
@@ -44,7 +51,24 @@ class LibraryOwnerFixture:
         self.queries.append(query)
         return self.options
 
-    async def start_new_session(self) -> NewSessionResult:
+    @asynccontextmanager
+    async def session_project_lifecycle(
+        self,
+        session_id: str,
+        project_id: str | None,
+    ) -> AsyncIterator[None]:
+        yield
+        if session_id == self._session_id:
+            self.active_project_id = project_id
+
+    @asynccontextmanager
+    async def project_lifecycle(self, project_id: str) -> AsyncIterator[None]:
+        yield
+        if self.active_project_id == project_id:
+            self.active_project_id = None
+
+    async def start_new_session(self, project_id: str | None = None) -> NewSessionResult:
+        self.active_project_id = project_id
         self.new_session_calls += 1
         previous = self._session_id
         self._session_id = None
@@ -56,10 +80,17 @@ class SessionLibraryServiceTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = SqliteSessionStore(Path(directory) / "sessions.db")
             await store.initialize()
+            memory_store = FileProjectMemoryStore(Path(directory) / "state")
+            memory_lifecycle = ProjectMemoryExtractionManager(store, memory_store)
             open_session = await store.create_session("/workspace", "provider", "model")
             other_session = await store.create_session("/workspace", "provider", "model")
             owner = LibraryOwnerFixture(session_id=open_session)
-            service = SessionLibraryService(store, owner=owner)
+            service = SessionLibraryService(
+                store,
+                owner=owner,
+                memory_store=memory_store,
+                memory_lifecycle=memory_lifecycle,
+            )
 
             self.assertEqual(service.active_session_id(), open_session)
 
@@ -76,6 +107,23 @@ class SessionLibraryServiceTests(unittest.IsolatedAsyncioTestCase):
                 (await service.assign_session_project(other_session, None)).project_id,
                 None,
             )
+            active_assignment = await service.assign_session_project(open_session, project.id)
+            self.assertEqual(active_assignment.project_id, project.id)
+            self.assertEqual(owner.active_project_id, project.id)
+            now = datetime.now(UTC)
+            memory = ProjectMemory(
+                ProjectMemoryMetadata(
+                    memory_id="mem-" + "a" * 32,
+                    name="Architecture decision",
+                    description="Why: recovery. How to apply: check project state.",
+                    type=ProjectMemoryType.PROJECT,
+                    origin_session_id=open_session,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                "The project chose a durable owner.",
+            )
+            memory_store.upsert_memory(project.id, memory)
 
             renamed = await service.rename_session(other_session, "Renamed by library")
             self.assertEqual(renamed.title, "Renamed by library")
@@ -84,12 +132,22 @@ class SessionLibraryServiceTests(unittest.IsolatedAsyncioTestCase):
                 "Renamed by library",
             )
 
+            renamed_project = await service.rename_project(project.id, "Gamma")
+            self.assertEqual(renamed_project.id, project.id)
+            self.assertEqual(
+                memory_store.read_memory(project.id, memory.metadata.memory_id).content,
+                memory.content,
+            )
+
             await service.delete_project(project.id)
             self.assertEqual(await service.list_projects(), ())
+            self.assertFalse((Path(directory) / "state" / "project-memory" / project.id).exists())
+            self.assertIsNone(owner.active_project_id)
             self.assertEqual(
                 (await store.get_session(other_session)).project_id,
                 None,
             )
+            self.assertIsNone((await store.get_session(open_session)).project_id)
 
             await service.delete_session(other_session)
             with self.assertRaisesRegex(Exception, "unknown session"):
@@ -141,6 +199,29 @@ class SessionLibraryServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.previous_session_id, "open-session")
             self.assertEqual(owner.new_session_calls, 1)
             self.assertIsNone(service.active_session_id())
+
+    async def test_project_scope_requires_a_known_project_without_memory_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SqliteSessionStore(Path(directory) / "sessions.db")
+            await store.initialize()
+            session_id = await store.create_session("/workspace", "provider", "model")
+            owner = LibraryOwnerFixture(session_id=session_id)
+            service = SessionLibraryService(store, owner=owner)
+            project = await service.create_project("Known project", "/workspace")
+
+            with self.assertRaisesRegex(ValueError, "project_id must be non-empty"):
+                await service.start_new_session(" ")
+            with self.assertRaisesRegex(ConfigurationError, "unknown project"):
+                await service.start_new_session(str(uuid.uuid4()))
+            self.assertEqual(owner.new_session_calls, 0)
+            self.assertIsNone(owner.active_project_id)
+
+            assigned = await service.assign_session_project(session_id, project.id)
+            self.assertEqual(assigned.project_id, project.id)
+            self.assertEqual(owner.active_project_id, project.id)
+            result = await service.start_new_session(project.id)
+            self.assertEqual(result.previous_session_id, session_id)
+            self.assertEqual(owner.active_project_id, project.id)
 
     async def test_missing_owner_disables_listing_and_new_session(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

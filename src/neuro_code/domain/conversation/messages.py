@@ -48,6 +48,7 @@ class SyntheticReason(StrEnum):
 
     PROJECT_INSTRUCTIONS = "project-instructions"
     AVAILABLE_SKILLS = "available-skills"
+    PROJECT_MEMORY_INDEX = "project-memory-index"
     WORKING_SET = "working-set"
     PARENT_RELAY = "parent-relay"
     DAG_PREDECESSOR_RESULTS = "dag-predecessor-results"

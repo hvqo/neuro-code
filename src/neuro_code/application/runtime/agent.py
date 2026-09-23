@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Collection, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from neuro_code.application.memory.compaction_runtime import (
     ContextCompactionRuntimeRequest,
     ContextCompactionRuntimeResult,
 )
+from neuro_code.application.memory.project_scope import ProjectMemoryScope
 from neuro_code.application.permissions.policy import PermissionManager, PermissionMode
 from neuro_code.application.ports.approval import PermissionApprover
 from neuro_code.application.ports.context_rollover import ContextRolloverController
@@ -64,6 +66,7 @@ from neuro_code.shared.errors import ConfigurationError
 
 __all__ = ["AgentRunResult", "AgentRuntime", "EventSink"]
 
+LOGGER = logging.getLogger(__name__)
 FinalizerFactory = Callable[[ModelProvider, int, tuple[str, ...]], Finalizer]
 _USE_CONFIGURED_VERIFICATION_COMMAND = object()
 
@@ -108,6 +111,8 @@ class AgentRuntime:
         interaction_mode: InteractionMode | None = None,
         instruction_provider: Callable[[], InstructionDiscoveryResult | None] | None = None,
         skill_provider: Callable[[], SkillDiscoveryResult | None] | None = None,
+        project_memory_scope: ProjectMemoryScope | None = None,
+        project_memory_index_provider: Callable[[str], str | None] | None = None,
         plan: SessionPlan | None = None,
         plan_comments: Sequence[PlanComment] = (),
         supervisor_factory: Callable[[], AgentExecutionSupervisor] | None = None,
@@ -207,6 +212,7 @@ class AgentRuntime:
         self._normal_requirements_enabled = normal_requirements_enabled
         self._verification_command = verification_command if normal_requirements_enabled else None
         self._compaction_runtime_gate = compaction_runtime_gate
+        self._project_memory_scope = project_memory_scope
         self._auto_permission_mode = (
             PermissionMode.BYPASS
             if permissions.mode is PermissionMode.BYPASS
@@ -224,6 +230,13 @@ class AgentRuntime:
             plan=plan,
             instruction_provider=instruction_provider,
             skill_provider=skill_provider,
+            project_memory_provider=(
+                lambda: (
+                    self._project_memory_text(project_memory_index_provider)
+                    if project_memory_index_provider is not None
+                    else None
+                )
+            ),
             parent_relay_message=parent_relay_message,
             dag_result_relay_message=dag_result_relay_message,
         )
@@ -329,6 +342,40 @@ class AgentRuntime:
 
     def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
         self._context_builder.set_reasoning_effort(effort)
+
+    @property
+    def project_memory_scope(self) -> ProjectMemoryScope | None:
+        return self._project_memory_scope
+
+    def set_project_id(self, project_id: str | None) -> None:
+        if self._project_memory_scope is not None:
+            previous_project_id = self._project_memory_scope.project_id
+            self._project_memory_scope.set_project_id(project_id)
+            if previous_project_id != project_id:
+                self._context_builder.invalidate_project_memory_snapshot()
+
+    @property
+    def project_id(self) -> str | None:
+        """Return the Project Memory owner bound to this runtime, if enabled."""
+
+        return (
+            self._project_memory_scope.project_id
+            if self._project_memory_scope is not None
+            else None
+        )
+
+    def _project_memory_text(
+        self,
+        provider: Callable[[str], str | None] | None,
+    ) -> str | None:
+        scope = self._project_memory_scope
+        if provider is None or scope is None or scope.project_id is None:
+            return None
+        try:
+            return provider(scope.project_id)
+        except Exception as error:
+            LOGGER.info("project_memory_index unavailable error_type=%s", type(error).__name__)
+            return None
 
     @property
     def interaction_mode(self) -> InteractionMode:
@@ -492,6 +539,11 @@ class AgentRuntime:
             source_model=source_model,
             source_context_affinity=source_context_affinity,
             session_id=session_id,
+            project_id=(
+                self._project_memory_scope.project_id
+                if self._project_memory_scope is not None
+                else None
+            ),
             turn_id=turn_id,
             ultracode_execution_id=ultracode_execution_id,
             cancellation_policy=cancellation_policy,

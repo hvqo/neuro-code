@@ -41,6 +41,7 @@ class SessionStore(Protocol):
         model: str,
         context_affinity: str | None = None,
         sandbox_profile: SandboxProfile = SandboxProfile.OFF,
+        project_id: str | None = None,
     ) -> str: ...
 
     async def import_session(self, snapshot: SessionSnapshot) -> str: ...
@@ -188,6 +189,13 @@ class SessionStore(Protocol):
     async def load_messages(self, session_id: str) -> list[Message]: ...
 
     async def load_session_items(self, session_id: str) -> list[SessionItem]: ...
+
+    async def load_session_items_bounded(
+        self,
+        session_id: str,
+        *,
+        max_bytes: int,
+    ) -> list[SessionItem]: ...
 
     async def load_working_set(self, session_id: str) -> WorkingSetSnapshot | None: ...
 

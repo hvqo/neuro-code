@@ -1413,6 +1413,7 @@ class SessionLibraryTuiController:
         self.deleted_sessions: list[str] = []
         self.assignments: list[tuple[str, str | None]] = []
         self.new_session_calls = 0
+        self.new_session_projects: list[str | None] = []
 
     def active_session_id(self) -> str | None:
         return self._current_session
@@ -1504,8 +1505,9 @@ class SessionLibraryTuiController:
         self.deleted_sessions.append(session_id)
         self.options = tuple(option for option in self.options if option.session_id != session_id)
 
-    async def start_new_session(self) -> NewSessionResult:
+    async def start_new_session(self, project_id: str | None = None) -> NewSessionResult:
         self.new_session_calls += 1
+        self.new_session_projects.append(project_id)
         previous = self._current_session
         self._current_session = None
         return NewSessionResult(previous)
@@ -1954,10 +1956,15 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(approvals.handlers[-1])
 
     async def test_prompt_copy_and_paste_are_not_intercepted_by_cancel_binding(self) -> None:
+        class EmptyClipboardImageReader:
+            def read_image(self):
+                return None
+
         clipboard = ClipboardWriterFixture(native_copied=True)
         app = NeuroCodeApp(
             TuiConversation(),
             clipboard_writer=clipboard,
+            clipboard_image_reader=EmptyClipboardImageReader(),
             provider_name="fixture",
             model_name="fixture-model",
             cwd=Path("/workspace"),
@@ -7925,6 +7932,35 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(screen.view, "projects")
             self.assertIs(app.screen, screen)
+
+    async def test_session_library_starts_a_new_session_in_selected_project(self) -> None:
+        library = SessionLibraryTuiController()
+        app = NeuroCodeApp(
+            TuiConversation(),
+            session_library_service=library,
+            provider_name="first",
+            model_name="first-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(120, 50)) as pilot:
+            await app._open_session_library(view="projects")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if isinstance(app.screen, SessionLibraryScreen):
+                    break
+            screen = app.screen
+            assert isinstance(screen, SessionLibraryScreen)
+            await pilot.click("#library-project-0")
+            await pilot.click("#library-project-new-session")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if library.new_session_calls:
+                    break
+
+            self.assertEqual(library.new_session_calls, 1)
+            self.assertEqual(library.new_session_projects, ["project-1"])
+            self.assertNotIsInstance(app.screen, SessionLibraryScreen)
 
     async def test_session_library_moves_a_session_with_no_projects_available(self) -> None:
         library = SessionLibraryTuiController()

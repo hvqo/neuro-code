@@ -3270,16 +3270,23 @@ work rather than another verification-foundation slice.
 
 ## Cache-friendly model request projection and usage
 
-`ContextBuilder` owns the stable early request prefix: the request-scoped
-system policy, deterministic tool definitions, and the current serialized
-project-instruction and skill catalog discoveries. A discovery is refreshed on
-each request so a real workspace change can take effect, but its ordered
-serialization is stable while its source content is unchanged.
+The cache-friendly context contract is `Stable Prefix → Append-only
+Conversation → Volatile Tail`. The stable prefix contains the request-scoped
+system policy, deterministic tool definitions, and ordered project-instruction,
+skill, and Project Memory projections. Project Memory is read once per active
+context generation and remains byte-stable while that generation is active,
+even if extraction updates its store. It refreshes on a new session or resume,
+project attach/move/detach, and committed Fresh Context Rollover; rename keeps
+the same project identity. Full compaction does not refresh it because
+compaction is not a generation boundary. Project instruction and skill
+discoveries retain their existing workspace-refresh behavior and remain stable
+when their source content is unchanged.
 
-Mutable plan revisions, segment checkpoints, budget pressure, and replan
-state are not folded back into the system message or inserted before durable
-conversation items. `AgentLoopRunner` instead appends bounded synthetic
-runtime notices after safe conversation boundaries. Budget guidance uses only
+Mutable plan revisions, segment checkpoints, budget pressure, replan state,
+and the current Working Set are not folded back into the system message or
+inserted before durable conversation items. Working Set and bounded synthetic
+runtime notices follow append-only conversation as volatile tail context.
+Budget guidance uses only
 the discrete `CONSERVE`, `FOCUS`, and `FINAL_STAGE` pressure transitions; it
 does not rewrite exact remaining counters on every model step. These notices
 are excluded from session persistence, resume replay, and compaction source
@@ -3288,8 +3295,12 @@ exception because it is acknowledged only after a successful provider
 completion.
 
 This preserves the intended shape of an unchanged long turn: request *N + 1*
-is normally request *N* plus newly appended durable conversation items and, at
-most, a newly relevant bounded runtime notice. It does not promise a cache hit:
+keeps the same stable prefix, extends the conversation with new durable items,
+then carries its current volatile tail. Historical content is rewritten only
+at an explicit cache-invalidating context boundary or when measured reduction
+justifies it. Project Memory, Working Set, and future microcompaction or
+compaction changes must weigh token reduction, cache preservation, and
+correctness together. This does not promise a cache hit:
 providers may use different cache keys, tokenization, retention windows, and
 eligibility rules, and a real project-instruction or skill change correctly
 invalidates the affected prefix.
@@ -3508,3 +3519,58 @@ All 17 fields support user and current-workspace scopes. Workspace overrides liv
 Wide settings navigation initially focuses Appearance; All settings and cross-category search remain available. Groups use subtle surfaces with separated rows and more whitespace, while detail forms distinguish field labels from help text. Narrow terminals retain all categories in one scrolling column.
 
 Text uses independently mapped semantic colors per theme: blue headings and links, cyan inline code and tool activity, orange numbers and decorators, violet keywords, green strings and success states, and warm yellow warnings. Prose retains its neutral foreground. Light themes use darker text accents; dark themes use gentler bright colors. Matrix retains a green emphasis and System uses ANSI colors. Code, Markdown, and diffs share theme mappings without changing message content.
+
+## Project Memory V1
+
+`SessionProject.id` is the only Project Memory identity; `cwd` remains a
+workspace binding. Each optional project owns an isolated directory below the
+Neuro Code state root. `FileProjectMemoryStore` validates the canonical project
+UUID, manifest, body filenames, file types, links, containment, and strict
+count/byte limits. It keeps a manifest, generated bounded `MEMORY.md` index,
+and one body per memory. Session schema v35 remains unchanged.
+
+The application exposes index and exact-id recall through
+`ProjectMemoryRecallService`. The read-only `read_project_memory` tool receives
+only the active binding's mutable project scope and has no path argument. For a
+Project Memory-enabled Main Agent, its definition stays registered with or
+without a bound project and execution fails closed when unbound. `ContextBuilder`
+pins only the bounded index as `PROJECT_MEMORY_INDEX` for the active context
+generation, after repository instructions and skills and before ordinary
+history. A store update by
+background extraction does not change this snapshot. New sessions and resumes
+start with the latest index; project scope changes invalidate it, and a
+committed Fresh Context Rollover reloads it. Rename preserves the current
+snapshot identity; project detach/delete immediately clears the scope. Full
+compaction intentionally keeps the current snapshot because it is not a
+generation boundary. Synthetic memory context never enters durable history.
+Both index and recall text say that memory is potentially stale evidence and
+that current repository, Git, and `AGENTS.md` state take precedence.
+
+`ProjectMemoryExtractionManager` owns one bounded queue worker and a per-project
+lifecycle lock. It schedules only after completed durable user turns in a
+project-bound Main Agent, reads new durable conversation after a per-session
+cursor, and uses the existing manifest to deduplicate or update records. It
+disables tools and bounds the source transcript, prompt, output, event count,
+candidate count, queue, and wall time. Configured and recognizable credentials
+are redacted before extraction requests and persistence. Provider/storage failures, limits, and
+cancellation are typed and observable; none changes a committed turn. Shutdown
+cancels and gathers the worker. A cursor advances only after its bounded input
+has been handled, so pending turns can be retried after restart.
+
+`AgentConversation.open()` restores project scope from the resumed session.
+`ProfileConversationController` changes scope under its existing turn lock for
+project moves and explicit new sessions. A project-scoped new session persists
+its project id on its first turn. Forking a project-bound session retains its
+project owner; subagent bindings still receive no Project Memory scope. Project
+deletion serializes with turns and extraction, purges that project's state files, and then uses existing session
+project deletion to detach sessions. The TUI only adds a project-scoped new
+session action and clearly describes memory deletion. Main Agent has no
+state-root write tool; memory writes belong to the application extraction
+authority. Subagent bindings receive no Project Memory scope by default.
+
+The extractor retains only durable decisions and reasons, goals/constraints or
+deadlines, project-specific user feedback, external resource entry points, and
+non-obvious rationale. It excludes recoverable code facts, paths, Git history,
+repository instructions, plans, task progress, and ordinary debugging. Global
+user memory, vector/graph search, cloud sync, and a full management UI remain
+outside this version. See [ADR 0172](adr/0172-project-memory-v1.md).

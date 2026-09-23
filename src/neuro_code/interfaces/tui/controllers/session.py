@@ -257,7 +257,7 @@ class SessionControllerMixin(TuiAppControllerMixin):
     ) -> None:
         kind = action.kind
         if kind is LibraryActionKind.NEW_SESSION:
-            result = await library.start_new_session()
+            result = await library.start_new_session(action.project_id)
             await self._apply_new_session(result)
         elif kind is LibraryActionKind.RENAME_SESSION:
             assert action.session_id is not None

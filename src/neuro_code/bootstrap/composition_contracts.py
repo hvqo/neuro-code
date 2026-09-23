@@ -19,6 +19,10 @@ if TYPE_CHECKING:
         WorkspaceCheckpointApplicationService,
     )
     from neuro_code.application.git_inspection import GitInspectionService
+    from neuro_code.application.memory.project_memory import ProjectMemoryRecallService
+    from neuro_code.application.memory.project_memory_extraction import (
+        ProjectMemoryExtractionManager,
+    )
     from neuro_code.application.ports.approval import PermissionApprover
     from neuro_code.application.ports.background_tasks import (
         BackgroundTaskManager,
@@ -28,6 +32,7 @@ if TYPE_CHECKING:
     from neuro_code.application.ports.client_terminal import ClientTerminal
     from neuro_code.application.ports.configuration import AppConfig
     from neuro_code.application.ports.instructions import InstructionDiscovery
+    from neuro_code.application.ports.project_memory import ProjectMemoryStore
     from neuro_code.application.ports.skills import SkillDiscovery
     from neuro_code.application.ports.storage import SessionStore
     from neuro_code.application.ports.terminal import InteractiveTerminalManager
@@ -80,6 +85,9 @@ class CompositionRootMixin:
         _workspace_change_observer_factory: WorkspaceChangeObserverFactory
         _session_service: SessionApplicationService
         _session_summary_queries: SessionSummaryQueryService
+        project_memory_store: ProjectMemoryStore
+        project_memory_recall: ProjectMemoryRecallService
+        project_memory_extractions: ProjectMemoryExtractionManager
         _lsp_services: set[LanguageServerManager]
         _binding_scopes: set[ConversationBindingResourceScope]
         _closed: bool

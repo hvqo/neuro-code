@@ -545,8 +545,8 @@ class WorkingSetTests(unittest.IsolatedAsyncioTestCase):
             ),
             1,
         )
-        self.assertIsInstance(rendered[1], Message)
-        self.assertEqual(rendered[1], working_set_message)
+        self.assertIsInstance(rendered[-1], Message)
+        self.assertEqual(rendered[-1], working_set_message)
         self.assertEqual(await self.store.load_session_items(self.session_id), [source])
 
     async def test_runtime_refreshes_working_set_without_persisting_synthetic_context(self) -> None:

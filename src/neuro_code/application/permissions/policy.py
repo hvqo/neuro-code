@@ -260,7 +260,7 @@ class PermissionManager:
     为交互式和无头调用方提供确定性权限策略. 显式拒绝规则始终优先,无头调用方对未解决的询问直接拒绝.
     """
 
-    _READ_ONLY_TOOLS = frozenset({"read_file", "list_dir", "grep"})
+    _READ_ONLY_TOOLS = frozenset({"read_file", "list_dir", "grep", "read_project_memory"})
     _EDIT_TOOLS = frozenset({"search_replace", "apply_patch"})
 
     def __init__(

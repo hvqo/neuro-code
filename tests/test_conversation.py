@@ -8,8 +8,9 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from neuro_code.application.memory.compaction import (
     CompactionContextUsage,
@@ -57,6 +58,7 @@ from neuro_code.domain.execution import (
     TurnCancellationPolicy,
     TurnInput,
     TurnRecoveryAttempt,
+    TurnSource,
     VerificationRequirement,
     VerificationRequirementsSnapshot,
 )
@@ -275,6 +277,64 @@ def _explicit_compaction_request(
 
 
 class AgentConversationTests(unittest.IsolatedAsyncioTestCase):
+    def test_project_memory_scheduling_is_completed_user_only_and_best_effort(self) -> None:
+        project_id = "project-memory-scope"
+        scheduler = Mock()
+        conversation = AgentConversation(
+            runtime=SimpleNamespace(project_id=project_id),  # type: ignore[arg-type]
+            store=object(),  # type: ignore[arg-type]
+            project_memory_extraction=scheduler,
+        )
+        completed = AgentRunResult(
+            "session-one",
+            "committed response",
+            (),
+            (),
+            (),
+            1,
+            outcome=AgentExecutionOutcome(
+                AgentExecutionStatus.COMPLETED,
+                None,
+                finalized=True,
+                recoverable=False,
+            ),
+        )
+
+        conversation._schedule_project_memory_extraction(completed, turn_source=TurnSource.USER)
+        scheduler.schedule.assert_called_once_with("session-one", project_id)
+
+        scheduler.reset_mock()
+        conversation._schedule_project_memory_extraction(
+            completed,
+            turn_source=TurnSource.BACKGROUND_TASK_AUTO_WAKE,
+        )
+        conversation._schedule_project_memory_extraction(
+            AgentRunResult("session-two", "legacy result", (), (), (), 1),
+            turn_source=TurnSource.USER,
+        )
+        conversation._schedule_project_memory_extraction(
+            AgentRunResult(
+                "session-three",
+                "failed result",
+                (),
+                (),
+                (),
+                1,
+                outcome=AgentExecutionOutcome(
+                    AgentExecutionStatus.FAILED,
+                    SupervisorReasonCode.INTERNAL_FAILURE,
+                    finalized=False,
+                    recoverable=True,
+                ),
+            ),
+            turn_source=TurnSource.USER,
+        )
+        scheduler.schedule.assert_not_called()
+
+        scheduler.schedule.side_effect = RuntimeError("extraction queue is closed")
+        conversation._schedule_project_memory_extraction(completed, turn_source=TurnSource.USER)
+        self.assertEqual(scheduler.schedule.call_count, 1)
+
     async def test_explicit_compaction_command_builds_live_snapshot_and_runs_owner(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

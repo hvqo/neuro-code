@@ -2,17 +2,16 @@
 
 应用层拥有的会话与项目库管理.
 
-Projects are an optional grouping over sessions: a session may belong to at most
-one project, and it may belong to none.  This service owns the bounded CRUD
-vocabulary an inbound interface needs, while two invariants stay with their
-existing owners:
+Projects own optional project context and memory, while sessions may belong to
+at most one project or none. This service owns the bounded CRUD vocabulary an
+inbound interface needs, while two invariants stay with their existing owners:
 
 * starting a fresh session replaces the conversation binding, so it is delegated
   to the profile controller;
 * deleting the session that is currently bound is refused, because removal would
   silently unload the open conversation.
 
-项目是会话的可选分组:会话最多归属一个项目,也可以不归属任何项目.本服务拥有入站接口所需的
+项目拥有可选的项目上下文与记忆;会话最多归属一个项目,也可以不归属任何项目.本服务拥有入站接口所需的
 有界 CRUD 词汇,同时两条不变量仍归既有所有者:
 
 * 开启全新会话会替换会话绑定,因此委托给 profile 控制器;
@@ -21,8 +20,15 @@ existing owners:
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from typing import Protocol
 
+from neuro_code.application.ports.project_memory import (
+    ProjectMemoryLifecycleCoordinator,
+    ProjectMemoryStore,
+)
 from neuro_code.application.sessions.contracts import NewSessionResult, SessionOption
 from neuro_code.domain.sessions import SessionProject, SessionSummary
 from neuro_code.shared.errors import ConfigurationError
@@ -58,6 +64,8 @@ class SessionLibraryStore(Protocol):
         project_id: str | None,
     ) -> SessionSummary: ...
 
+    async def get_session(self, session_id: str) -> SessionSummary: ...
+
     async def update_session_title(self, session_id: str, title: str) -> SessionSummary: ...
 
     async def delete_session(self, session_id: str) -> None: ...
@@ -73,7 +81,15 @@ class SessionLibraryOwner(Protocol):
 
     async def list_sessions(self, query: str | None = None) -> tuple[SessionOption, ...]: ...
 
-    async def start_new_session(self) -> NewSessionResult: ...
+    async def start_new_session(self, project_id: str | None = None) -> NewSessionResult: ...
+
+    def session_project_lifecycle(
+        self,
+        session_id: str,
+        project_id: str | None,
+    ) -> AbstractAsyncContextManager[None]: ...
+
+    def project_lifecycle(self, project_id: str) -> AbstractAsyncContextManager[None]: ...
 
 
 class SessionLibraryService:
@@ -89,16 +105,30 @@ class SessionLibraryService:
     profile 控制器;它不缓存项目或会话.
     """
 
-    __slots__ = ("_owner", "_store")
+    __slots__ = ("_memory_lifecycle", "_memory_store", "_owner", "_store")
 
     def __init__(
         self,
         store: SessionLibraryStore,
         *,
         owner: SessionLibraryOwner | None = None,
+        memory_store: ProjectMemoryStore | None = None,
+        memory_lifecycle: ProjectMemoryLifecycleCoordinator | None = None,
     ) -> None:
         self._store = store
         self._owner = owner
+        self._memory_store = memory_store
+        self._memory_lifecycle = memory_lifecycle
+
+    @asynccontextmanager
+    async def _project_memory_locks(self, project_ids: tuple[str, ...]) -> AsyncIterator[None]:
+        if self._memory_lifecycle is None:
+            yield
+            return
+        async with AsyncExitStack() as stack:
+            for project_id in sorted(set(project_ids)):
+                await stack.enter_async_context(self._memory_lifecycle.project_lock(project_id))
+            yield
 
     def active_session_id(self) -> str | None:
         """Return the currently bound session id, when one exists.
@@ -143,7 +173,23 @@ class SessionLibraryService:
 
         删除项目并保留其会话,只解除归属."""
 
-        await self._store.delete_project(project_id)
+        async def delete_project_data() -> None:
+            if self._memory_store is not None:
+                await asyncio.to_thread(self._memory_store.delete_project, project_id)
+            await self._store.delete_project(project_id)
+
+        async def serialized_delete_project_data() -> None:
+            if self._memory_lifecycle is None:
+                await delete_project_data()
+            else:
+                async with self._memory_lifecycle.project_lock(project_id):
+                    await delete_project_data()
+
+        if self._owner is None:
+            await serialized_delete_project_data()
+        else:
+            async with self._owner.project_lifecycle(project_id):
+                await serialized_delete_project_data()
 
     async def rename_session(self, session_id: str, title: str) -> SessionSummary:
         """Rename any workspace session, including the open one.
@@ -161,7 +207,18 @@ class SessionLibraryService:
 
         将会话归属到项目;传入 None 表示解除归属."""
 
-        return await self._store.assign_session_project(session_id, project_id)
+        async def assign() -> SessionSummary:
+            current = await self._store.get_session(session_id)
+            project_ids = tuple(
+                item for item in (current.project_id, project_id) if item is not None
+            )
+            async with self._project_memory_locks(project_ids):
+                return await self._store.assign_session_project(session_id, project_id)
+
+        if self._owner is None:
+            return await assign()
+        async with self._owner.session_project_lifecycle(session_id, project_id):
+            return await assign()
 
     async def delete_session(self, session_id: str) -> None:
         """Delete one session unless it is the session currently bound.
@@ -172,11 +229,19 @@ class SessionLibraryService:
             raise ConfigurationError("cannot delete the session that is currently open")
         await self._store.delete_session(session_id)
 
-    async def start_new_session(self) -> NewSessionResult:
+    async def start_new_session(self, project_id: str | None = None) -> NewSessionResult:
         """Start a fresh session in the current provider profile.
 
         在当前供应配置下开启全新会话."""
 
         if self._owner is None:
             raise ConfigurationError("session library new-session is unavailable")
-        return await self._owner.start_new_session()
+        if project_id is not None:
+            if not isinstance(project_id, str) or not project_id.strip():
+                raise ValueError("project_id must be non-empty when provided")
+            projects = await self._store.list_projects(limit=MAX_LIBRARY_PROJECTS)
+            if project_id not in {project.id for project in projects}:
+                raise ConfigurationError("cannot start a session in an unknown project")
+        if project_id is None:
+            return await self._owner.start_new_session()
+        return await self._owner.start_new_session(project_id)

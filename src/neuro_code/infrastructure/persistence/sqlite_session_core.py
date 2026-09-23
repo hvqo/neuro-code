@@ -374,16 +374,24 @@ class CoreMixin(_SqliteSessionPersistenceContext):
         model: str,
         context_affinity: str | None = None,
         sandbox_profile: SandboxProfile = SandboxProfile.OFF,
+        project_id: str | None = None,
     ) -> str:
         session_id = str(uuid.uuid4())
 
         def create() -> None:
             with closing(self._connect()) as connection, connection:
+                if project_id is not None:
+                    project = connection.execute(
+                        "SELECT 1 FROM session_projects WHERE id = ?",
+                        (project_id,),
+                    ).fetchone()
+                    if project is None:
+                        raise SessionError(f"unknown project: {project_id}")
                 connection.execute(
                     """
                     INSERT INTO sessions(
-                        id, cwd, provider, model, context_affinity, sandbox_profile
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        id, cwd, provider, model, context_affinity, sandbox_profile, project_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -392,6 +400,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                         model,
                         context_affinity,
                         sandbox_profile.value,
+                        project_id,
                     ),
                 )
 
@@ -666,7 +675,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                 row = connection.execute(
                     """
                     SELECT cwd, provider, model, messages_json, context_affinity,
-                           sandbox_profile, title, plan_json
+                           sandbox_profile, title, plan_json, project_id
                     FROM sessions
                     WHERE id = ?
                     """,
@@ -685,8 +694,8 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                     """
                     INSERT INTO sessions(
                         id, cwd, provider, model, messages_json,
-                        context_affinity, sandbox_profile, title, plan_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        context_affinity, sandbox_profile, title, plan_json, project_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         forked_session_id,
@@ -698,6 +707,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                         row[5],
                         title,
                         row[7],
+                        row[8],
                     ),
                 )
                 _upsert_search_document(
@@ -1037,6 +1047,35 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                 ).fetchone()
             if row is None:
                 raise SessionError(f"unknown session: {session_id}")
+            try:
+                return _session_items_from_json(row[0])
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                raise SessionError(f"session {session_id} contains invalid messages") from error
+
+        return await run_blocking(load)
+
+    async def load_session_items_bounded(
+        self,
+        session_id: str,
+        *,
+        max_bytes: int,
+    ) -> list[SessionItem]:
+        if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
+            raise ValueError("max_bytes must be a positive integer")
+
+        def load() -> list[SessionItem]:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    """
+                    SELECT messages_json, length(CAST(messages_json AS BLOB))
+                    FROM sessions WHERE id = ?
+                    """,
+                    (session_id,),
+                ).fetchone()
+            if row is None:
+                raise SessionError(f"unknown session: {session_id}")
+            if row[1] is None or int(row[1]) > max_bytes:
+                raise SessionError("session transcript byte limit exceeded")
             try:
                 return _session_items_from_json(row[0])
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:

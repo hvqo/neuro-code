@@ -387,6 +387,7 @@ class AgentLoopRunner:
         source_model: str | None = None,
         source_context_affinity: str | None = None,
         session_id: str | None = None,
+        project_id: str | None = None,
         turn_id: str | None = None,
         ultracode_execution_id: str | None = None,
         cancellation_policy: TurnCancellationPolicy = TurnCancellationPolicy.RETAIN,
@@ -420,6 +421,8 @@ class AgentLoopRunner:
             raise ValueError("ultracode execution id must be a bounded non-empty identifier")
         if not isinstance(turn_source, TurnSource):
             raise TypeError("turn_source must be a TurnSource")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be non-empty when provided")
         if turn_source is TurnSource.USER and not prompt.strip() and not prompt_parts:
             raise ValueError("prompt must not be empty")
         if turn_source is TurnSource.BACKGROUND_TASK_AUTO_WAKE and (prompt.strip() or prompt_parts):
@@ -508,6 +511,7 @@ class AgentLoopRunner:
                     self._provider.model_name,
                     getattr(self._provider, "context_affinity", None),
                     self._tool_context.sandbox_profile,
+                    project_id,
                 )
             )
             session_id = started_session.id
@@ -980,6 +984,10 @@ class AgentLoopRunner:
             active_context_seed = fresh_context_seed_items()
             active_context_boundary = len(context_items)
             context_items.append(_context_rollover_runtime_message(context_rollover_generation))
+            # The durable generation boundary authorizes a fresh contextual
+            # projection, including any Project Memory written during the
+            # previous generation.
+            self._context_builder.invalidate_project_memory_snapshot()
             # The new generation deliberately excludes all prior preserved
             # provider state.  Bind any native state produced after this
             # boundary to the provider that actually owns the fresh request,

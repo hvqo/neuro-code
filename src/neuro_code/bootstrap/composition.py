@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import os
 
+from neuro_code.application.memory.project_memory import ProjectMemoryRecallService
+from neuro_code.application.memory.project_memory_extraction import ProjectMemoryExtractionManager
 from neuro_code.application.ports.background_tasks import BackgroundTaskSupervisor
 from neuro_code.application.ports.configuration import AppConfig
 from neuro_code.application.ports.instructions import InstructionDiscovery
@@ -43,6 +45,7 @@ from neuro_code.bootstrap.factories import (
     _default_workspace_change_observer_factory,
 )
 from neuro_code.infrastructure.lsp.manager import LanguageServerManager
+from neuro_code.infrastructure.persistence.project_memory_files import FileProjectMemoryStore
 from neuro_code.infrastructure.workspace.paths import workspaces_match
 
 
@@ -85,6 +88,13 @@ class ApplicationComposition(
             redaction_values=config.redaction_values(os.environ),
         )
         self._session_summary_queries = SessionSummaryQueryService(store)
+        self.project_memory_store = FileProjectMemoryStore(config.state_dir)
+        self.project_memory_recall = ProjectMemoryRecallService(self.project_memory_store)
+        self.project_memory_extractions = ProjectMemoryExtractionManager(
+            store,
+            self.project_memory_store,
+            redaction_values=config.redaction_values(os.environ),
+        )
         self.background_tasks = background_tasks
         self._provider_factory = provider_factory
         self._local_process_sandbox_factory = local_process_sandbox_factory

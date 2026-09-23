@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
@@ -27,6 +28,7 @@ from neuro_code.application.memory.compaction_runtime import (
     project_context_compaction_result,
 )
 from neuro_code.application.memory.compaction_trigger import ContextCompactionTriggerMode
+from neuro_code.application.ports.project_memory import ProjectMemoryExtractionScheduler
 from neuro_code.application.ports.storage import SessionStore
 from neuro_code.application.ports.tools import Tool
 from neuro_code.application.ports.workspace import WorkspaceIdentity
@@ -108,6 +110,8 @@ from neuro_code.domain.workspace_undo import (
 )
 from neuro_code.shared.errors import ConfigurationError
 
+LOGGER = logging.getLogger(__name__)
+
 _T = TypeVar("_T")
 
 PLAN_EXECUTION_PROMPT = (
@@ -135,6 +139,7 @@ class AgentConversation:
         source_context_affinity: str | None = None,
         execution_record: SessionExecutionRecord | None = None,
         workspace_undo: TurnWorkspaceCheckpointCoordinator | None = None,
+        project_memory_extraction: ProjectMemoryExtractionScheduler | None = None,
     ) -> None:
         self._runtime = runtime
         self._store = store
@@ -144,6 +149,7 @@ class AgentConversation:
         self._source_model = source_model
         self._source_context_affinity = source_context_affinity
         self._execution_record = execution_record
+        self._project_memory_extraction = project_memory_extraction
         self._workspace_undo = (
             workspace_undo
             if workspace_undo is not None
@@ -160,9 +166,14 @@ class AgentConversation:
         cwd: Path,
         workspace_identity: WorkspaceIdentity,
         resume_id: str | None = None,
+        project_memory_extraction: ProjectMemoryExtractionScheduler | None = None,
     ) -> AgentConversation:
         if resume_id is None:
-            return cls(runtime=runtime, store=store)
+            return cls(
+                runtime=runtime,
+                store=store,
+                project_memory_extraction=project_memory_extraction,
+            )
 
         session_service = SessionApplicationService(store)
         summary = await SessionSummaryQueryService(store).get_session_summary(
@@ -180,6 +191,7 @@ class AgentConversation:
                 f"session sandbox profile is {summary.sandbox_profile.value!r}, "
                 f"not the active profile {runtime.sandbox_profile.value!r}"
             )
+        runtime.set_project_id(summary.project_id)
         plan = await session_service.load_session_plan(LoadSessionPlanRequest(resume_id))
         runtime.set_plan(plan)
         if plan is not None:
@@ -199,11 +211,47 @@ class AgentConversation:
             execution_record=await SessionExecutionQueryService(store).load_execution_record(
                 LoadExecutionRecordRequest(resume_id)
             ),
+            project_memory_extraction=project_memory_extraction,
         )
 
     @property
     def session_id(self) -> str | None:
         return self._session_id
+
+    @property
+    def project_id(self) -> str | None:
+        return getattr(self._runtime, "project_id", None)
+
+    def set_project_id(self, project_id: str | None) -> None:
+        """Change the active project's memory owner at a lifecycle boundary."""
+
+        self._runtime.set_project_id(project_id)
+
+    def _schedule_project_memory_extraction(
+        self,
+        result: AgentRunResult,
+        *,
+        turn_source: TurnSource,
+    ) -> None:
+        scheduler = self._project_memory_extraction
+        project_id = self.project_id
+        if (
+            scheduler is None
+            or project_id is None
+            or result.session_id is None
+            or turn_source is not TurnSource.USER
+            or result.outcome is None
+            or result.outcome.status is not AgentExecutionStatus.COMPLETED
+        ):
+            return
+        try:
+            scheduler.schedule(result.session_id, project_id)
+        except Exception as error:
+            # Extraction is best effort and must not change an already committed
+            # user turn into a failed turn.
+            LOGGER.info(
+                "project_memory_extraction_schedule_failed error_type=%s", type(error).__name__
+            )
 
     @property
     def items(self) -> tuple[SessionItem, ...]:
@@ -449,6 +497,7 @@ class AgentConversation:
             await self._reload_plan_state()
             await self._reload_provider_origin()
             await self._reload_execution_record()
+            self._schedule_project_memory_extraction(result, turn_source=turn_source)
             return result
 
     async def undo_workspace(
@@ -484,6 +533,7 @@ class AgentConversation:
                     self._runtime.model_name,
                     self._runtime.context_affinity,
                     self._runtime.sandbox_profile,
+                    self.project_id,
                 )
             )
             self._session_id = summary.id
@@ -672,6 +722,7 @@ class AgentConversation:
                         self._runtime.model_name,
                         self._runtime.context_affinity,
                         self._runtime.sandbox_profile,
+                        self.project_id,
                     )
                 )
                 session_id = summary.id
@@ -950,7 +1001,7 @@ class AgentConversation:
             )
         )
         self._items = items
-        return AgentRunResult(
+        result = AgentRunResult(
             session_id,
             response,
             tuple(item for item in items if isinstance(item, Message)),
@@ -963,6 +1014,8 @@ class AgentConversation:
             response_contract=response_contract,
             verification=verification,
         )
+        self._schedule_project_memory_extraction(result, turn_source=TurnSource.USER)
+        return result
 
     async def inspect_recovery(self) -> tuple[TurnRecoveryInspection, ...]:
         """Return bounded durable recovery state without taking action."""

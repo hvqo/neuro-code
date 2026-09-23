@@ -1810,12 +1810,14 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = SqliteSessionStore(Path(directory) / "sessions.db")
             await store.initialize()
+            project = await store.create_project("Fork owner", "/workspace")
             source_id = await store.create_session(
                 "/workspace",
                 "fixture",
                 "model",
                 "profile-v1:fixture",
                 SandboxProfile.WORKSPACE,
+                project_id=project.id,
             )
             items = [
                 Message(Role.USER, "fork searchable context"),
@@ -1876,6 +1878,7 @@ class SessionStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(forked.context_affinity, source.context_affinity)
             self.assertIs(forked.sandbox_profile, source.sandbox_profile)
             self.assertEqual(forked.title, "Shared fork title")
+            self.assertEqual(forked.project_id, project.id)
             self.assertEqual(await store.load_session_items(forked_id), items)
             self.assertEqual(await store.load_session_plan(forked_id), plan)
             forked_comments = await store.list_plan_comments(forked_id, plan)

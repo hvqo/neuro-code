@@ -259,7 +259,12 @@ class CompositionServicesMixin(CompositionRootMixin):
     ) -> SessionLibraryService:
         """Bind project and session library management to the session store."""
 
-        return SessionLibraryService(cast(SessionLibraryStore, self.store), owner=owner)
+        return SessionLibraryService(
+            cast(SessionLibraryStore, self.store),
+            owner=owner,
+            memory_store=self.project_memory_store,
+            memory_lifecycle=self.project_memory_extractions,
+        )
 
     def bind_plan_execution_controller(
         self: CompositionRootMixin,

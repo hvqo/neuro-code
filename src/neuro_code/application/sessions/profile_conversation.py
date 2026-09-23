@@ -9,7 +9,8 @@ inbound interfaces. Runtime execution remains behind ``ConversationRunner``.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import Any
 
@@ -578,7 +579,35 @@ class ProfileConversationController:
                 stopped_background_tasks=stopped_background_tasks,
             )
 
-    async def start_new_session(self) -> NewSessionResult:
+    @asynccontextmanager
+    async def session_project_lifecycle(
+        self,
+        session_id: str,
+        project_id: str | None,
+    ) -> AsyncIterator[None]:
+        """Serialize a durable project move with active conversation turns."""
+
+        async with self._turn_lock:
+            yield
+            if self.session_id == session_id:
+                setter = getattr(self._binding.runner, "set_project_id", None)
+                if callable(setter):
+                    setter(project_id)
+                elif project_id is not None:
+                    raise ConfigurationError("active session cannot bind Project Memory")
+
+    @asynccontextmanager
+    async def project_lifecycle(self, project_id: str) -> AsyncIterator[None]:
+        """Protect project purge and detach from active turns and extraction."""
+
+        async with self._turn_lock:
+            yield
+            if getattr(self._binding.runner, "project_id", None) == project_id:
+                setter = getattr(self._binding.runner, "set_project_id", None)
+                if callable(setter):
+                    setter(None)
+
+    async def start_new_session(self, project_id: str | None = None) -> NewSessionResult:
         """Replace the bound conversation with a fresh, unpersisted one.
 
         The new session stays lazily persisted: it is written on the first
@@ -595,6 +624,11 @@ class ProfileConversationController:
                 await self._shutdown_binding_tasks(binding)
                 raise ConfigurationError("a new session must start without a session id")
             try:
+                setter = getattr(binding.runner, "set_project_id", None)
+                if callable(setter):
+                    setter(project_id)
+                elif project_id is not None:
+                    raise ConfigurationError("new session cannot bind Project Memory")
                 self._apply_conversation_policies(binding)
             except BaseException:
                 await self._shutdown_binding_tasks(binding)
