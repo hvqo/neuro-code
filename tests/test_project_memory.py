@@ -18,6 +18,7 @@ from neuro_code.application.memory.project_memory import (
     ProjectMemoryRecallService,
 )
 from neuro_code.application.memory.project_memory_extraction import (
+    MAX_EXTRACTION_EVENTS,
     MAX_EXTRACTION_MEMORIES,
     MAX_EXTRACTION_OUTPUT_BYTES,
     MAX_EXTRACTION_PROMPT_BYTES,
@@ -411,6 +412,25 @@ class ProjectMemoryStoreTests(unittest.TestCase):
             with self.assertRaises(SessionError):
                 store.read_memory(project_b, memory.metadata.memory_id)
 
+    def test_delete_operations_for_missing_or_unknown_memory_are_noops(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary)
+            store = FileProjectMemoryStore(state_root)
+            project_id = str(uuid.uuid4())
+            unknown_memory_id = "mem-" + "0" * 32
+
+            self.assertFalse(store.delete_memory(project_id, unknown_memory_id))
+            store.delete_project(project_id)
+            self.assertFalse((state_root / "project-memory").exists())
+
+            memory = _memory(project_id)
+            store.upsert_memory(project_id, memory)
+            self.assertFalse(store.delete_memory(project_id, unknown_memory_id))
+            self.assertEqual(
+                store.read_memory(project_id, memory.metadata.memory_id).content,
+                memory.content,
+            )
+
     def test_rejects_traversal_symlinks_and_unowned_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             state_root = Path(temporary)
@@ -566,6 +586,57 @@ class ProjectMemoryStoreTests(unittest.TestCase):
                 store.load_snapshot(project_id)
 
             self.assertEqual(manifest.stat().st_size, len(oversized))
+
+    def test_manifest_record_counts_are_rechecked_before_reading_project_data(self) -> None:
+        for record_kind in ("memories", "cursors"):
+            with self.subTest(record_kind=record_kind), tempfile.TemporaryDirectory() as temporary:
+                state_root = Path(temporary)
+                store = FileProjectMemoryStore(state_root)
+                project_id = str(uuid.uuid4())
+                if record_kind == "memories":
+                    store.upsert_memory(project_id, _memory(project_id))
+                    limit_name = "MAX_PROJECT_MEMORIES"
+                else:
+                    store.save_cursor(
+                        project_id,
+                        ProjectMemoryCursor("session-one", 0, "a" * 64, datetime.now(UTC)),
+                    )
+                    limit_name = "MAX_PROJECT_MEMORY_CURSORS"
+                manifest = state_root / "project-memory" / project_id / "manifest.json"
+                original_manifest = manifest.read_bytes()
+
+                with (
+                    patch(
+                        f"neuro_code.infrastructure.persistence.project_memory_files.{limit_name}",
+                        0,
+                    ),
+                    self.assertRaisesRegex(SessionError, "manifest is invalid"),
+                ):
+                    store.load_snapshot(project_id)
+
+                self.assertEqual(manifest.read_bytes(), original_manifest)
+
+    def test_manifest_write_limit_leaves_no_partial_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary)
+            store = FileProjectMemoryStore(state_root)
+            project_id = str(uuid.uuid4())
+
+            with (
+                patch(
+                    "neuro_code.infrastructure.persistence.project_memory_files."
+                    "MAX_PROJECT_MEMORY_MANIFEST_BYTES",
+                    1,
+                ),
+                self.assertRaisesRegex(SessionError, "manifest byte limit"),
+            ):
+                store.save_cursor(
+                    project_id,
+                    ProjectMemoryCursor("session-one", 0, "a" * 64, datetime.now(UTC)),
+                )
+
+            directory = state_root / "project-memory" / project_id
+            self.assertEqual(list(directory.iterdir()), [])
 
     def test_atomic_memory_write_failure_removes_partial_temporary_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -942,6 +1013,10 @@ class ProjectMemoryExtractionTests(unittest.IsolatedAsyncioTestCase):
                 "output byte limit",
                 (ModelTextDelta("x" * (MAX_EXTRACTION_OUTPUT_BYTES + 1)), completion),
             ),
+            (
+                "event count limit",
+                tuple(ModelTextDelta("") for _ in range(MAX_EXTRACTION_EVENTS + 1)),
+            ),
         )
         with tempfile.TemporaryDirectory() as temporary:
             for index, (reason, events) in enumerate(invalid_streams):
@@ -975,6 +1050,7 @@ class ProjectMemoryExtractionTests(unittest.IsolatedAsyncioTestCase):
         candidate = json.loads(_candidate("A supported entry", "A supported body."))["memories"][0]
         invalid_responses = (
             ("invalid JSON", "not-json"),
+            ("oversized completion", "x" * (MAX_EXTRACTION_OUTPUT_BYTES + 1)),
             ("invalid envelope", json.dumps({"other": []})),
             (
                 "too many entries",
@@ -1341,6 +1417,41 @@ class ProjectMemoryExtractionTests(unittest.IsolatedAsyncioTestCase):
             await self._wait_for_manager(manager)
             self.assertEqual(manager.outcomes[-1].status, ProjectMemoryExtractionStatus.FORGOTTEN)
             self.assertEqual(memory_store.load_snapshot(project_id).memories, ())
+            self.assertEqual(provider.calls, 0)
+            await manager.shutdown()
+
+    async def test_explicit_remember_storage_failure_does_not_advance_cursor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            memory_store = FileProjectMemoryStore(Path(temporary))
+            session_store = _SessionStore(
+                project_id,
+                (
+                    Message(
+                        Role.USER,
+                        "Remember: The provider decision needs an auditable local rationale.",
+                    ),
+                    Message(Role.ASSISTANT, "The save may fail, so keep the transcript retryable."),
+                ),
+            )
+            provider = _ScriptedProvider()
+            manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+
+            with patch(
+                "neuro_code.infrastructure.persistence.project_memory_files."
+                "FileProjectMemoryStore.upsert_memory",
+                side_effect=SessionError("storage is unavailable"),
+            ):
+                manager.schedule("session-one", project_id, provider)
+                await self._wait_for_manager(manager)
+
+            self.assertEqual(
+                manager.outcomes[-1].status,
+                ProjectMemoryExtractionStatus.STORAGE_FAILED,
+            )
+            snapshot = memory_store.load_snapshot(project_id)
+            self.assertEqual(snapshot.memories, ())
+            self.assertEqual(snapshot.cursors, ())
             self.assertEqual(provider.calls, 0)
             await manager.shutdown()
 
