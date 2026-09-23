@@ -112,6 +112,15 @@ class _ProjectLockState:
 class ProjectMemoryExtractionManager:
     """Own every queued extraction task and cancel/drain it on shutdown."""
 
+    @dataclass(frozen=True, slots=True)
+    class _ConsumablePrefix:
+        end: int
+        model_messages: tuple[Message, ...]
+        direct_messages: tuple[Message, ...]
+        prompt: str | None
+        stopped_for_prompt_limit: bool = False
+        stopped_for_direct_limit: bool = False
+
     __slots__ = (
         "_closed",
         "_memory_store",
@@ -324,64 +333,32 @@ class ProjectMemoryExtractionManager:
                 job.session_id, job.project_id, ProjectMemoryExtractionStatus.NO_NEW_ITEMS
             )
 
-        end = min(len(items), start + MAX_EXTRACTION_ITEMS)
-        window = items[start:end]
-        messages = tuple(
-            item
-            for item in window
-            if isinstance(item, Message)
-            and item.synthetic_reason is None
-            and item.role in {Role.USER, Role.ASSISTANT}
-        )
-        direct_outcome = self._apply_direct_memory_requests(
-            job.project_id,
-            job.session_id,
-            messages,
-            snapshot.memories,
-        )
-        if direct_outcome is not None:
-            self._save_cursor(job, items, end)
-            return direct_outcome
-
-        eligible = tuple(
-            message
-            for message in messages
-            if message.role is Role.USER and self._has_user_prose(message.model_content())
-        )
-        if not eligible:
-            self._save_cursor(job, items, end)
-            return ProjectMemoryExtractionOutcome(
-                job.session_id, job.project_id, ProjectMemoryExtractionStatus.NO_OP
-            )
-
-        prompt = self._build_prompt(snapshot.memories, messages)
-        if len(prompt.encode("utf-8")) > MAX_EXTRACTION_PROMPT_BYTES:
+        prefix = self._select_consumable_prefix(snapshot.memories, items, start)
+        if prefix.end == start:
             return ProjectMemoryExtractionOutcome(
                 job.session_id, job.project_id, ProjectMemoryExtractionStatus.INPUT_LIMIT
             )
-        try:
-            candidates = await self._generate(job.provider, prompt)
-            validated = self._prepare_memories(
-                job.project_id,
-                job.session_id,
-                snapshot.memories,
-                candidates,
-            )
-        except ProviderError as error:
-            return ProjectMemoryExtractionOutcome(
-                job.session_id,
-                job.project_id,
-                ProjectMemoryExtractionStatus.PROVIDER_FAILED,
-                error_type=type(error).__name__,
-            )
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
-            return ProjectMemoryExtractionOutcome(
-                job.session_id, job.project_id, ProjectMemoryExtractionStatus.INVALID_OUTPUT
-            )
-        except SessionError:
-            return ProjectMemoryExtractionOutcome(
-                job.session_id, job.project_id, ProjectMemoryExtractionStatus.MEMORY_LIMIT
-            )
+        eligible = tuple(
+            message
+            for message in prefix.model_messages
+            if message.role is Role.USER and self._has_user_prose(message.model_content())
+        )
+        candidates: list[dict[str, Any]] = []
+        if eligible:
+            assert prefix.prompt is not None
+            try:
+                candidates = await self._generate(job.provider, prefix.prompt)
+            except ProviderError as error:
+                return ProjectMemoryExtractionOutcome(
+                    job.session_id,
+                    job.project_id,
+                    ProjectMemoryExtractionStatus.PROVIDER_FAILED,
+                    error_type=type(error).__name__,
+                )
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+                return ProjectMemoryExtractionOutcome(
+                    job.session_id, job.project_id, ProjectMemoryExtractionStatus.INVALID_OUTPUT
+                )
 
         try:
             latest = await self._store.get_session(job.session_id)
@@ -389,9 +366,37 @@ class ProjectMemoryExtractionManager:
                 return ProjectMemoryExtractionOutcome(
                     job.session_id, job.project_id, ProjectMemoryExtractionStatus.SCOPE_CHANGED
                 )
+
+            direct_outcome = self._apply_direct_memory_requests(
+                job.project_id,
+                job.session_id,
+                prefix.direct_messages,
+                snapshot.memories,
+            )
+            if direct_outcome is not None and direct_outcome.status in {
+                ProjectMemoryExtractionStatus.STORAGE_FAILED,
+            }:
+                return direct_outcome
+
+            current = self._memory_store.load_snapshot(job.project_id)
+            try:
+                validated = self._prepare_memories(
+                    job.project_id,
+                    job.session_id,
+                    current.memories,
+                    candidates,
+                )
+            except (ValueError, KeyError, TypeError):
+                return ProjectMemoryExtractionOutcome(
+                    job.session_id, job.project_id, ProjectMemoryExtractionStatus.INVALID_OUTPUT
+                )
+            except SessionError:
+                return ProjectMemoryExtractionOutcome(
+                    job.session_id, job.project_id, ProjectMemoryExtractionStatus.MEMORY_LIMIT
+                )
             for memory in validated:
                 self._memory_store.upsert_memory(job.project_id, memory)
-            self._save_cursor(job, items, end)
+            self._save_cursor(job, items, prefix.end)
         except SessionError as error:
             return ProjectMemoryExtractionOutcome(
                 job.session_id,
@@ -399,13 +404,95 @@ class ProjectMemoryExtractionManager:
                 ProjectMemoryExtractionStatus.STORAGE_FAILED,
                 error_type=type(error).__name__,
             )
+
+        if prefix.stopped_for_direct_limit:
+            return ProjectMemoryExtractionOutcome(
+                job.session_id,
+                job.project_id,
+                ProjectMemoryExtractionStatus.MEMORY_LIMIT,
+                len(validated) + (0 if direct_outcome is None else direct_outcome.memory_count),
+            )
+        if prefix.stopped_for_prompt_limit:
+            return ProjectMemoryExtractionOutcome(
+                job.session_id,
+                job.project_id,
+                ProjectMemoryExtractionStatus.INPUT_LIMIT,
+                len(validated) + (0 if direct_outcome is None else direct_outcome.memory_count),
+            )
+        if direct_outcome is not None and direct_outcome.status in {
+            ProjectMemoryExtractionStatus.MEMORY_LIMIT,
+            ProjectMemoryExtractionStatus.FORGET_AMBIGUOUS,
+            ProjectMemoryExtractionStatus.FORGET_NOT_FOUND,
+        }:
+            return ProjectMemoryExtractionOutcome(
+                job.session_id,
+                job.project_id,
+                direct_outcome.status,
+                len(validated) + direct_outcome.memory_count,
+            )
+        if not eligible and direct_outcome is not None:
+            return direct_outcome
+        if validated:
+            status = ProjectMemoryExtractionStatus.SAVED
+        elif direct_outcome is not None:
+            status = direct_outcome.status
+        else:
+            status = ProjectMemoryExtractionStatus.NO_OP
         return ProjectMemoryExtractionOutcome(
             job.session_id,
             job.project_id,
-            ProjectMemoryExtractionStatus.SAVED
-            if validated
-            else ProjectMemoryExtractionStatus.NO_OP,
-            len(validated),
+            status,
+            len(validated) + (0 if direct_outcome is None else direct_outcome.memory_count),
+        )
+
+    def _select_consumable_prefix(
+        self,
+        memories: tuple[ProjectMemoryMetadata, ...],
+        items: tuple[Any, ...],
+        start: int,
+    ) -> _ConsumablePrefix:
+        end = min(len(items), start + MAX_EXTRACTION_ITEMS)
+        model_messages: list[Message] = []
+        direct_messages: list[Message] = []
+        direct_count = 0
+        prompt: str | None = None
+        for index in range(start, end):
+            item = items[index]
+            if (
+                not isinstance(item, Message)
+                or item.synthetic_reason is not None
+                or item.role not in {Role.USER, Role.ASSISTANT}
+            ):
+                continue
+            if item.role is Role.USER and self._direct_memory_operation(item) is not None:
+                if direct_count >= MAX_EXTRACTION_MEMORIES:
+                    return self._ConsumablePrefix(
+                        index,
+                        tuple(model_messages),
+                        tuple(direct_messages),
+                        prompt,
+                        stopped_for_direct_limit=True,
+                    )
+                direct_count += 1
+                direct_messages.append(item)
+                continue
+            candidate = (*model_messages, item)
+            try:
+                prompt = self._build_prompt(memories, candidate)
+            except ValueError:
+                return self._ConsumablePrefix(
+                    index,
+                    tuple(model_messages),
+                    tuple(direct_messages),
+                    prompt,
+                    stopped_for_prompt_limit=True,
+                )
+            model_messages.append(item)
+        return self._ConsumablePrefix(
+            end,
+            tuple(model_messages),
+            tuple(direct_messages),
+            prompt,
         )
 
     async def _generate(self, provider: ModelProvider, prompt: str) -> list[dict[str, Any]]:
@@ -532,24 +619,15 @@ class ProjectMemoryExtractionManager:
     ) -> ProjectMemoryExtractionOutcome | None:
         operations: list[tuple[str, str]] = []
         for message in messages:
-            if message.role is not Role.USER:
-                continue
-            text = redact_sensitive_text(
-                message.model_content(),
-                explicit_values=self._redaction_values,
-            )
-            remember = self._capture(_REMEMBER_PATTERNS, text)
-            forget = self._capture(_FORGET_PATTERNS, text)
-            if remember is not None:
-                operations.append(("remember", remember))
-            elif forget is not None:
-                operations.append(("forget", forget))
+            parsed = self._direct_memory_operation(message)
+            if parsed is not None:
+                operations.append(parsed)
         if not operations:
             return None
         count = 0
         statuses: list[ProjectMemoryExtractionStatus] = []
         try:
-            for operation, content in operations[:MAX_EXTRACTION_MEMORIES]:
+            for operation, content in operations:
                 if operation == "remember":
                     if len(content.encode("utf-8")) > MAX_PROJECT_MEMORY_CONTENT_BYTES:
                         statuses.append(ProjectMemoryExtractionStatus.MEMORY_LIMIT)
@@ -569,8 +647,6 @@ class ProjectMemoryExtractionManager:
                         self._memory_store.delete_memory(project_id, candidates[0].memory_id)
                     )
                     statuses.append(ProjectMemoryExtractionStatus.FORGOTTEN)
-            if len(operations) > MAX_EXTRACTION_MEMORIES:
-                statuses.append(ProjectMemoryExtractionStatus.MEMORY_LIMIT)
         except SessionError as error:
             status = (
                 ProjectMemoryExtractionStatus.MEMORY_LIMIT
@@ -593,6 +669,21 @@ class ProjectMemoryExtractionManager:
             statuses[-1],
         )
         return ProjectMemoryExtractionOutcome(session_id, project_id, status, count)
+
+    def _direct_memory_operation(self, message: Message) -> tuple[str, str] | None:
+        if message.role is not Role.USER or message.synthetic_reason is not None:
+            return None
+        text = redact_sensitive_text(
+            message.model_content(),
+            explicit_values=self._redaction_values,
+        )
+        remember = self._capture(_REMEMBER_PATTERNS, text)
+        if remember is not None:
+            return "remember", remember
+        forget = self._capture(_FORGET_PATTERNS, text)
+        if forget is not None:
+            return "forget", forget
+        return None
 
     def _remember_direct(self, project_id: str, session_id: str, content: str) -> None:
         snapshot = self._memory_store.load_snapshot(project_id)
@@ -730,7 +821,10 @@ class ProjectMemoryExtractionManager:
             if not text:
                 continue
             lines.append(f"[{message.role.value} data]\n{text}")
-        return _bounded_text("\n\n".join(lines), MAX_EXTRACTION_PROMPT_BYTES)
+        prompt = "\n\n".join(lines)
+        if len(prompt.encode("utf-8")) > MAX_EXTRACTION_PROMPT_BYTES:
+            raise ValueError("Project Memory extraction prompt exceeds its byte limit")
+        return prompt
 
     @staticmethod
     def _prefix_digest(items: tuple[Any, ...], count: int) -> str:
@@ -783,21 +877,6 @@ class BoundProjectMemoryExtractionScheduler:
 
     def schedule(self, session_id: str, project_id: str) -> bool:
         return self._manager.schedule(session_id, project_id, self._provider)
-
-
-def _bounded_text(text: str, max_bytes: int) -> str:
-    encoded = text.encode("utf-8")
-    if len(encoded) <= max_bytes:
-        return text
-    suffix = "\n[conversation excerpt truncated to extraction byte budget]"
-    suffix_bytes = suffix.encode("utf-8")
-    budget = max(0, max_bytes - len(suffix_bytes))
-    bounded = encoded[:budget]
-    while True:
-        try:
-            return bounded.decode("utf-8") + suffix
-        except UnicodeDecodeError:
-            bounded = bounded[:-1]
 
 
 _EXTRACTION_SYSTEM_PROMPT = """You extract compact, long-lived Project Memory from a completed conversation.

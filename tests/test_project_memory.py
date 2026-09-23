@@ -17,6 +17,8 @@ from neuro_code.application.memory.project_memory import (
     ProjectMemoryRecallService,
 )
 from neuro_code.application.memory.project_memory_extraction import (
+    MAX_EXTRACTION_MEMORIES,
+    MAX_EXTRACTION_PROMPT_BYTES,
     ProjectMemoryExtractionManager,
     ProjectMemoryExtractionStatus,
 )
@@ -708,6 +710,144 @@ class ProjectMemoryExtractionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(manager.outcomes[-1].status, ProjectMemoryExtractionStatus.FORGOTTEN)
             self.assertEqual(memory_store.load_snapshot(project_id).memories, ())
             self.assertEqual(provider.calls, 0)
+            await manager.shutdown()
+
+    async def test_direct_remember_does_not_skip_following_project_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            memory_store = FileProjectMemoryStore(Path(temporary))
+            session_store = _SessionStore(
+                project_id,
+                (
+                    Message(Role.USER, "Remember: The release needs two-person approval."),
+                    Message(Role.ASSISTANT, "I will keep that explicit constraint."),
+                    Message(
+                        Role.USER, "The migration stays reversible because rollback is required."
+                    ),
+                    Message(
+                        Role.ASSISTANT, "That rationale should remain available across sessions."
+                    ),
+                ),
+            )
+            provider = _ScriptedProvider(
+                (_candidate("Reversible migration", "Rollback is required for the migration."),)
+            )
+            manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+
+            memories = memory_store.load_snapshot(project_id).memories
+            self.assertEqual(len(memories), 2)
+            self.assertEqual(provider.calls, 1)
+            self.assertEqual(
+                memory_store.load_snapshot(project_id).cursors[0].item_count,
+                len(session_store.items),
+            )
+            self.assertTrue(
+                any(
+                    memory_store.read_memory(project_id, item.memory_id).content
+                    == "The release needs two-person approval."
+                    for item in memories
+                )
+            )
+            await manager.shutdown()
+
+    async def test_direct_operation_budget_leaves_unprocessed_suffix_for_next_schedule(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            memory_store = FileProjectMemoryStore(Path(temporary))
+            session_store = _SessionStore(
+                project_id,
+                tuple(
+                    Message(Role.USER, f"Remember: Decision {index} has a durable reason.")
+                    for index in range(MAX_EXTRACTION_MEMORIES + 1)
+                ),
+            )
+            provider = _ScriptedProvider()
+            manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+
+            first_snapshot = memory_store.load_snapshot(project_id)
+            self.assertEqual(len(first_snapshot.memories), MAX_EXTRACTION_MEMORIES)
+            self.assertEqual(first_snapshot.cursors[0].item_count, MAX_EXTRACTION_MEMORIES)
+            self.assertEqual(
+                manager.outcomes[-1].status, ProjectMemoryExtractionStatus.MEMORY_LIMIT
+            )
+
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+            second_snapshot = memory_store.load_snapshot(project_id)
+            self.assertEqual(len(second_snapshot.memories), MAX_EXTRACTION_MEMORIES + 1)
+            self.assertEqual(
+                second_snapshot.cursors[0].item_count,
+                len(session_store.items),
+            )
+
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+            self.assertEqual(
+                len(memory_store.load_snapshot(project_id).memories), MAX_EXTRACTION_MEMORIES + 1
+            )
+            self.assertEqual(provider.calls, 0)
+            await manager.shutdown()
+
+    async def test_prompt_budget_batches_complete_messages_without_losing_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            memory_store = FileProjectMemoryStore(Path(temporary))
+            first_fact = f"First durable architecture rationale: {'a' * 13_000}"
+            second_fact = f"Second durable architecture rationale: {'b' * 13_000}"
+            session_store = _SessionStore(
+                project_id,
+                (
+                    Message(Role.USER, first_fact),
+                    Message(Role.ASSISTANT, "Keep the first rationale for later sessions."),
+                    Message(Role.USER, second_fact),
+                    Message(Role.ASSISTANT, "Keep the second rationale for later sessions."),
+                ),
+            )
+            provider = _ScriptedProvider(
+                (
+                    _candidate("First rationale", "The first architecture rationale is durable."),
+                    _candidate("Second rationale", "The second architecture rationale is durable."),
+                )
+            )
+            manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+
+            first_prompt_bytes = len(
+                manager._build_prompt((), session_store.items[:2]).encode("utf-8")
+            )
+            self.assertLessEqual(first_prompt_bytes, MAX_EXTRACTION_PROMPT_BYTES)
+            with self.assertRaises(ValueError):
+                manager._build_prompt((), session_store.items)
+
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+
+            first_snapshot = memory_store.load_snapshot(project_id)
+            self.assertEqual(first_snapshot.cursors[0].item_count, 2)
+            self.assertEqual(provider.calls, 1)
+            self.assertIn(first_fact, provider.contexts[0].messages[-1].content)
+            self.assertNotIn(second_fact, provider.contexts[0].messages[-1].content)
+
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+            second_snapshot = memory_store.load_snapshot(project_id)
+            self.assertEqual(second_snapshot.cursors[0].item_count, 4)
+            self.assertEqual(len(second_snapshot.memories), 2)
+            self.assertEqual(provider.calls, 2)
+            self.assertIn(second_fact, provider.contexts[1].messages[-1].content)
+            self.assertNotIn(first_fact, provider.contexts[1].messages[-1].content)
+
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+            self.assertEqual(len(memory_store.load_snapshot(project_id).memories), 2)
+            self.assertEqual(provider.calls, 2)
             await manager.shutdown()
 
     async def test_ambiguous_explicit_forget_preserves_all_matching_memories(self) -> None:
