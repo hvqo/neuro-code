@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 import uuid
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,7 +19,11 @@ from neuro_code.application.memory.project_memory import (
 )
 from neuro_code.application.memory.project_memory_extraction import (
     MAX_EXTRACTION_MEMORIES,
+    MAX_EXTRACTION_OUTPUT_BYTES,
     MAX_EXTRACTION_PROMPT_BYTES,
+    MAX_EXTRACTION_SOURCE_BYTES,
+    MAX_PENDING_PROJECT_MEMORY_EXTRACTIONS,
+    MAX_PROJECT_MEMORY_PROJECT_LOCKS,
     ProjectMemoryExtractionManager,
     ProjectMemoryExtractionStatus,
 )
@@ -29,9 +34,15 @@ from neuro_code.application.ports.tools import ToolContext
 from neuro_code.application.runtime.agent import AgentRuntime
 from neuro_code.application.runtime.context_builder import ContextBuilder
 from neuro_code.domain.conversation.context import ModelContext
-from neuro_code.domain.conversation.events import ModelCompleted, ModelTextDelta
+from neuro_code.domain.conversation.events import (
+    ModelCompleted,
+    ModelProviderAttemptFailed,
+    ModelProviderSelected,
+    ModelTextDelta,
+    ModelToolCall,
+)
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
-from neuro_code.domain.conversation.messages import Message, Role, SyntheticReason
+from neuro_code.domain.conversation.messages import Message, Role, SyntheticReason, ToolCall
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.execution import AgentExecutionOutcome, AgentExecutionStatus
 from neuro_code.domain.memory import (
@@ -48,6 +59,8 @@ from neuro_code.domain.memory.project import MAX_PROJECT_MEMORY_SESSION_ID_CHARS
 from neuro_code.domain.tools import ToolDefinition
 from neuro_code.infrastructure.persistence.project_memory_files import (
     MAX_PROJECT_MEMORY_FILES,
+    MAX_PROJECT_MEMORY_INDEX_BYTES,
+    MAX_PROJECT_MEMORY_MANIFEST_BYTES,
     FileProjectMemoryStore,
 )
 from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionStore
@@ -109,6 +122,22 @@ class _SessionStore:
         self.items = (*self.items, *items)
 
 
+class _LegacySessionStore:
+    """Session-store surface without the optional bounded transcript loader."""
+
+    def __init__(self, project_id: str, items: tuple[Message, ...]) -> None:
+        self._summary = SimpleNamespace(project_id=project_id)
+        self.items = items
+
+    async def get_session(self, session_id: str) -> Any:
+        del session_id
+        return self._summary
+
+    async def load_session_items(self, session_id: str) -> list[Message]:
+        del session_id
+        return list(self.items)
+
+
 class _ScriptedProvider:
     provider_name = "fixture-provider"
     model_name = "fixture-model"
@@ -133,6 +162,26 @@ class _ScriptedProvider:
         yield ModelCompleted("stop", response_text=self.responses.pop(0))
 
 
+class _EventProvider(_ScriptedProvider):
+    def __init__(self, events: tuple[Any, ...]) -> None:
+        super().__init__()
+        self.events = events
+
+    async def stream(
+        self,
+        context: ModelContext,
+        tools: tuple[ToolDefinition, ...],
+        *,
+        tool_policy: ModelToolPolicy = ModelToolPolicy.ALLOWED,
+    ):
+        self.calls += 1
+        self.contexts.append(context)
+        if tools or tool_policy is not ModelToolPolicy.DISABLED:
+            raise AssertionError("Project Memory extraction must not receive tools")
+        for event in self.events:
+            yield event
+
+
 class _FailingProvider(_ScriptedProvider):
     async def stream(
         self,
@@ -148,8 +197,9 @@ class _FailingProvider(_ScriptedProvider):
 
 
 class _SlowProvider(_ScriptedProvider):
-    def __init__(self) -> None:
+    def __init__(self, response: str = '{"memories":[]}') -> None:
         super().__init__()
+        self.response = response
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
@@ -165,7 +215,7 @@ class _SlowProvider(_ScriptedProvider):
         self.contexts.append(context)
         self.started.set()
         await self.release.wait()
-        yield ModelCompleted("stop", response_text='{"memories":[]}')
+        yield ModelCompleted("stop", response_text=self.response)
 
 
 class _RuntimeProvider(_ScriptedProvider):
@@ -405,6 +455,181 @@ class ProjectMemoryStoreTests(unittest.TestCase):
             )
             self.assertEqual(unexpected.read_text(encoding="utf-8"), "keep this file")
 
+    def test_orphan_cleanup_is_bounded_to_owned_memory_and_temporary_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary)
+            store = FileProjectMemoryStore(state_root)
+            project_id = str(uuid.uuid4())
+            original = _memory(project_id)
+            store.upsert_memory(project_id, original)
+            directory = state_root / "project-memory" / project_id
+            orphan = directory / f"mem-{'b' * 32}.md"
+            temporary_write = directory / f".tmp-{'c' * 32}deadbeef"
+            orphan.write_text("body left by an interrupted write", encoding="utf-8")
+            temporary_write.write_bytes(b"partial")
+
+            store.save_cursor(
+                project_id,
+                ProjectMemoryCursor("session-two", 0, "a" * 64, datetime.now(UTC)),
+            )
+
+            self.assertFalse(orphan.exists())
+            self.assertFalse(temporary_write.exists())
+            self.assertEqual(
+                store.read_memory(project_id, original.metadata.memory_id).content,
+                original.content,
+            )
+            self.assertEqual(len(store.load_snapshot(project_id).cursors), 1)
+
+    def test_corrupt_manifest_and_missing_memory_body_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary)
+            store = FileProjectMemoryStore(state_root)
+            project_id = str(uuid.uuid4())
+            memory = _memory(project_id)
+            store.upsert_memory(project_id, memory)
+            directory = state_root / "project-memory" / project_id
+            manifest = directory / "manifest.json"
+            corrupt_manifest = json.dumps(
+                {
+                    "version": 1,
+                    "project_id": str(uuid.uuid4()),
+                    "memories": [],
+                    "cursors": [],
+                }
+            ).encode("utf-8")
+            manifest.write_bytes(corrupt_manifest)
+
+            with self.assertRaisesRegex(SessionError, "manifest is invalid"):
+                store.load_snapshot(project_id)
+            self.assertEqual(manifest.read_bytes(), corrupt_manifest)
+            self.assertEqual(
+                (directory / f"{memory.metadata.memory_id}.md").read_text(encoding="utf-8"),
+                memory.content,
+            )
+
+            missing_project = str(uuid.uuid4())
+            missing_memory = _memory(missing_project)
+            store.upsert_memory(missing_project, missing_memory)
+            missing_body = (
+                state_root
+                / "project-memory"
+                / missing_project
+                / f"{missing_memory.metadata.memory_id}.md"
+            )
+            missing_body.unlink()
+
+            with self.assertRaisesRegex(SessionError, "project memory file is missing"):
+                store.load_snapshot(missing_project)
+
+    def test_manifest_symlink_is_not_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary)
+            store = FileProjectMemoryStore(state_root)
+            project_id = str(uuid.uuid4())
+            store.save_cursor(
+                project_id,
+                ProjectMemoryCursor("session-one", 0, "a" * 64, datetime.now(UTC)),
+            )
+            manifest = state_root / "project-memory" / project_id / "manifest.json"
+            manifest.unlink()
+            external_manifest = state_root / "external-manifest.json"
+            external_bytes = json.dumps(
+                {"version": 1, "project_id": project_id, "memories": [], "cursors": []}
+            ).encode("utf-8")
+            external_manifest.write_bytes(external_bytes)
+            try:
+                manifest.symlink_to(external_manifest)
+            except OSError as error:
+                self.skipTest(f"file symlinks are unavailable: {error}")
+
+            with self.assertRaises(SessionError):
+                store.load_snapshot(project_id)
+
+            self.assertEqual(external_manifest.read_bytes(), external_bytes)
+            self.assertTrue(manifest.is_symlink())
+
+    def test_oversized_manifest_is_rejected_before_json_parsing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary)
+            store = FileProjectMemoryStore(state_root)
+            project_id = str(uuid.uuid4())
+            store.save_cursor(
+                project_id,
+                ProjectMemoryCursor("session-one", 0, "a" * 64, datetime.now(UTC)),
+            )
+            manifest = state_root / "project-memory" / project_id / "manifest.json"
+            oversized = b"{" * (MAX_PROJECT_MEMORY_MANIFEST_BYTES + 1)
+            manifest.write_bytes(oversized)
+
+            with self.assertRaisesRegex(SessionError, "safe file contract"):
+                store.load_snapshot(project_id)
+
+            self.assertEqual(manifest.stat().st_size, len(oversized))
+
+    def test_atomic_memory_write_failure_removes_partial_temporary_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary)
+            store = FileProjectMemoryStore(state_root)
+            project_id = str(uuid.uuid4())
+            directory = state_root / "project-memory" / project_id
+
+            with (
+                patch(
+                    "neuro_code.infrastructure.persistence.project_memory_files.os.replace",
+                    side_effect=OSError("simulated atomic replace failure"),
+                ),
+                self.assertRaisesRegex(OSError, "simulated atomic replace failure"),
+            ):
+                store.upsert_memory(project_id, _memory(project_id))
+
+            self.assertEqual(list(directory.iterdir()), [])
+
+    def test_delete_project_refuses_unowned_files_without_removing_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary)
+            store = FileProjectMemoryStore(state_root)
+            project_id = str(uuid.uuid4())
+            store.save_cursor(
+                project_id,
+                ProjectMemoryCursor("session-one", 0, "a" * 64, datetime.now(UTC)),
+            )
+            directory = state_root / "project-memory" / project_id
+            (directory / "manifest.json").unlink()
+            unowned = directory / "notes.txt"
+            unowned.write_text("not owned by Project Memory", encoding="utf-8")
+
+            with self.assertRaisesRegex(SessionError, "unowned filename"):
+                store.delete_project(project_id)
+
+            self.assertEqual(unowned.read_text(encoding="utf-8"), "not owned by Project Memory")
+            self.assertTrue(directory.is_dir())
+
+    def test_project_memory_index_stays_bounded_when_entries_are_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary)
+            store = FileProjectMemoryStore(state_root)
+            project_id = str(uuid.uuid4())
+            for index in range(40):
+                memory = _memory(
+                    project_id,
+                    name=f"Decision {index:02d} " + "n" * 100,
+                    memory_id=f"mem-{index:032x}",
+                )
+                metadata = replace(
+                    memory.metadata,
+                    description="d" * MAX_PROJECT_MEMORY_DESCRIPTION_CHARS,
+                )
+                store.upsert_memory(project_id, ProjectMemory(metadata, memory.content))
+
+            index_text = store.load_index(project_id)
+            memory_lines = [line for line in index_text.splitlines() if line.startswith("- `mem-")]
+
+            self.assertLessEqual(len(index_text.encode("utf-8")), MAX_PROJECT_MEMORY_INDEX_BYTES)
+            self.assertIn("additional entries omitted", index_text)
+            self.assertGreater(len(memory_lines), 0)
+            self.assertLess(len(memory_lines), 40)
+
     def test_index_flattens_and_escapes_untrusted_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             project_id = str(uuid.uuid4())
@@ -432,6 +657,22 @@ class ProjectMemoryStoreTests(unittest.TestCase):
     def test_rejects_oversized_memory_content(self) -> None:
         with self.assertRaisesRegex(ValueError, "byte limit"):
             _memory(str(uuid.uuid4()), content="x" * (16_384 + 1))
+
+
+class ProjectMemorySchedulerBoundaryTests(unittest.TestCase):
+    def test_schedule_without_event_loop_fails_closed_and_validates_redaction_values(self) -> None:
+        manager = ProjectMemoryExtractionManager(object(), object())  # type: ignore[arg-type]
+
+        self.assertFalse(manager.schedule("session-one", str(uuid.uuid4()), _ScriptedProvider()))
+        self.assertEqual(manager.outcomes[-1].status, ProjectMemoryExtractionStatus.CANCELLED)
+
+        for invalid_values in ("secret", ["secret"], ("secret", None)):
+            with self.subTest(invalid_values=invalid_values), self.assertRaises(TypeError):
+                ProjectMemoryExtractionManager(
+                    object(),  # type: ignore[arg-type]
+                    object(),  # type: ignore[arg-type]
+                    redaction_values=invalid_values,  # type: ignore[arg-type]
+                )
 
 
 class ProjectMemoryContextAndRecallTests(unittest.IsolatedAsyncioTestCase):
@@ -549,6 +790,300 @@ class ProjectMemoryContextAndRecallTests(unittest.IsolatedAsyncioTestCase):
 class ProjectMemoryExtractionTests(unittest.IsolatedAsyncioTestCase):
     async def _wait_for_manager(self, manager: ProjectMemoryExtractionManager) -> None:
         await asyncio.wait_for(manager._queue.join(), timeout=2)
+
+    async def test_queue_overflow_is_reported_and_shutdown_cancels_pending_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            memory_store = FileProjectMemoryStore(Path(temporary))
+            session_store = _SessionStore(project_id, ())
+            provider = _ScriptedProvider()
+            manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+
+            for index in range(MAX_PENDING_PROJECT_MEMORY_EXTRACTIONS):
+                self.assertTrue(manager.schedule(f"session-{index}", project_id, provider))
+            self.assertFalse(manager.schedule("overflow", project_id, provider))
+            self.assertEqual(
+                manager.outcomes[-1].status,
+                ProjectMemoryExtractionStatus.QUEUE_FULL,
+            )
+
+            await manager.shutdown()
+
+            cancelled = [
+                outcome
+                for outcome in manager.outcomes
+                if outcome.status is ProjectMemoryExtractionStatus.CANCELLED
+            ]
+            self.assertEqual(len(cancelled), MAX_PENDING_PROJECT_MEMORY_EXTRACTIONS)
+            self.assertEqual(provider.calls, 0)
+            self.assertFalse(manager.schedule("after-close", project_id, provider))
+            await manager.shutdown()
+
+    async def test_project_lock_registry_refuses_excess_scopes_and_releases_idle_locks(
+        self,
+    ) -> None:
+        manager = ProjectMemoryExtractionManager(object(), object())  # type: ignore[arg-type]
+
+        async with AsyncExitStack() as stack:
+            for index in range(MAX_PROJECT_MEMORY_PROJECT_LOCKS):
+                await stack.enter_async_context(manager.project_lock(f"project-{index}"))
+            with self.assertRaisesRegex(SessionError, "too many active Project Memory scopes"):
+                async with manager.project_lock("overflow-project"):
+                    self.fail("an excess project scope must not acquire a lock")
+
+        self.assertEqual(manager._project_locks, {})
+
+    async def test_legacy_session_store_fallback_enforces_serialized_source_byte_limit(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            ordinary_store = _LegacySessionStore(
+                project_id,
+                (
+                    Message(Role.USER, "The legacy session surface still extracts project facts."),
+                    Message(Role.ASSISTANT, "Use the bounded serialized transcript contract."),
+                ),
+            )
+            ordinary_memory_store = FileProjectMemoryStore(Path(temporary) / "ordinary")
+            ordinary_provider = _ScriptedProvider(
+                (
+                    _candidate(
+                        "Legacy transcript boundary",
+                        "The adapter fallback remains bounded.",
+                    ),
+                )
+            )
+            ordinary_manager = ProjectMemoryExtractionManager(
+                ordinary_store,  # type: ignore[arg-type]
+                ordinary_memory_store,
+            )
+            ordinary_manager.schedule("session-one", project_id, ordinary_provider)
+            await self._wait_for_manager(ordinary_manager)
+            self.assertEqual(
+                ordinary_manager.outcomes[-1].status,
+                ProjectMemoryExtractionStatus.SAVED,
+            )
+            self.assertEqual(ordinary_provider.calls, 1)
+            await ordinary_manager.shutdown()
+
+            oversized_store = _LegacySessionStore(
+                project_id,
+                (Message(Role.USER, "x" * (MAX_EXTRACTION_SOURCE_BYTES + 1)),),
+            )
+            oversized_memory_store = FileProjectMemoryStore(Path(temporary) / "oversized")
+            oversized_provider = _ScriptedProvider()
+            oversized_manager = ProjectMemoryExtractionManager(
+                oversized_store,  # type: ignore[arg-type]
+                oversized_memory_store,
+            )
+            oversized_manager.schedule("session-two", project_id, oversized_provider)
+            await self._wait_for_manager(oversized_manager)
+
+            self.assertEqual(
+                oversized_manager.outcomes[-1].status,
+                ProjectMemoryExtractionStatus.INPUT_LIMIT,
+            )
+            self.assertEqual(oversized_provider.calls, 0)
+            self.assertEqual(oversized_memory_store.load_snapshot(project_id).memories, ())
+            await oversized_manager.shutdown()
+
+    async def test_text_delta_completion_is_parsed_and_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            memory_store = FileProjectMemoryStore(Path(temporary))
+            session_store = _SessionStore(
+                project_id,
+                (
+                    Message(Role.USER, "The stable parser contract needs a durable rationale."),
+                    Message(Role.ASSISTANT, "Store only the completed response."),
+                ),
+            )
+            response = _candidate(
+                "Stable parser contract", "The stream may end without response text."
+            )
+            provider = _EventProvider(
+                (
+                    ModelProviderSelected("fixture-provider", "fixture-model", None, False),
+                    ModelTextDelta(response),
+                    ModelCompleted("stop"),
+                )
+            )
+            manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+
+            self.assertEqual(manager.outcomes[-1].status, ProjectMemoryExtractionStatus.SAVED)
+            memories = memory_store.load_snapshot(project_id).memories
+            self.assertEqual([item.name for item in memories], ["Stable parser contract"])
+            self.assertEqual(provider.calls, 1)
+            await manager.shutdown()
+
+    async def test_provider_stream_violations_never_persist_memory_or_cursor(self) -> None:
+        completion = ModelCompleted("stop", response_text='{"memories":[]}')
+        invalid_streams = (
+            ("missing completion", ()),
+            (
+                "provider affinity changed",
+                (ModelProviderSelected("other-provider", "fixture-model", None, False),),
+            ),
+            ("tool call", (ModelToolCall(ToolCall("call-1", "read_file", {})),)),
+            (
+                "provider attempt failed",
+                (
+                    ModelProviderAttemptFailed(
+                        "fixture-provider", "fixture-model", "ProviderError", "unavailable"
+                    ),
+                ),
+            ),
+            ("duplicate completion", (completion, completion)),
+            (
+                "output byte limit",
+                (ModelTextDelta("x" * (MAX_EXTRACTION_OUTPUT_BYTES + 1)), completion),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for index, (reason, events) in enumerate(invalid_streams):
+                with self.subTest(reason=reason):
+                    project_id = str(uuid.uuid4())
+                    memory_store = FileProjectMemoryStore(Path(temporary) / str(index))
+                    session_store = _SessionStore(
+                        project_id,
+                        (
+                            Message(Role.USER, "Keep the durable project fact within its scope."),
+                            Message(Role.ASSISTANT, "The provider response is not trusted."),
+                        ),
+                    )
+                    provider = _EventProvider(events)
+                    manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+
+                    manager.schedule("session-one", project_id, provider)
+                    await self._wait_for_manager(manager)
+
+                    self.assertEqual(
+                        manager.outcomes[-1].status,
+                        ProjectMemoryExtractionStatus.PROVIDER_FAILED,
+                    )
+                    self.assertEqual(manager.outcomes[-1].error_type, "ProviderError")
+                    snapshot = memory_store.load_snapshot(project_id)
+                    self.assertEqual(snapshot.memories, ())
+                    self.assertEqual(snapshot.cursors, ())
+                    await manager.shutdown()
+
+    async def test_malformed_model_json_shapes_are_rejected_without_advancing_cursor(self) -> None:
+        candidate = json.loads(_candidate("A supported entry", "A supported body."))["memories"][0]
+        invalid_responses = (
+            ("invalid JSON", "not-json"),
+            ("invalid envelope", json.dumps({"other": []})),
+            (
+                "too many entries",
+                json.dumps({"memories": [candidate] * (MAX_EXTRACTION_MEMORIES + 1)}),
+            ),
+            ("non-object entry", json.dumps({"memories": [None]})),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for index, (reason, response) in enumerate(invalid_responses):
+                with self.subTest(reason=reason):
+                    project_id = str(uuid.uuid4())
+                    memory_store = FileProjectMemoryStore(Path(temporary) / str(index))
+                    session_store = _SessionStore(
+                        project_id,
+                        (
+                            Message(
+                                Role.USER, "The extraction envelope must be strict and bounded."
+                            ),
+                            Message(Role.ASSISTANT, "Malformed output must remain inert."),
+                        ),
+                    )
+                    manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+                    manager.schedule("session-one", project_id, _ScriptedProvider((response,)))
+                    await self._wait_for_manager(manager)
+
+                    self.assertEqual(
+                        manager.outcomes[-1].status,
+                        ProjectMemoryExtractionStatus.INVALID_OUTPUT,
+                    )
+                    snapshot = memory_store.load_snapshot(project_id)
+                    self.assertEqual(snapshot.memories, ())
+                    self.assertEqual(snapshot.cursors, ())
+                    await manager.shutdown()
+
+    async def test_unknown_or_retyped_memory_id_does_not_update_existing_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            scenarios = ("unknown-id", "type-change")
+            for scenario in scenarios:
+                with self.subTest(scenario=scenario):
+                    project_id = str(uuid.uuid4())
+                    memory_store = FileProjectMemoryStore(Path(temporary) / scenario)
+                    identity = "mem-" + ("a" if scenario == "unknown-id" else "b") * 32
+                    existing = ()
+                    if scenario == "type-change":
+                        previous = _memory(project_id, memory_id=identity)
+                        memory_store.upsert_memory(project_id, previous)
+                        existing = memory_store.load_snapshot(project_id).memories
+                    candidate = json.loads(
+                        _candidate(
+                            "Existing decision",
+                            "The original type and identity remain fixed.",
+                            identity=identity,
+                        )
+                    )
+                    if scenario == "type-change":
+                        candidate["memories"][0]["type"] = ProjectMemoryType.FEEDBACK.value
+                    session_store = _SessionStore(
+                        project_id,
+                        (
+                            Message(Role.USER, "The memory identity must remain project-owned."),
+                            Message(Role.ASSISTANT, "Reject identity changes before saving."),
+                        ),
+                    )
+                    provider = _ScriptedProvider((json.dumps(candidate),))
+                    manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+
+                    manager.schedule("session-one", project_id, provider)
+                    await self._wait_for_manager(manager)
+
+                    self.assertEqual(
+                        manager.outcomes[-1].status,
+                        ProjectMemoryExtractionStatus.INVALID_OUTPUT,
+                    )
+                    snapshot = memory_store.load_snapshot(project_id)
+                    self.assertEqual(snapshot.memories, existing)
+                    self.assertEqual(snapshot.cursors, ())
+                    await manager.shutdown()
+
+    async def test_project_reassignment_during_generation_aborts_persistence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            session_store = _SessionStore(
+                project_id,
+                (
+                    Message(Role.USER, "This project decision must stay within its owner."),
+                    Message(Role.ASSISTANT, "The project assignment may change during extraction."),
+                ),
+            )
+            memory_store = FileProjectMemoryStore(Path(temporary))
+            provider = _SlowProvider(
+                _candidate("Owner-bound decision", "Do not save after the project changes.")
+            )
+            manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+
+            manager.schedule("session-one", project_id, provider)
+            await asyncio.wait_for(provider.started.wait(), timeout=1)
+            session_store.project_id = None
+            session_store._summary.project_id = None
+            provider.release.set()
+            await self._wait_for_manager(manager)
+
+            self.assertEqual(
+                manager.outcomes[-1].status,
+                ProjectMemoryExtractionStatus.SCOPE_CHANGED,
+            )
+            snapshot = memory_store.load_snapshot(project_id)
+            self.assertEqual(snapshot.memories, ())
+            self.assertEqual(snapshot.cursors, ())
+            await manager.shutdown()
 
     def test_bounded_descriptions_preserve_why_and_how_to_apply(self) -> None:
         description = ProjectMemoryExtractionManager._description_with_why_and_how(
@@ -806,6 +1341,57 @@ class ProjectMemoryExtractionTests(unittest.IsolatedAsyncioTestCase):
             await self._wait_for_manager(manager)
             self.assertEqual(manager.outcomes[-1].status, ProjectMemoryExtractionStatus.FORGOTTEN)
             self.assertEqual(memory_store.load_snapshot(project_id).memories, ())
+            self.assertEqual(provider.calls, 0)
+            await manager.shutdown()
+
+    async def test_direct_memory_types_and_forget_content_matching_are_stable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            memory_store = FileProjectMemoryStore(Path(temporary))
+            body_match = _memory(
+                project_id,
+                name="Network isolation choice",
+                content="The offline isolation boundary keeps local data private.",
+            )
+            memory_store.upsert_memory(project_id, body_match)
+            session_store = _SessionStore(
+                project_id,
+                (
+                    Message(Role.USER, "Remember: I prefer concise implementation reviews."),
+                    Message(Role.USER, "Remember: I am a data-science undergraduate."),
+                ),
+            )
+            provider = _ScriptedProvider()
+            manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+            self.assertEqual(manager.outcomes[-1].status, ProjectMemoryExtractionStatus.SAVED)
+            typed_memories = memory_store.load_snapshot(project_id).memories
+            self.assertEqual(
+                {item.type for item in typed_memories},
+                {ProjectMemoryType.PROJECT, ProjectMemoryType.FEEDBACK, ProjectMemoryType.USER},
+            )
+
+            session_store.append(Message(Role.USER, "Forget the offline isolation boundary."))
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+            self.assertEqual(manager.outcomes[-1].status, ProjectMemoryExtractionStatus.FORGOTTEN)
+            remaining = memory_store.load_snapshot(project_id).memories
+            self.assertNotIn(body_match.metadata.memory_id, {item.memory_id for item in remaining})
+            remaining_ids = {item.memory_id for item in remaining}
+
+            session_store.append(Message(Role.USER, "Forget a nonexistent deployment constraint."))
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+            self.assertEqual(
+                manager.outcomes[-1].status,
+                ProjectMemoryExtractionStatus.FORGET_NOT_FOUND,
+            )
+            self.assertEqual(
+                {item.memory_id for item in memory_store.load_snapshot(project_id).memories},
+                remaining_ids,
+            )
             self.assertEqual(provider.calls, 0)
             await manager.shutdown()
 

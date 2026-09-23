@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -198,6 +199,29 @@ class SessionLibraryServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.previous_session_id, "open-session")
             self.assertEqual(owner.new_session_calls, 1)
             self.assertIsNone(service.active_session_id())
+
+    async def test_project_scope_requires_a_known_project_without_memory_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SqliteSessionStore(Path(directory) / "sessions.db")
+            await store.initialize()
+            session_id = await store.create_session("/workspace", "provider", "model")
+            owner = LibraryOwnerFixture(session_id=session_id)
+            service = SessionLibraryService(store, owner=owner)
+            project = await service.create_project("Known project", "/workspace")
+
+            with self.assertRaisesRegex(ValueError, "project_id must be non-empty"):
+                await service.start_new_session(" ")
+            with self.assertRaisesRegex(ConfigurationError, "unknown project"):
+                await service.start_new_session(str(uuid.uuid4()))
+            self.assertEqual(owner.new_session_calls, 0)
+            self.assertIsNone(owner.active_project_id)
+
+            assigned = await service.assign_session_project(session_id, project.id)
+            self.assertEqual(assigned.project_id, project.id)
+            self.assertEqual(owner.active_project_id, project.id)
+            result = await service.start_new_session(project.id)
+            self.assertEqual(result.previous_session_id, session_id)
+            self.assertEqual(owner.active_project_id, project.id)
 
     async def test_missing_owner_disables_listing_and_new_session(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -400,6 +400,7 @@ class FileProjectMemoryStore(ProjectMemoryStore):
 
     @staticmethod
     def _read_bounded(path: Path, max_bytes: int) -> bytes:
+        FileProjectMemoryStore._assert_regular_file(path)
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         try:
             descriptor = os.open(path, flags)
