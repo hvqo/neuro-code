@@ -30,8 +30,13 @@ from neuro_code.application.sessions.context_rollover import (
     SessionContextRolloverApplicationService,
 )
 from neuro_code.domain.conversation.context import ModelContext
-from neuro_code.domain.conversation.events import AgentEventKind, ModelCompleted, ModelEvent
-from neuro_code.domain.conversation.messages import Message, Role
+from neuro_code.domain.conversation.events import (
+    AgentEventKind,
+    ModelCompleted,
+    ModelEvent,
+    ModelToolCall,
+)
+from neuro_code.domain.conversation.messages import Message, Role, ToolCall
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.conversation.request import ModelRequestSnapshot
 from neuro_code.domain.execution import AgentExecutionStatus
@@ -410,6 +415,125 @@ class ContextPreflightRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(preflights), 1)
         self.assertEqual(preflights[0].data["status"], ContextPreflightStatus.SAFE.value)
         self.assertEqual(result.response, "answer")
+
+    async def test_microcompacted_projection_preflights_safe_without_full_compaction(self) -> None:
+        provider = _SequencedProvider(
+            (
+                (
+                    ModelToolCall(ToolCall("current-call", "missing-tool", {})),
+                    ModelCompleted("tool_calls"),
+                ),
+                (ModelCompleted("stop", response_text="answer"),),
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = SqliteSessionStore(root / "sessions.db")
+            await store.initialize()
+            session_id = await store.create_session(str(root), "fixture", "fixture-model")
+            previous_turns: list[Message] = [Message(Role.SYSTEM, "Use the repository context.")]
+            tool_result_contents: dict[str, str] = {}
+            call_ids: list[str] = []
+            for index in range(8):
+                previous_turns.append(Message(Role.USER, f"previous request {index}"))
+                call_id = f"history-call-{index}"
+                call_ids.append(call_id)
+                previous_turns.append(
+                    Message(
+                        Role.ASSISTANT,
+                        tool_calls=(ToolCall(call_id, "inspect", {"index": index}),),
+                    )
+                )
+                content = f"previous tool result {index}: " + ("x" * 6_000)
+                tool_result_contents[call_id] = content
+                previous_turns.append(
+                    Message(
+                        Role.TOOL,
+                        content,
+                        name="inspect",
+                        tool_call_id=call_id,
+                    )
+                )
+            history = tuple(previous_turns)
+            await store.save_session_items(session_id, history)
+            gate = ContextCompactionRuntimeGate(
+                ContextCompactionTriggerService(
+                    ContextCompactionApplicationService(store, provider),
+                )
+            )
+            runtime = AgentRuntime(
+                provider=provider,
+                tools=_EmptyToolCollection(),
+                workspace_change_observer=EmptyWorkspaceChangeObserver(),
+                permissions=PermissionManager(),
+                tool_context=ToolContext(root),
+                session_store=store,
+                execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
+                compaction_runtime_gate=gate,
+                provider_context_window=ProviderContextWindow("fixture", "fixture-model", 8_500),
+                provider_max_output_tokens=128,
+            )
+            micro_state = runtime._loop_runner._microcompaction_state
+            micro_state.begin_scope(session_id, 0)
+            for call_id in call_ids:
+                micro_state.record_tool_result_status(call_id, is_error=False)
+
+            result = await runtime.run(
+                "continue from previous tool evidence",
+                session_id=session_id,
+                initial_items=history,
+            )
+            durable_history = await store.load_session_items(session_id)
+            compaction_items = await store.load_compaction_items(session_id)
+
+        self.assertEqual(result.response, "answer")
+        self.assertEqual(len(provider.calls), 2)
+        self.assertEqual(
+            provider.calls[1][0].items[: len(provider.calls[0][0].items)],
+            provider.calls[0][0].items,
+        )
+        projected = provider.calls[0][0].items
+        projected_results = {
+            item.tool_call_id: item.content
+            for item in projected
+            if isinstance(item, Message) and item.role is Role.TOOL
+        }
+        markers = [
+            content
+            for content in projected_results.values()
+            if "Older tool result omitted from active context" in content
+        ]
+        self.assertEqual(len(markers), 5)
+        self.assertEqual(
+            sum(
+                content == tool_result_contents[call_id]
+                for call_id, content in projected_results.items()
+            ),
+            3,
+        )
+        preflights = [
+            event for event in result.events if event.kind is AgentEventKind.CONTEXT_PREFLIGHT
+        ]
+        self.assertEqual(len(preflights), 2)
+        self.assertEqual(
+            [event.data["status"] for event in preflights],
+            [ContextPreflightStatus.SAFE.value, ContextPreflightStatus.SAFE.value],
+        )
+        telemetry = preflights[0].data["microcompaction"]
+        assert isinstance(telemetry, dict)
+        self.assertEqual(telemetry["groups_compacted"], 5)
+        self.assertGreater(telemetry["estimated_bytes_saved"], 1_024)
+        self.assertGreater(telemetry["estimated_tokens_saved"], 256)
+        self.assertEqual(compaction_items, [])
+        durable_tool_results = {
+            item.tool_call_id: item.content
+            for item in durable_history
+            if isinstance(item, Message) and item.role is Role.TOOL
+        }
+        self.assertEqual(
+            {call_id: durable_tool_results[call_id] for call_id in call_ids},
+            tool_result_contents,
+        )
 
     async def test_blocked_request_stops_before_provider_and_finalizer(self) -> None:
         provider = _ScriptedProvider(())

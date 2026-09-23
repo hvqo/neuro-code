@@ -3305,6 +3305,52 @@ providers may use different cache keys, tokenization, retention windows, and
 eligibility rules, and a real project-instruction or skill change correctly
 invalidates the affected prefix.
 
+## Microcompaction V1
+
+Microcompaction is deterministic cleanup of the model-facing projection. It is
+not Full Compaction: it creates no semantic summary and changes no canonical
+session item, artifact, audit, verification, or recovery fact. A single batch
+may run at an actionable context-pressure boundary before preflight and after
+a tool batch. If its projected request is `SAFE`, the Runtime stops there and
+does not enter Full Compaction or Fresh Context Rollover. If pressure remains,
+the existing Full Compaction and rollover paths keep their authority and
+safety checks.
+
+One batch considers only complete, contiguous assistant tool-call groups with
+their ordered results before the current user message. It requires a
+runtime-observed successful result, excludes duplicate or malformed groups,
+keeps the three most recent prior groups, and protects the current turn,
+errors, media/binary payloads, and any result whose status is unknown (such as
+after restart). Selected result bodies become one fixed bounded marker in a
+new `ModelContext`; User and Assistant messages and call/result adjacency stay
+unchanged. The marker contains no tool arguments, paths, storage metadata,
+secrets, or generated summary.
+
+The application keeps an in-memory snapshot keyed by session and context
+generation. It stores exact group fingerprints, the stable item boundary and
+prefix fingerprint, the compaction identity, and aggregate telemetry. It
+replays the selected batch unchanged until a new pressure trigger also has a
+changed stable prefix/compaction boundary or meaningful append growth (at
+least eight stable items or 2,048 estimated tokens). It compacts all eligible
+groups in that batch, then requires at least 1,024 serialized item bytes and
+256 estimated tokens of savings; smaller proposals are `NOOP`. The scan is
+capped at 16,384 items and an 8-MiB conservative serialized-size budget, with
+bounded nested-value depth/count; one assistant group is capped at 128 calls
+and 256 content parts. The fingerprint set and runtime result-status ledger
+are also bounded. This state is
+not persisted: after restart the canonical history is projected as-is, and
+results without live success evidence fail closed. A committed fresh-context
+generation clears the snapshot.
+
+Body-free aggregate telemetry is attached to the existing Context Preflight
+event: trigger reason, compacted groups/results, estimated before/after
+bytes/tokens, savings, stable boundary, any `NOOP` reason, and whether estimates
+were saturated by the source limit. Microcompaction
+does not create a provider-specific cache key, a runtime trace, or an additional
+durable state format. It follows the same `Stable Prefix → Append-only
+Conversation → Volatile Tail` contract and batches rewrites to avoid clearing
+one result on every request.
+
 `ModelCompleted.usage` now carries the provider-neutral `ModelUsage` value:
 provider-native input/output fields plus optional cache-read (also exposed as
 `cache_hit_tokens`), cache-write, and cache-miss token counts. The input-token

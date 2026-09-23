@@ -40,6 +40,11 @@ from neuro_code.application.memory.compaction_runtime import (
     ContextPreflightStatus,
     assess_context_preflight,
 )
+from neuro_code.application.memory.microcompaction import (
+    MicrocompactionRuntimeState,
+    MicrocompactionTelemetry,
+    MicrocompactionTriggerReason,
+)
 from neuro_code.application.ports.context_rollover import (
     CONTEXT_ROLLOVER_TOOL_NAME,
     MAX_CONTEXT_GENERATION,
@@ -276,6 +281,7 @@ class AgentLoopRunner:
         "_finalizer_factory",
         "_finalizer_max_attempts",
         "_max_steps",
+        "_microcompaction_state",
         "_provider",
         "_provider_context_window",
         "_provider_max_output_tokens",
@@ -365,6 +371,7 @@ class AgentLoopRunner:
         self._active_provider_window = provider_context_window
         self._provider_max_output_tokens = provider_max_output_tokens
         self._workspace_undo_sealer = workspace_undo_sealer
+        self._microcompaction_state = MicrocompactionRuntimeState()
 
     @property
     def provider_context_window(self) -> ProviderContextWindow | None:
@@ -491,6 +498,7 @@ class AgentLoopRunner:
         active_context_seed: tuple[SessionItem, ...] = ()
         context_rollover_generation = 0
         current_user_message: Message | None = None
+        pending_microcompaction_telemetry: MicrocompactionTelemetry | None = None
         pristine_cancel_eligible = cancellation_policy is TurnCancellationPolicy.REWIND_PRISTINE
         events: list[AgentEvent] = []
         sequence = 0
@@ -543,6 +551,7 @@ class AgentLoopRunner:
                     )
                 )
                 context_items.append(_context_rollover_runtime_message(context_rollover_generation))
+        self._microcompaction_state.begin_scope(session_id, context_rollover_generation)
         if plan_execution_requested and (self._session_store is None or session_id is None):
             raise ConfigurationError("session-backed task storage is unavailable")
         if plan_execution_requested and self._context_builder.plan is None:
@@ -668,6 +677,13 @@ class AgentLoopRunner:
             data: dict[str, object],
         ) -> AgentEvent:
             nonlocal tool_intent_text
+            if kind in {AgentEventKind.TOOL_COMPLETED, AgentEventKind.TOOL_FAILED}:
+                call_id = data.get("id")
+                if isinstance(call_id, str):
+                    self._microcompaction_state.record_tool_result_status(
+                        call_id,
+                        is_error=kind is AgentEventKind.TOOL_FAILED,
+                    )
             if kind is AgentEventKind.TEXT_DELTA:
                 text = data.get("text")
                 if isinstance(text, str) and text:
@@ -963,6 +979,7 @@ class AgentLoopRunner:
             )
 
         def start_fresh_context_generation(generation: int | None = None) -> None:
+            nonlocal pending_microcompaction_telemetry
             nonlocal active_compaction_item
             nonlocal active_context_boundary
             nonlocal active_context_seed
@@ -981,6 +998,8 @@ class AgentLoopRunner:
             if generation != expected_generation:
                 raise ConfigurationError("context rollover generation changed concurrently")
             context_rollover_generation = generation
+            self._microcompaction_state.begin_scope(session_id, context_rollover_generation)
+            pending_microcompaction_telemetry = None
             active_context_seed = fresh_context_seed_items()
             active_context_boundary = len(context_items)
             context_items.append(_context_rollover_runtime_message(context_rollover_generation))
@@ -1101,6 +1120,7 @@ class AgentLoopRunner:
         def context_preflight_event_data(
             assessment: ContextPreflightAssessment,
             *,
+            microcompaction: MicrocompactionTelemetry | None = None,
             automatic_rollover_eligible: bool = False,
             automatic_rollover_attempted: bool = False,
             automatic_rollover_succeeded: bool = False,
@@ -1113,6 +1133,8 @@ class AgentLoopRunner:
                     "automatic_rollover_succeeded": automatic_rollover_succeeded,
                 }
             )
+            if microcompaction is not None:
+                data["microcompaction"] = microcompaction.to_event_data()
             return data
 
         def allocate_model_tool_result_limits(
@@ -1821,18 +1843,75 @@ class AgentLoopRunner:
                             deterministic_fallback_only=True,
                         )
                 prior_compaction_item = active_compaction_item
-                compaction_decision, compaction_decision_consumed = await maybe_compact_context(
-                    ContextCompactionSafePoint.BEFORE_MODEL_REQUEST,
-                    step=step,
-                    usage_context=context,
+                microcompaction = None
+                microcompaction_avoids_full_compaction = False
+                if self._execution_control_mode is ExecutionControlMode.FINALIZE_TERMINAL:
+                    trigger_reason = (
+                        MicrocompactionTriggerReason.CONTEXT_PRESSURE
+                        if initial_preflight.status is ContextPreflightStatus.COMPACTION_REQUIRED
+                        and turn_source is TurnSource.USER
+                        and not plan_execution_requested
+                        and ultracode_execution_id is None
+                        else None
+                    )
+                    microcompaction = self._microcompaction_state.evaluate(
+                        context,
+                        session_id=session_id,
+                        context_generation=context_rollover_generation,
+                        current_user_message=current_user_message,
+                        compaction_id=(
+                            active_compaction_item.compaction_id
+                            if active_compaction_item is not None
+                            else None
+                        ),
+                        trigger_reason=trigger_reason,
+                    )
+                    context = microcompaction.context
+                    micro_preflight = assess_context_preflight(
+                        context=context,
+                        tools=tool_definitions,
+                        provider=self._provider.provider_name,
+                        model=self._provider.model_name,
+                        context_affinity=getattr(self._provider, "context_affinity", None),
+                        reasoning_effort=context.reasoning_effort,
+                        provider_window=request_budget_window,
+                        max_output_tokens=self._provider_max_output_tokens,
+                        compaction_attempted=compaction_attempted_this_cycle,
+                    )
+                    microcompaction_avoids_full_compaction = (
+                        microcompaction.has_compacted_results
+                        and micro_preflight.status is ContextPreflightStatus.SAFE
+                    )
+                cycle_microcompaction_telemetry = (
+                    microcompaction.telemetry
+                    if microcompaction is not None and microcompaction.telemetry is not None
+                    else pending_microcompaction_telemetry
                 )
-                compaction_attempted_this_cycle = (
-                    compaction_attempted_this_cycle or compaction_decision_consumed
-                )
-                if compaction_decision is not None:
-                    return await complete_finalized_turn(compaction_decision, step=step - 1)
-                if active_compaction_item is not prior_compaction_item:
-                    context = await build_request_context(completion_reminders)
+
+                if not microcompaction_avoids_full_compaction:
+                    compaction_decision, compaction_decision_consumed = await maybe_compact_context(
+                        ContextCompactionSafePoint.BEFORE_MODEL_REQUEST,
+                        step=step,
+                        usage_context=context,
+                    )
+                    compaction_attempted_this_cycle = (
+                        compaction_attempted_this_cycle or compaction_decision_consumed
+                    )
+                    if compaction_decision is not None:
+                        return await complete_finalized_turn(compaction_decision, step=step - 1)
+                    if active_compaction_item is not prior_compaction_item:
+                        context = await build_request_context(completion_reminders)
+                        context = self._microcompaction_state.project_cached(
+                            context,
+                            session_id=session_id,
+                            context_generation=context_rollover_generation,
+                            compaction_id=(
+                                active_compaction_item.compaction_id
+                                if active_compaction_item is not None
+                                else None
+                            ),
+                        ).context
+
                 if self._execution_control_mode is ExecutionControlMode.FINALIZE_TERMINAL:
                     preflight = assess_context_preflight(
                         context=context,
@@ -1847,8 +1926,12 @@ class AgentLoopRunner:
                     )
                     await emit(
                         AgentEventKind.CONTEXT_PREFLIGHT,
-                        context_preflight_event_data(preflight),
+                        context_preflight_event_data(
+                            preflight,
+                            microcompaction=(cycle_microcompaction_telemetry),
+                        ),
                     )
+                    pending_microcompaction_telemetry = None
                     if preflight.status is ContextPreflightStatus.COMPACTION_REQUIRED:
                         capacity = preflight.capacity_tokens
                         if (
@@ -1885,6 +1968,16 @@ class AgentLoopRunner:
                             )
                         if active_compaction_item is not prior_compaction_item:
                             context = await build_request_context(completion_reminders)
+                            context = self._microcompaction_state.project_cached(
+                                context,
+                                session_id=session_id,
+                                context_generation=context_rollover_generation,
+                                compaction_id=(
+                                    active_compaction_item.compaction_id
+                                    if active_compaction_item is not None
+                                    else None
+                                ),
+                            ).context
                         preflight = assess_context_preflight(
                             context=context,
                             tools=tool_definitions,
@@ -1898,7 +1991,10 @@ class AgentLoopRunner:
                         )
                         await emit(
                             AgentEventKind.CONTEXT_PREFLIGHT,
-                            context_preflight_event_data(preflight),
+                            context_preflight_event_data(
+                                preflight,
+                                microcompaction=(cycle_microcompaction_telemetry),
+                            ),
                         )
                     if preflight.status is ContextPreflightStatus.BLOCKED:
                         (
@@ -2371,11 +2467,65 @@ class AgentLoopRunner:
                 append_runtime_plan_notice()
                 append_budget_pressure_notice(include_model_reserve=True)
                 post_batch_context = await build_request_context()
-                compaction_decision, compaction_decision_consumed = await maybe_compact_context(
-                    ContextCompactionSafePoint.AFTER_TOOL_BATCH,
-                    step=step,
-                    usage_context=post_batch_context,
-                )
+                post_batch_microcompaction_avoids_full_compaction = False
+                if self._execution_control_mode is ExecutionControlMode.FINALIZE_TERMINAL:
+                    post_batch_raw_preflight = assess_context_preflight(
+                        context=post_batch_context,
+                        tools=tool_definitions,
+                        provider=self._provider.provider_name,
+                        model=self._provider.model_name,
+                        context_affinity=getattr(self._provider, "context_affinity", None),
+                        reasoning_effort=post_batch_context.reasoning_effort,
+                        provider_window=request_budget_window,
+                        max_output_tokens=self._provider_max_output_tokens,
+                        compaction_attempted=compaction_attempted_this_cycle,
+                    )
+                    post_batch_microcompaction = self._microcompaction_state.evaluate(
+                        post_batch_context,
+                        session_id=session_id,
+                        context_generation=context_rollover_generation,
+                        current_user_message=current_user_message,
+                        compaction_id=(
+                            active_compaction_item.compaction_id
+                            if active_compaction_item is not None
+                            else None
+                        ),
+                        trigger_reason=(
+                            MicrocompactionTriggerReason.CONTEXT_PRESSURE
+                            if post_batch_raw_preflight.status
+                            is ContextPreflightStatus.COMPACTION_REQUIRED
+                            and turn_source is TurnSource.USER
+                            and not plan_execution_requested
+                            and ultracode_execution_id is None
+                            else None
+                        ),
+                    )
+                    post_batch_context = post_batch_microcompaction.context
+                    if post_batch_microcompaction.telemetry is not None:
+                        pending_microcompaction_telemetry = post_batch_microcompaction.telemetry
+                    post_batch_projected_preflight = assess_context_preflight(
+                        context=post_batch_context,
+                        tools=tool_definitions,
+                        provider=self._provider.provider_name,
+                        model=self._provider.model_name,
+                        context_affinity=getattr(self._provider, "context_affinity", None),
+                        reasoning_effort=post_batch_context.reasoning_effort,
+                        provider_window=request_budget_window,
+                        max_output_tokens=self._provider_max_output_tokens,
+                        compaction_attempted=compaction_attempted_this_cycle,
+                    )
+                    post_batch_microcompaction_avoids_full_compaction = (
+                        post_batch_microcompaction.has_compacted_results
+                        and post_batch_projected_preflight.status is ContextPreflightStatus.SAFE
+                    )
+                if post_batch_microcompaction_avoids_full_compaction:
+                    compaction_decision, compaction_decision_consumed = None, False
+                else:
+                    compaction_decision, compaction_decision_consumed = await maybe_compact_context(
+                        ContextCompactionSafePoint.AFTER_TOOL_BATCH,
+                        step=step,
+                        usage_context=post_batch_context,
+                    )
                 if compaction_decision is not None:
                     return await complete_finalized_turn(compaction_decision, step=step)
                 if compaction_decision_consumed:
