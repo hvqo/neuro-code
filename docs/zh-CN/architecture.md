@@ -1775,18 +1775,24 @@ framework detection 和 public verification UI 不在本切片范围内。VF-4c 
 
 ## 面向 Prompt Cache 的模型请求投影与用量
 
-`ContextBuilder` 拥有稳定的请求前缀：请求范围 system 策略、确定顺序的工具定义，以及当前序列化后的
-项目指令和技能目录发现结果。发现结果会在每次请求时刷新，以便真实的工作区变更能够生效；但其源内容
-不变时，有序序列化结果保持稳定。
+面向缓存稳定性的上下文契约为 `Stable Prefix → Append-only Conversation → Volatile Tail`。稳定前缀包含
+请求范围 system 策略、确定顺序的工具定义，以及有序的项目指令、Skills 和 Project Memory projection。
+Project Memory 每个 active context generation 只读取一次；即使后台提取更新 store，generation 活跃期间
+快照仍保持字节稳定。新建或恢复 Session、project attach/move/detach，以及已提交的 Fresh Context
+Rollover 会刷新；重命名保留相同的项目身份。Full compaction 不是 generation boundary，因此不会刷新。
+项目指令和 Skills 保持现有的工作区刷新行为，源内容不变时其有序序列化也保持稳定。
 
-可变的计划修订、segment checkpoint、预算压力和 REPLAN 状态不会再写回 system 消息，也不会插入到
-持久化会话条目之前。`AgentLoopRunner` 会在安全的会话边界之后追加有界的合成运行时通知。预算指引只会
-在离散的 `CONSERVE`、`FOCUS`、`FINAL_STAGE` 压力状态发生转换时追加，不会在每个模型步骤重写精确的
+可变的计划修订、segment checkpoint、预算压力、REPLAN 状态和当前 Working Set 不会写回 system 消息，也不会
+插入到持久化会话条目之前。Working Set 与有界 synthetic runtime notices 位于 append-only conversation
+之后，作为 volatile tail context。预算指引只会在离散的 `CONSERVE`、`FOCUS`、`FINAL_STAGE` 压力状态
+发生转换时追加，不会在每个模型步骤重写精确的
 剩余计数。这些通知不会进入会话持久化、恢复重放或压缩源条目。后台任务完成提醒是一个有意保留的
 单请求尾部例外：只有 Provider 成功完成后才会确认它。
 
-因此，在未变化的长回合中，请求 *N + 1* 通常等于请求 *N* 加上新追加的持久化会话条目，以及至多一条
-新近相关的有界运行时通知。这不承诺一定命中缓存：各 Provider 的缓存键、分词方式、保留时间和可缓存
+因此，在未变化的长回合中，请求 *N + 1* 保留相同的稳定前缀，在对话中追加新的持久条目，然后带上当前
+volatile tail。历史内容只会在明确的缓存失效 context boundary，或测量证明收益足够时才追溯改写。
+Project Memory、Working Set 以及未来的 microcompaction/compaction 都必须同时权衡 token reduction、cache
+preservation 和 correctness。这不承诺一定命中缓存：各 Provider 的缓存键、分词方式、保留时间和可缓存
 条件不同；真实项目指令或技能发生变更时，使相应前缀失效正是正确行为。
 
 `ModelCompleted.usage` 现在携带与 Provider 无关的 `ModelUsage` 值：Provider 原始的输入/输出字段，以及可选的
@@ -2434,7 +2440,7 @@ Agent 偏好扩充至 17 项：新增 Enter 行为、输入折行、轮次结束
 
 `SessionProject.id` 是唯一的 Project Memory 身份；`cwd` 仍是工作区绑定。每个可选项目在 Neuro Code state root 下拥有独立目录。`FileProjectMemoryStore` 校验规范 UUID、manifest、正文文件名、文件类型、链接、目录包含性以及严格的数量/字节限制。它保存 manifest、生成的有界 `MEMORY.md` index，以及每条记忆独立的正文文件。Session schema v35 保持不变。
 
-应用层通过 `ProjectMemoryRecallService` 提供 index 和按精确 ID 召回。只读 `read_project_memory` 工具只接收当前 binding 的可变项目 scope，不接收路径参数。`ContextBuilder` 仅将有界 index 作为 `PROJECT_MEMORY_INDEX` 注入，在仓库指令与 Skills 之后、普通历史之前。Synthetic Memory Context 不进入持久会话历史。Index 和召回正文都明确指出记忆可能过期，当前仓库、Git 和 `AGENTS.md` 状态优先。
+应用层通过 `ProjectMemoryRecallService` 提供 index 和按精确 ID 召回。只读 `read_project_memory` 工具只接收当前 binding 的可变项目 scope，不接收路径参数。启用 Project Memory 的 Main Agent 无论是否绑定项目，其工具定义都保持注册；未绑定时执行 fail closed。`ContextBuilder` 为当前 active context generation 固定有界的 `PROJECT_MEMORY_INDEX`，位于仓库指令与 Skills 之后、普通历史之前。后台提取更新 store 不会改变当前快照；新建或恢复 Session 会读取最新 index；项目 scope 变化会使快照失效；已提交 Fresh Context Rollover 后重新读取。重命名保留当前快照 identity；项目 detach/delete 会立即清除 scope。Full compaction 不是 generation boundary，因此保留当前快照。Synthetic Memory Context 不进入持久会话历史。Index 和召回正文都明确指出记忆可能过期，当前仓库、Git 和 `AGENTS.md` 状态优先。
 
 `ProjectMemoryExtractionManager` 拥有一个有界队列 worker，并按项目提供生命周期锁。只有项目绑定 Main Agent 的持久用户 Turn 成功完成后才会安排提取；提取从每会话 cursor 之后读取新增持久对话，并使用已有 manifest 去重或更新记录。它禁用工具，并限制来源对话、prompt、输出、事件数、候选条数、队列和总时长。调用 Provider 和持久化前会脱敏配置中的凭据及可识别凭据。Provider/存储失败、超限和取消都会产生带类型且可观测的结果，不会改变已提交 Turn。关闭时会取消并等待 worker。只有有界输入处理完成后才推进 cursor，因此进程重启后仍可处理尚未完成的 Turn。
 

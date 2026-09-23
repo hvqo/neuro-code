@@ -984,6 +984,10 @@ class AgentLoopRunner:
             active_context_seed = fresh_context_seed_items()
             active_context_boundary = len(context_items)
             context_items.append(_context_rollover_runtime_message(context_rollover_generation))
+            # The durable generation boundary authorizes a fresh contextual
+            # projection, including any Project Memory written during the
+            # previous generation.
+            self._context_builder.invalidate_project_memory_snapshot()
             # The new generation deliberately excludes all prior preserved
             # provider state.  Bind any native state produced after this
             # boundary to the provider that actually owns the fresh request,

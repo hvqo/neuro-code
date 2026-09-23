@@ -36,9 +36,9 @@ Canonical `SessionApplicationService`、runtime composition 和 model tool 使�
 
 每次 model request 前，`AgentLoopRunner` 为 runtime-bound session 读取 current snapshot。非空
 snapshot 被确定性渲染为带有 `SyntheticReason.WORKING_SET` 的有界 `Message`，由 `ContextBuilder`
-插入 project instructions 和 available skills 之后。它不会加入内存中的 durable item sequence；如果
-调用方带入该 synthetic message，会被移除；compaction projection 之后会重新构建。空 snapshot 不增加
-message。
+追加到 conversation history 之后，作为 volatile tail context。它不会加入内存中的 durable item
+sequence；如果调用方带入该 synthetic message，会被移除；compaction projection 之后会重新构建。空
+snapshot 不增加 message。将它放在对话之后，可避免频繁变化的任务状态改写稳定项目前缀。
 
 `session_working_set` 只暴露 `read` 和完整替换式 `update`。Schema 不包含 session selector；可信的
 scope 只有 `ToolContext.session_id`。Update 必须提供上次返回的 revision 和全部六个 section。该 tool

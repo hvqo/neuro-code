@@ -33,15 +33,34 @@ no-follow reads, containment checks, and strict file/name/count/byte limits
 reject traversal, links, malformed manifests, and oversized content. Automatic
 memory never enters a user repository.
 
-**The request context contains the index, not every body.** A Project-bound
-Main Agent adds only the bounded index after repository instructions and skills
-and before session history. The message has a dedicated synthetic reason and
-never becomes durable conversation history. The index and the
+**The request context contains a generation-pinned index, not every body.** A
+Project-bound Main Agent reads only the bounded index after repository
+instructions and skills and before conversation history. The application-owned
+snapshot stays byte-stable for that active context generation even when
+background extraction updates storage. It refreshes for a new session or
+resume, project attach/move/detach, and a committed Fresh Context Rollover; a
+rename keeps the same `SessionProject.id` and snapshot. Detach or deletion
+immediately clears the active scope. The message has a dedicated synthetic
+reason and never becomes durable conversation history. The index and the
 `read_project_memory` tool call memory contextual evidence, not instructions;
 the current repository, Git state, and `AGENTS.md` always take precedence. The
 tool accepts one exact memory identity and resolves it through an
-application-owned read service scoped to the binding. It cannot read arbitrary
+application-owned read service scoped to the binding. For a Project Memory-
+enabled Main Agent its definition is stable whether or not a project is bound,
+and execution fails closed without a project. It cannot read arbitrary
 state-root paths. Subagent bindings do not receive this scope by default.
+
+**Context shape is cache-friendly.** A request is ordered as `Stable Prefix →
+Append-only Conversation → Volatile Tail`. Project instructions, skills, and
+the pinned Project Memory index precede durable conversation; high-frequency
+Working Set and runtime notices follow it. Background extraction never rewrites
+the active prefix. Full compaction does not refresh the memory snapshot because
+it is not a context-generation boundary; committed Fresh Context Rollover does.
+Project Memory, Working Set, and future microcompaction or compaction changes
+must weigh token reduction, cache preservation, and correctness together.
+Historical context is rewritten only at an explicit cache-invalidating
+boundary or when measured reduction justifies it. Provider-specific cache keys,
+breakpoints, prewarming, and new runtime traces are not part of this decision.
 
 **Extraction is asynchronous, bounded, and owned by application lifecycle.**
 After a completed durable user turn in a Project-bound session, a composition-

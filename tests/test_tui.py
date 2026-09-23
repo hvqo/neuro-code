@@ -1956,10 +1956,15 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(approvals.handlers[-1])
 
     async def test_prompt_copy_and_paste_are_not_intercepted_by_cancel_binding(self) -> None:
+        class EmptyClipboardImageReader:
+            def read_image(self):
+                return None
+
         clipboard = ClipboardWriterFixture(native_copied=True)
         app = NeuroCodeApp(
             TuiConversation(),
             clipboard_writer=clipboard,
+            clipboard_image_reader=EmptyClipboardImageReader(),
             provider_name="fixture",
             model_name="fixture-model",
             cwd=Path("/workspace"),

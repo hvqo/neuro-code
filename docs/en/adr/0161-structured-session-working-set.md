@@ -46,11 +46,12 @@ and is applied again at model projection boundaries.
 
 Before every model request, `AgentLoopRunner` reads the current snapshot for
 the runtime-bound session. A non-empty snapshot is rendered deterministically
-as a bounded `Message` tagged `SyntheticReason.WORKING_SET` and inserted by
-`ContextBuilder` after project instructions and available skills. It is not
-added to the in-memory durable item sequence, is removed if supplied by a
+as a bounded `Message` tagged `SyntheticReason.WORKING_SET` and appended by
+`ContextBuilder` after conversation history as volatile tail context. It is
+not added to the in-memory durable item sequence, is removed if supplied by a
 caller, and is rebuilt after compaction projections. An empty snapshot adds no
-message.
+message. Keeping it after conversation prevents frequently changing task state
+from rewriting the stable project prefix.
 
 `session_working_set` exposes only `read` and complete-replacement `update`.
 The schema contains no session selector; `ToolContext.session_id` is the only

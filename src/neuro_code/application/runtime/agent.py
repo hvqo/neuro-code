@@ -349,7 +349,10 @@ class AgentRuntime:
 
     def set_project_id(self, project_id: str | None) -> None:
         if self._project_memory_scope is not None:
+            previous_project_id = self._project_memory_scope.project_id
             self._project_memory_scope.set_project_id(project_id)
+            if previous_project_id != project_id:
+                self._context_builder.invalidate_project_memory_snapshot()
 
     @property
     def project_id(self) -> str | None:

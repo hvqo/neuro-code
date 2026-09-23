@@ -52,7 +52,7 @@ from neuro_code.infrastructure.persistence.project_memory_files import (
 )
 from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionStore
 from neuro_code.infrastructure.tools.project_memory import ProjectMemoryReadTool
-from neuro_code.infrastructure.tools.registry import ToolRegistry
+from neuro_code.infrastructure.tools.registry import ToolRegistry, default_tool_registry
 from neuro_code.shared.errors import ProviderError, SessionError, ToolError
 from tests.fakes import EmptyWorkspaceChangeObserver
 
@@ -199,6 +199,18 @@ def _candidate(name: str, content: str, *, identity: str | None = None) -> str:
                 }
             ]
         }
+    )
+
+
+def _serialized_context(items: tuple[Message, ...] | list[Message]) -> tuple[bytes, ...]:
+    return tuple(
+        json.dumps(
+            item.to_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        for item in items
     )
 
 
@@ -602,6 +614,91 @@ class ProjectMemoryExtractionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("recovery safety", recalled.content)
             await manager.shutdown()
 
+    async def test_extraction_does_not_rewrite_active_memory_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            memory_store = FileProjectMemoryStore(Path(temporary))
+            original = _memory(project_id, name="Original rationale")
+            memory_store.upsert_memory(project_id, original)
+            recall = ProjectMemoryRecallService(memory_store)
+            scope = ProjectMemoryScope(project_id)
+            builder = ContextBuilder(
+                reasoning_effort=ReasoningEffort.HIGH,
+                interaction_mode=InteractionMode.NORMAL,
+                plan=None,
+                instruction_provider=None,
+                skill_provider=None,
+                project_memory_provider=lambda: (
+                    recall.index_text(scope.project_id) if scope.project_id is not None else None
+                ),
+            )
+            initial_items = (
+                Message(Role.SYSTEM, "fixture system"),
+                Message(Role.USER, "The active session already knows its current task."),
+            )
+            first_request = builder.build(initial_items)
+            first_memory = next(
+                item
+                for item in first_request
+                if isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.PROJECT_MEMORY_INDEX
+            )
+
+            session_store = _SessionStore(
+                project_id,
+                (
+                    Message(Role.USER, "The project has a new durable architecture decision."),
+                    Message(Role.ASSISTANT, "It exists to preserve restart recovery."),
+                ),
+            )
+            provider = _ScriptedProvider(
+                (_candidate("Restart boundary", "The new boundary protects recovery."),)
+            )
+            manager = ProjectMemoryExtractionManager(session_store, memory_store)  # type: ignore[arg-type]
+            manager.schedule("session-one", project_id, provider)
+            await self._wait_for_manager(manager)
+            self.assertEqual(manager.outcomes[-1].status, ProjectMemoryExtractionStatus.SAVED)
+            latest = memory_store.load_snapshot(project_id).memories
+            added = next(item for item in latest if item.name == "Restart boundary")
+            self.assertIn(added.memory_id, recall.index_text(project_id) or "")
+
+            appended_history = (
+                *initial_items,
+                Message(Role.ASSISTANT, "The first turn completed."),
+                Message(Role.USER, "Continue from the existing active context."),
+            )
+            second_request = builder.build(appended_history)
+            second_memory = next(
+                item
+                for item in second_request
+                if isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.PROJECT_MEMORY_INDEX
+            )
+            self.assertEqual(first_memory.content, second_memory.content)
+            first_bytes = _serialized_context(first_request)
+            second_bytes = _serialized_context(list(second_request))
+            self.assertEqual(first_bytes, second_bytes[: len(first_bytes)])
+
+            next_session_builder = ContextBuilder(
+                reasoning_effort=ReasoningEffort.HIGH,
+                interaction_mode=InteractionMode.NORMAL,
+                plan=None,
+                instruction_provider=None,
+                skill_provider=None,
+                project_memory_provider=lambda: recall.index_text(project_id),
+            )
+            next_session_request = next_session_builder.build(
+                (Message(Role.SYSTEM, "fixture system"), Message(Role.USER, "new session"))
+            )
+            next_session_memory = next(
+                item
+                for item in next_session_request
+                if isinstance(item, Message)
+                and item.synthetic_reason is SyntheticReason.PROJECT_MEMORY_INDEX
+            )
+            self.assertIn(added.memory_id, next_session_memory.content)
+            await manager.shutdown()
+
     async def test_cursor_limits_analysis_and_updates_matching_memory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             project_id = str(uuid.uuid4())
@@ -790,8 +887,10 @@ class ProjectMemoryExtractionTests(unittest.IsolatedAsyncioTestCase):
 
             manager.schedule("session-one", project_id, provider)
             await self._wait_for_manager(manager)
+            final_snapshot = memory_store.load_snapshot(project_id)
             self.assertEqual(
-                len(memory_store.load_snapshot(project_id).memories), MAX_EXTRACTION_MEMORIES + 1
+                {item.memory_id for item in final_snapshot.memories},
+                {item.memory_id for item in second_snapshot.memories},
             )
             self.assertEqual(provider.calls, 0)
             await manager.shutdown()
@@ -846,7 +945,11 @@ class ProjectMemoryExtractionTests(unittest.IsolatedAsyncioTestCase):
 
             manager.schedule("session-one", project_id, provider)
             await self._wait_for_manager(manager)
-            self.assertEqual(len(memory_store.load_snapshot(project_id).memories), 2)
+            final_snapshot = memory_store.load_snapshot(project_id)
+            self.assertEqual(
+                {item.memory_id for item in final_snapshot.memories},
+                {item.memory_id for item in second_snapshot.memories},
+            )
             self.assertEqual(provider.calls, 2)
             await manager.shutdown()
 
@@ -1034,6 +1137,120 @@ class ContextProjectScopeTests(unittest.IsolatedAsyncioTestCase):
             and item.synthetic_reason is SyntheticReason.PROJECT_MEMORY_INDEX
         )
         self.assertIn(project_id, memory_index.content)
+
+    async def test_move_and_detach_immediately_switch_memory_snapshot(self) -> None:
+        project_a = str(uuid.uuid4())
+        project_b = str(uuid.uuid4())
+        provider = _RuntimeProvider()
+        runtime = AgentRuntime(
+            provider=provider,  # type: ignore[arg-type]
+            tools=ToolRegistry(),
+            workspace_change_observer=EmptyWorkspaceChangeObserver(),
+            permissions=PermissionManager(),
+            tool_context=ToolContext(Path("/workspace")),
+            project_memory_scope=ProjectMemoryScope(project_a),
+            project_memory_index_provider=lambda identity: f"index for {identity}",
+            final_output_gate_enabled=False,
+            normal_requirements_enabled=False,
+        )
+
+        await runtime.run("first request")
+        runtime.set_project_id(project_b)
+        await runtime.run("after move")
+        runtime.set_project_id(None)
+        await runtime.run("after detach")
+
+        def memory_text(context: ModelContext) -> str | None:
+            return next(
+                (
+                    item.content
+                    for item in context.messages
+                    if item.synthetic_reason is SyntheticReason.PROJECT_MEMORY_INDEX
+                ),
+                None,
+            )
+
+        self.assertIn(project_a, memory_text(provider.contexts[0]) or "")
+        self.assertIn(project_b, memory_text(provider.contexts[1]) or "")
+        self.assertIsNone(memory_text(provider.contexts[2]))
+
+    async def test_project_rename_preserves_active_snapshot_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session_store = SqliteSessionStore(root / "sessions.db")
+            await session_store.initialize()
+            project = await session_store.create_project("Project A", str(root))
+            memory_store = FileProjectMemoryStore(root / "neuro-state")
+            memory_store.upsert_memory(project.id, _memory(project.id))
+            recall = ProjectMemoryRecallService(memory_store)
+            index_reads: list[str] = []
+
+            def load_index(identity: str) -> str | None:
+                index_reads.append(identity)
+                return recall.index_text(identity)
+
+            provider = _RuntimeProvider()
+            runtime = AgentRuntime(
+                provider=provider,  # type: ignore[arg-type]
+                tools=ToolRegistry(),
+                workspace_change_observer=EmptyWorkspaceChangeObserver(),
+                permissions=PermissionManager(),
+                tool_context=ToolContext(root),
+                project_memory_scope=ProjectMemoryScope(project.id),
+                project_memory_index_provider=load_index,
+                final_output_gate_enabled=False,
+                normal_requirements_enabled=False,
+            )
+            await runtime.run("before rename")
+            renamed = await session_store.rename_project(project.id, "Renamed Project")
+            self.assertEqual(renamed.id, project.id)
+            await runtime.run("after rename")
+
+            first_index = next(
+                item.content
+                for item in provider.contexts[0].messages
+                if item.synthetic_reason is SyntheticReason.PROJECT_MEMORY_INDEX
+            )
+            second_index = next(
+                item.content
+                for item in provider.contexts[1].messages
+                if item.synthetic_reason is SyntheticReason.PROJECT_MEMORY_INDEX
+            )
+            self.assertEqual(first_index, second_index)
+            self.assertEqual(index_reads, [project.id])
+
+    async def test_memory_tool_definition_is_stable_and_unbound_reads_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project_id = str(uuid.uuid4())
+            memory_store = FileProjectMemoryStore(Path(temporary))
+            memory = _memory(project_id)
+            memory_store.upsert_memory(project_id, memory)
+            scope = ProjectMemoryScope()
+            registry = default_tool_registry(
+                project_memory_recall=ProjectMemoryRecallService(memory_store),
+                project_memory_scope=scope,
+            )
+            definition_before = registry.definitions()
+            names_before = registry.names()
+            self.assertIn("read_project_memory", names_before)
+            tool = registry.get("read_project_memory")
+            self.assertIsInstance(tool, ProjectMemoryReadTool)
+            assert isinstance(tool, ProjectMemoryReadTool)
+
+            with self.assertRaises(ToolError):
+                await tool.execute(
+                    {"memory_id": memory.metadata.memory_id},
+                    ToolContext(Path(temporary)),
+                )
+
+            scope.set_project_id(project_id)
+            self.assertEqual(registry.definitions(), definition_before)
+            self.assertEqual(registry.names(), names_before)
+            recalled = await tool.execute(
+                {"memory_id": memory.metadata.memory_id},
+                ToolContext(Path(temporary)),
+            )
+            self.assertIn(memory.content, recalled.content)
 
 
 class ProjectMemoryOutcomeModelTests(unittest.TestCase):

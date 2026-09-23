@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ from neuro_code.application.memory.compaction_runtime import (
 )
 from neuro_code.application.memory.compaction_service import ContextCompactionApplicationService
 from neuro_code.application.memory.compaction_trigger import ContextCompactionTriggerService
+from neuro_code.application.memory.project_scope import ProjectMemoryScope
 from neuro_code.application.permissions.policy import PermissionManager, PermissionMode
 from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
 from neuro_code.application.ports.tools import Tool, ToolCollection, ToolContext
@@ -242,6 +244,8 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
         provider_context_window: ProviderContextWindow | None = None,
         provider_max_output_tokens: int | None = None,
         background_tasks: Any | None = None,
+        project_memory_scope: ProjectMemoryScope | None = None,
+        project_memory_index_provider: Callable[[str], str | None] | None = None,
     ) -> AgentRuntime:
         selected_store = store or self.store
         rollover = SessionContextRolloverApplicationService(selected_store)
@@ -268,6 +272,8 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
             compaction_runtime_gate=compaction_runtime_gate,
             provider_context_window=provider_context_window,
             provider_max_output_tokens=provider_max_output_tokens,
+            project_memory_scope=project_memory_scope,
+            project_memory_index_provider=project_memory_index_provider,
         )
 
     @staticmethod
@@ -387,6 +393,57 @@ class ContextRolloverTests(unittest.IsolatedAsyncioTestCase):
                 for item in persisted_items
             )
         )
+
+    async def test_committed_rollover_refreshes_project_memory_snapshot(self) -> None:
+        project_id = str(uuid.uuid4())
+        index = ["Project Memory index at generation zero"]
+
+        class _UpdatingProvider(_ScriptedProvider):
+            async def stream(
+                self,
+                context: ModelContext,
+                tools: tuple[ToolDefinition, ...],
+                *,
+                tool_policy: ModelToolPolicy = ModelToolPolicy.ALLOWED,
+            ) -> AsyncIterator[ModelEvent]:
+                async for event in super().stream(context, tools, tool_policy=tool_policy):
+                    yield event
+                if len(self.calls) == 1:
+                    index[0] = "Project Memory index after committed rollover"
+
+        provider = _UpdatingProvider(
+            (
+                (
+                    ModelToolCall(ToolCall("roll-memory", "new_context", {})),
+                    ModelCompleted("tool_calls"),
+                ),
+                (ModelTextDelta("continued with the refreshed snapshot"), ModelCompleted("stop")),
+            )
+        )
+        runtime = self._runtime(
+            provider,
+            project_memory_scope=ProjectMemoryScope(project_id),
+            project_memory_index_provider=lambda identity: index[0],
+        )
+
+        result = await runtime.run(
+            "start from a fresh context",
+            initial_items=(Message(Role.SYSTEM, "fixture system"),),
+            session_id=self.session_id,
+        )
+
+        self.assertEqual(result.response, "continued with the refreshed snapshot")
+        self.assertEqual(len(provider.calls), 2)
+        memory_contents = [
+            next(
+                item.content
+                for item in context.messages
+                if item.synthetic_reason is SyntheticReason.PROJECT_MEMORY_INDEX
+            )
+            for context in provider.calls
+        ]
+        self.assertEqual(memory_contents[0], "Project Memory index at generation zero")
+        self.assertEqual(memory_contents[1], "Project Memory index after committed rollover")
 
     async def test_output_limit_rejects_before_generation_write(self) -> None:
         tool = NewContextTool(self.rollover)

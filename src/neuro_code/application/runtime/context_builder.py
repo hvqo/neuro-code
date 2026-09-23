@@ -45,6 +45,8 @@ The current approach is repeating results without sufficient progress. Change st
 repeating the same tool or action with equivalent arguments. Narrow or broaden the search,
 inspect different evidence, or revise the current assumption."""
 
+_UNLOADED_PROJECT_MEMORY_SNAPSHOT = object()
+
 
 def _budget_runtime_guidance(pressure: ExecutionBudgetPressure) -> str:
     pressure_guidance = {
@@ -84,11 +86,17 @@ class ContextBuilder:
     discovery results remain observable via ``instruction_result`` and
     ``skill_result``.
 
+    The bounded Project Memory index is pinned on first use and remains stable
+    until a session/scope boundary or committed fresh-context generation
+    invalidates it. The per-request Working Set is appended after conversation
+    as volatile tail context.
+
     Dynamic plan and runtime state are rendered by explicit helper methods;
     the loop appends those notices at safe turn boundaries rather than
     rewriting the early request prefix.
 
     为每个模型请求构建带指引和注入内容的上下文. 指令和技能会在每个模型步骤刷新并作为合成 User 消息注入.
+    项目记忆快照只在会话/范围边界或已提交的全新上下文 generation 后失效; Working Set 位于对话后的易变尾部.
     动态计划和运行时状态由显式辅助方法渲染,并在安全的回合边界追加,不会改写请求前缀.
     """
 
@@ -102,6 +110,7 @@ class ContextBuilder:
         "_plan",
         "_plan_comments",
         "_project_memory_provider",
+        "_project_memory_snapshot",
         "_reasoning_effort",
         "_skill_provider",
     )
@@ -125,6 +134,7 @@ class ContextBuilder:
         self._instruction_provider = instruction_provider
         self._skill_provider = skill_provider
         self._project_memory_provider = project_memory_provider
+        self._project_memory_snapshot: str | None | object = _UNLOADED_PROJECT_MEMORY_SNAPSHOT
         if parent_relay_message is not None and (
             not isinstance(parent_relay_message, Message)
             or parent_relay_message.synthetic_reason is not SyntheticReason.PARENT_RELAY
@@ -158,6 +168,28 @@ class ContextBuilder:
         if not isinstance(mode, InteractionMode):
             raise TypeError("interaction mode must be an InteractionMode")
         self._interaction_mode = mode
+
+    def invalidate_project_memory_snapshot(self) -> None:
+        """Reload Project Memory before the next request in a new context scope.
+
+        The next ``build`` reads the bounded index once and pins it for the
+        active generation. Scope changes and committed fresh-context rollovers
+        call this method; ordinary turns and extraction writes do not.
+
+        使当前项目记忆快照失效;在下一次请求构建时重新读取。普通回合和后台提取不会调用此方法。
+        """
+
+        self._project_memory_snapshot = _UNLOADED_PROJECT_MEMORY_SNAPSHOT
+
+    def _load_project_memory_snapshot(self) -> str | None:
+        if self._project_memory_provider is None:
+            return None
+        snapshot = self._project_memory_provider()
+        if snapshot is not None and not isinstance(snapshot, str):
+            raise TypeError("project memory provider must return text or None")
+        if snapshot is not None and len(snapshot.encode("utf-8")) > 24_576:
+            raise ValueError("project memory index exceeds its context byte limit")
+        return snapshot
 
     @property
     def plan(self) -> SessionPlan | None:
@@ -367,13 +399,14 @@ class ContextBuilder:
                     break
             rendered.insert(insert_at, skill_msg)
 
-        # Project memory is a bounded index of contextual evidence. It follows
-        # stable project instructions and skills, but precedes conversation
-        # history and never acts as instruction authority.
-        memory_index = self._project_memory_provider() if self._project_memory_provider else None
+        # Project memory is a generation-pinned bounded index of contextual
+        # evidence. Extraction may update storage in the background, but that
+        # must not rewrite an active request prefix.
+        if self._project_memory_snapshot is _UNLOADED_PROJECT_MEMORY_SNAPSHOT:
+            self._project_memory_snapshot = self._load_project_memory_snapshot()
+        memory_index = self._project_memory_snapshot
         if memory_index:
-            if not isinstance(memory_index, str) or len(memory_index.encode("utf-8")) > 24_576:
-                raise ValueError("project memory index exceeds its context byte limit")
+            assert isinstance(memory_index, str)
             insert_at = system_index + 1
             while insert_at < len(rendered):
                 item = rendered[insert_at]
@@ -392,22 +425,6 @@ class ContextBuilder:
                 ),
             )
 
-        # The current structured task state is refreshed by the runtime for
-        # each request. It remains synthetic and is never added to durable
-        # session items.
-        if working_set_message is not None:
-            insert_at = system_index + 1
-            while insert_at < len(rendered):
-                item = rendered[insert_at]
-                if not isinstance(item, Message) or item.synthetic_reason not in {
-                    SyntheticReason.PROJECT_INSTRUCTIONS,
-                    SyntheticReason.AVAILABLE_SKILLS,
-                    SyntheticReason.PROJECT_MEMORY_INDEX,
-                }:
-                    break
-                insert_at += 1
-            rendered.insert(insert_at, working_set_message)
-
         # The immutable parent relay is context rather than authority. Insert
         # its single owned copy after stable workspace context and before
         # genuine child history on every request.
@@ -419,7 +436,6 @@ class ContextBuilder:
                     SyntheticReason.PROJECT_INSTRUCTIONS,
                     SyntheticReason.AVAILABLE_SKILLS,
                     SyntheticReason.PROJECT_MEMORY_INDEX,
-                    SyntheticReason.WORKING_SET,
                 }:
                     break
                 insert_at += 1
@@ -436,12 +452,17 @@ class ContextBuilder:
                     SyntheticReason.PROJECT_INSTRUCTIONS,
                     SyntheticReason.AVAILABLE_SKILLS,
                     SyntheticReason.PROJECT_MEMORY_INDEX,
-                    SyntheticReason.WORKING_SET,
                     SyntheticReason.PARENT_RELAY,
                 }:
                     break
                 insert_at += 1
             rendered.insert(insert_at, self._dag_result_relay_message)
+
+        # Working Set is high-frequency task state, so keep it after the
+        # append-only conversation instead of inserting it into the stable
+        # project prefix. It remains synthetic and never enters durable items.
+        if working_set_message is not None:
+            rendered.append(working_set_message)
 
         return tuple(rendered)
 
