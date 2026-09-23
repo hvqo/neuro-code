@@ -6,6 +6,12 @@ from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import TextArea
 
+from neuro_code.application.ports.runtime_capabilities import (
+    WebSearchAvailability,
+    WebSearchUnavailableReason,
+)
+from neuro_code.application.ports.web_fetch import WebFetchExecutionPath
+from neuro_code.application.ports.web_search import WebSearchExecutionPath
 from neuro_code.application.workflows.subagent import (
     RunSubagentRequest,
 )
@@ -44,6 +50,47 @@ from neuro_code.shared.errors import ConfigurationError
 
 
 class CommandControllerMixin(TuiAppControllerMixin):
+    def _runtime_web_status(self) -> tuple[str, str]:
+        inspection = getattr(self._provider_controller, "runtime_web_capabilities", None)
+        if inspection is None:
+            return (
+                ui_text(self._language, "capability.unknown"),
+                ui_text(self._language, "capability.unknown"),
+            )
+        availability_key = {
+            WebSearchAvailability.AVAILABLE: "capability.available",
+            WebSearchAvailability.DISABLED: "capability.disabled",
+            WebSearchAvailability.UNAVAILABLE: "capability.unavailable",
+        }[inspection.search_availability]
+        search_parts = [ui_text(self._language, availability_key)]
+        search_path_key = {
+            WebSearchExecutionPath.DISABLED: "capability.path.disabled",
+            WebSearchExecutionPath.INLINE_HOSTED: "capability.path.inline",
+            WebSearchExecutionPath.SIDECAR_HOSTED: "capability.path.sidecar",
+            WebSearchExecutionPath.UNAVAILABLE: "capability.path.unavailable",
+        }[inspection.search_path]
+        search_parts.append(ui_text(self._language, search_path_key))
+        if inspection.search_reason is not None:
+            reason_key = {
+                WebSearchUnavailableReason.NO_COMPATIBLE_PROVIDER: "capability.reason.no_search_provider",
+                WebSearchUnavailableReason.CONFIGURED_ROUTE_UNAVAILABLE: "capability.reason.search_route_unavailable",
+                WebSearchUnavailableReason.MAIN_CAPABILITY_UNSUPPORTED: "capability.reason.main_search_unsupported",
+                WebSearchUnavailableReason.TOOL_NOT_ALLOWED: "capability.reason.search_tool_not_allowed",
+            }[inspection.search_reason]
+            search_parts.append(ui_text(self._language, reason_key))
+        if inspection.search_profile is not None:
+            provider = inspection.search_profile
+            if inspection.search_model is not None:
+                provider = f"{provider}/{inspection.search_model}"
+            search_parts.append(provider)
+        fetch_key = {
+            WebFetchExecutionPath.DISABLED: "capability.fetch.disabled",
+            WebFetchExecutionPath.LOCAL: "capability.fetch.local",
+            WebFetchExecutionPath.INLINE_HOSTED: "capability.fetch.inline",
+            WebFetchExecutionPath.UNAVAILABLE: "capability.fetch.unavailable",
+        }[inspection.fetch_path]
+        return " · ".join(search_parts), ui_text(self._language, fetch_key)
+
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if isinstance(event.text_area, PromptInput) and event.text_area.screen is self.screen:
             event.text_area.sync_content_height()
@@ -223,6 +270,7 @@ class CommandControllerMixin(TuiAppControllerMixin):
                 if self._provider_controller is not None
                 else ""
             )
+            web_search, web_fetch = self._runtime_web_status()
             self._write_ui_entry(
                 "system",
                 "command.status",
@@ -234,6 +282,8 @@ class CommandControllerMixin(TuiAppControllerMixin):
                 session=session_id,
                 profile=profile,
                 cwd=self._cwd,
+                web_search=web_search,
+                web_fetch=web_fetch,
             )
         elif command in {"compact", "context"}:
             await self._run_context_compaction()

@@ -1602,8 +1602,33 @@ Runtime 门控现在会在允许的显式压缩操作外层真正执行有限的
 为下一次请求启用 `SyntheticReason.RUNTIME_SUPERVISION`。`ContextBuilder` 负责这条仅请求
 可见的注入以及通用 batch-first 证据收集策略。两者都不会追加到会话条目；REPLAN 消息会
 在产生新进展后通过追加一条有界的“已解决”通知来收束，而不是改写已经发送过的请求前缀；
-回合退出时也不会持久化。工具执行顺序和现有 stuck 检测保持不变。详见
-[ADR 0105](../en/adr/0105-unified-execution-budget-and-replan-guidance.md)。
+回合退出时也不会持久化。工具批次顺序保持不变。重复行为与周期检测现在会先请求一次有界策略恢复，
+之后才作出 stuck 终态决定；有效证据或工作区/计划/验证进展会解除恢复压力。详见
+[ADR 0105](../en/adr/0105-unified-execution-budget-and-replan-guidance.md) 和
+[ADR 0174](adr/0174-agent-reliability-and-web-search-recovery.md)。
+
+## 工作区证据、网页搜索能力与有界循环恢复
+
+稳定的 Runtime 指引要求 Agent 先建立工作区证据。当本地证据无法提供任务所需的公开或外部事实时，
+若当前 binding 暴露了 `web_search`，Agent 应使用它；否则应说明能力阻塞，并区分已在本地验证的部分与
+仍未验证的外部部分。这不会全面限制用户明确要求的 Shell 网络操作，也不会让 Shell 抓取静默替代公开资料搜索。
+
+`WebSearchMode.AUTO` 只根据可信 capability 与可执行后端事实解析。若 MAIN 明确支持托管搜索且能与客户端工具
+共同使用，优先走该路径；否则使用已配置且可执行的 `WEB_SEARCH` route。没有显式 route 时，组合根按稳定的
+名称顺序检查已配置 Provider profile，并选择第一个同时具有具体托管搜索后端和可用凭据的 route。MAIN 与其
+故障转移 profile 不会被提升为独立 sidecar。UNKNOWN capability 保持未知。若解析失败或 binding 的工具白名单
+阻止执行，则不注册 `web_search`，并在 binding 中携带类型化的不可用原因。
+
+应用层拥有的 `RuntimeWebCapabilityInspection` 报告有效的搜索可用性/路径、有界的 Provider/模型标签、不可用时的
+类型化原因，以及有效 Web Fetch 路径；它不包含 endpoint 或凭据。TUI `/status` 从当前 binding 读取该状态，
+因此展示的是 Provider 组合与工具过滤后 Agent 实际可用的能力。
+
+Supervisor 把重复操作、重复错误和周期循环视为检测信号，而不是立即终态。首次检测会建立一次有界的逐回合恢复
+状态，并注入仅对当前请求可见的 replan 指引。状态只包含类型化原因、行为指纹摘要、周期长度和工具计数边界；
+它不会持久化，也不会暴露给模型。新证据以及工作区、计划、验证或外部状态进展会清除恢复状态。若有界策略执行
+机会之后仍没有有效进展且同一异常压力持续存在，Supervisor 才将回合标记为 stuck。现有模型/工具预算仍会限制
+执行。安全诊断只报告原因码和有界恢复计数，不包含原始参数、结果正文、凭据、URL 或指纹。详见
+[ADR 0174](adr/0174-agent-reliability-and-web-search-recovery.md)。
 
 ## 有界长任务 Runtime 指引、压缩与分段
 

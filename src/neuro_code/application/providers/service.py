@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from neuro_code.application.ports.runtime_capabilities import RuntimeWebCapabilityInspection
 from neuro_code.application.providers.contracts import (
     ProviderOption,
     ProviderSelectionResult,
@@ -43,6 +44,9 @@ class ProviderProfileController(Protocol):
     @property
     def selected_profile(self) -> str: ...
 
+    @property
+    def runtime_web_capabilities(self) -> RuntimeWebCapabilityInspection | None: ...
+
     async def select_profile(self, name: str) -> ProviderSelectionResult: ...
 
 
@@ -63,6 +67,10 @@ class ProviderChangeService:
     @property
     def selected_profile(self) -> str:
         return self._controller.selected_profile
+
+    @property
+    def runtime_web_capabilities(self) -> RuntimeWebCapabilityInspection | None:
+        return self._controller.runtime_web_capabilities
 
     async def change_provider(self, request: ChangeProviderRequest) -> ProviderSelectionResult:
         """Delegate a typed request while preserving cancellation and errors.

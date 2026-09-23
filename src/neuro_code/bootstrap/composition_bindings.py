@@ -45,7 +45,7 @@ from neuro_code.application.ports.background_tasks import (
 )
 from neuro_code.application.ports.client_filesystem import ClientFileSystem
 from neuro_code.application.ports.client_terminal import ClientTerminal
-from neuro_code.application.ports.configuration import AppConfig
+from neuro_code.application.ports.configuration import AppConfig, ProviderProfile
 from neuro_code.application.ports.git_inspection import GitInspectionApplication
 from neuro_code.application.ports.model import (
     CapabilityStatus,
@@ -56,6 +56,12 @@ from neuro_code.application.ports.model import (
 from neuro_code.application.ports.parent_context_relay import (
     ParentContextRelayError,
     ParentContextRelayStore,
+)
+from neuro_code.application.ports.routing import ModelRoute, RuntimeRole
+from neuro_code.application.ports.runtime_capabilities import (
+    RuntimeWebCapabilityInspection,
+    WebSearchAvailability,
+    WebSearchUnavailableReason,
 )
 from neuro_code.application.ports.sandbox import LocalProcessSandbox
 from neuro_code.application.ports.task_dag import TaskDagError, TaskDagStore
@@ -167,6 +173,47 @@ def _without_main_inline_web_fetch(config: AppConfig) -> AppConfig:
             ),
         )
     return replace(config, providers=profiles)
+
+
+def _profile_has_search_credentials(profile: ProviderProfile) -> bool:
+    """Check an already configured profile without exposing credential data."""
+
+    if not profile.available:
+        return False
+    try:
+        profile.api_key(os.environ)
+    except ConfigurationError:
+        return False
+    return True
+
+
+def _automatic_search_route(config: AppConfig) -> ModelRoute | None:
+    """Pick the first executable, trusted hosted-search profile deterministically."""
+
+    resolver = RoutedWebSearchBackendResolver(config)
+    main_profiles = {config.main_route.provider_profile, *config.main_route.fallback_profiles}
+    candidates = tuple(
+        sorted(
+            config.providers.values(), key=lambda profile: (profile.name.casefold(), profile.name)
+        )
+    )
+    for profile in candidates:
+        if profile.name in main_profiles:
+            continue
+        if not _profile_has_search_credentials(profile):
+            continue
+        route = ModelRoute(RuntimeRole.WEB_SEARCH, profile.name, profile.model)
+        if resolver.resolve(route) is not None:
+            return route
+    return None
+
+
+def _route_has_search_credentials(config: AppConfig, route: ModelRoute) -> bool:
+    return any(
+        (profile := config.providers.get(name)) is not None
+        and _profile_has_search_credentials(profile)
+        for name in (route.provider_profile, *route.fallback_profiles)
+    )
 
 
 def _main_request_budget_metadata(
@@ -479,6 +526,7 @@ class CompositionBindingMixin(CompositionRootMixin):
             ToolRegistry,
             LocalProcessSandbox,
             LanguageServerManager,
+            RuntimeWebCapabilityInspection,
         ]:
             local_process_sandbox = (
                 precreated_local_process_sandbox
@@ -542,11 +590,6 @@ class CompositionBindingMixin(CompositionRootMixin):
                         "capabilities",
                         ModelCapabilitySet.all_unknown(),
                     )
-                search_resolver = RoutedWebSearchBackendResolver(selected_config)
-                search_route = selected_config.web_search_route
-                sidecar_available = (
-                    search_route is not None and search_resolver.resolve(search_route) is not None
-                )
                 client_tool_names = tuple(
                     name
                     for name in preview_tools.names()
@@ -556,8 +599,10 @@ class CompositionBindingMixin(CompositionRootMixin):
                     allowed_tool_names is None or "web_fetch" in allowed_tool_names
                 ):
                     client_tool_names += ("web_fetch",)
+                search_allowed = allowed_tool_names is None or "web_search" in allowed_tool_names
                 inline_supported = (
                     provider_capabilities.supports(ModelCapability.HOSTED_WEB_SEARCH)
+                    and search_allowed
                     and (
                         not client_tool_names
                         or provider_capabilities.supports(
@@ -567,10 +612,34 @@ class CompositionBindingMixin(CompositionRootMixin):
                     if isinstance(provider_capabilities, ModelCapabilitySet)
                     else False
                 )
+                search_config = selected_config
+                explicit_search_route = selected_config.web_search_route
+                search_route = explicit_search_route
+                if (
+                    selected_config.web_search_mode is WebSearchMode.AUTO
+                    and not inline_supported
+                    and search_allowed
+                    and search_route is None
+                ):
+                    search_route = _automatic_search_route(selected_config)
+                    if search_route is not None:
+                        search_config = replace(
+                            selected_config,
+                            routes={
+                                **selected_config.routes,
+                                RuntimeRole.WEB_SEARCH: search_route,
+                            },
+                        )
+                search_resolver = RoutedWebSearchBackendResolver(search_config)
+                sidecar_available = (
+                    search_route is not None
+                    and _route_has_search_credentials(search_config, search_route)
+                    and search_resolver.resolve(search_route) is not None
+                )
                 execution_path = resolve_web_search_path(
                     selected_config.web_search_mode,
                     inline_supported=inline_supported,
-                    sidecar_available=sidecar_available,
+                    sidecar_available=sidecar_available and search_allowed,
                 )
                 if (
                     selected_config.web_search_mode is WebSearchMode.INLINE
@@ -597,7 +666,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                     # that case the route has already resolved to a sidecar
                     # (or unavailable), so rebuild the provider without the
                     # inline hosted tool instead of exposing both paths.
-                    provider_config = _without_main_inline_web_search(selected_config)
+                    provider_config = _without_main_inline_web_search(search_config)
                     if fetch_path is not WebFetchExecutionPath.INLINE_HOSTED:
                         provider_config = _without_main_inline_web_fetch(provider_config)
                     provider = self._provider_factory(provider_config, self.settings.failover)
@@ -635,17 +704,60 @@ class CompositionBindingMixin(CompositionRootMixin):
                             )
                         )
                     )
-                if execution_path is WebSearchExecutionPath.SIDECAR_HOSTED and (
-                    allowed_tool_names is None or "web_search" in allowed_tool_names
-                ):
+                if execution_path is WebSearchExecutionPath.SIDECAR_HOSTED and search_allowed:
                     tools.register(
                         WebSearchTool(
                             WebSearchService(
-                                selected_config,
+                                search_config,
                                 search_resolver,
-                                redaction_values=selected_config.redaction_values(os.environ),
+                                redaction_values=search_config.redaction_values(os.environ),
                             )
                         )
+                    )
+                if execution_path is WebSearchExecutionPath.DISABLED:
+                    web_search_inspection = RuntimeWebCapabilityInspection(
+                        WebSearchAvailability.DISABLED,
+                        WebSearchExecutionPath.DISABLED,
+                        fetch_path=fetch_path,
+                    )
+                elif execution_path is WebSearchExecutionPath.UNAVAILABLE:
+                    reason = (
+                        WebSearchUnavailableReason.TOOL_NOT_ALLOWED
+                        if not search_allowed
+                        else WebSearchUnavailableReason.MAIN_CAPABILITY_UNSUPPORTED
+                        if selected_config.web_search_mode is WebSearchMode.INLINE
+                        else WebSearchUnavailableReason.CONFIGURED_ROUTE_UNAVAILABLE
+                        if explicit_search_route is not None
+                        else WebSearchUnavailableReason.NO_COMPATIBLE_PROVIDER
+                    )
+                    web_search_inspection = RuntimeWebCapabilityInspection(
+                        WebSearchAvailability.UNAVAILABLE,
+                        WebSearchExecutionPath.UNAVAILABLE,
+                        reason,
+                        fetch_path=fetch_path,
+                    )
+                else:
+                    if execution_path is WebSearchExecutionPath.SIDECAR_HOSTED:
+                        if search_route is None:
+                            raise RuntimeError(
+                                "resolved sidecar search path has no configured route"
+                            )
+                        active_search_route = search_route
+                    else:
+                        active_search_route = search_config.main_route
+                    active_search_profile = search_config.providers.get(
+                        active_search_route.provider_profile
+                    )
+                    web_search_inspection = RuntimeWebCapabilityInspection(
+                        WebSearchAvailability.AVAILABLE,
+                        execution_path,
+                        search_profile=(
+                            active_search_route.provider_profile
+                            if active_search_profile is not None
+                            else None
+                        ),
+                        search_model=active_search_route.model,
+                        fetch_path=fetch_path,
                     )
                 for tool in additional_tools:
                     if (
@@ -656,7 +768,14 @@ class CompositionBindingMixin(CompositionRootMixin):
                             f"tool {tool.definition.name!r} is outside the selected capability set"
                         )
                     tools.register_external(tool)
-                return task_scope, provider, tools, local_process_sandbox, lsp_service
+                return (
+                    task_scope,
+                    provider,
+                    tools,
+                    local_process_sandbox,
+                    lsp_service,
+                    web_search_inspection,
+                )
             except BaseException:
                 await asyncio.shield(lsp_service.close())
                 await asyncio.shield(task_scope.shutdown())
@@ -668,6 +787,7 @@ class CompositionBindingMixin(CompositionRootMixin):
             tools,
             local_process_sandbox,
             lsp_service,
+            web_search_inspection,
         ) = await prepare_provider_and_tools()
         self._lsp_services.add(lsp_service)
         try:
@@ -884,6 +1004,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                 resource_scope=resource_scope,
                 workspace_root=selected_config.cwd,
                 workspace_mutation=runtime.workspace_mutation,
+                runtime_web_capabilities=web_search_inspection,
             )
             self._binding_scopes.add(resource_scope)
             return binding

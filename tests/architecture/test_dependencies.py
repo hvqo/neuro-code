@@ -340,7 +340,10 @@ _BOOTSTRAP_COMPOSITION_MIXIN_OWNERS = {
 }
 
 _BOOTSTRAP_COMPOSITION_PRIVATE_HELPER_OWNERS = {
+    "_automatic_search_route": "neuro_code.bootstrap.composition_bindings",
     "_main_request_budget_metadata": "neuro_code.bootstrap.composition_bindings",
+    "_profile_has_search_credentials": "neuro_code.bootstrap.composition_bindings",
+    "_route_has_search_credentials": "neuro_code.bootstrap.composition_bindings",
     "_without_main_inline_web_search": "neuro_code.bootstrap.composition_bindings",
     "_without_main_inline_web_fetch": "neuro_code.bootstrap.composition_bindings",
 }
@@ -1483,6 +1486,7 @@ def test_canonical_ports_are_the_only_port_modules() -> None:
         "neuro_code.application.ports.project_memory",
         "neuro_code.application.ports.result_adoption",
         "neuro_code.application.ports.routing",
+        "neuro_code.application.ports.runtime_capabilities",
         "neuro_code.application.ports.sandbox",
         "neuro_code.application.ports.session_history",
         "neuro_code.application.ports.skills",

@@ -12,6 +12,7 @@ from neuro_code.domain.background_tasks.models import (
 from neuro_code.domain.execution import (
     AgentExecutionStatus,
     SessionExecutionRecord,
+    SupervisorReasonCode,
 )
 from neuro_code.domain.session_tasks import SessionTask
 from neuro_code.interfaces.tui.contracts import SessionController
@@ -288,5 +289,18 @@ class BackgroundControllerMixin(TuiAppControllerMixin):
             AgentExecutionStatus.BUDGET_LIMITED: "session.budget_limited_recoverable",
         }
         key = key_by_status.get(record.outcome.status)
+        if (
+            record.outcome.status is AgentExecutionStatus.STUCK
+            and record.outcome.reason_code is not None
+        ):
+            stuck_reason_key = {
+                SupervisorReasonCode.REPEATED_ACTION_OBSERVATION: "turn.stuck_repeated_observation",
+                SupervisorReasonCode.REPEATED_ACTION_ERROR: "turn.stuck_repeated_error",
+                SupervisorReasonCode.PERIODIC_CYCLE: "turn.stuck_periodic_cycle",
+                SupervisorReasonCode.NO_PROGRESS: "turn.stuck_no_progress",
+                SupervisorReasonCode.WEB_SEARCH_UNAVAILABLE: "turn.stuck_web_search_unavailable",
+            }.get(record.outcome.reason_code)
+            if stuck_reason_key is not None:
+                key = stuck_reason_key
         if key is not None:
             self._write_ui_entry("recoverable", key)

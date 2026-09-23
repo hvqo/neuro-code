@@ -24,6 +24,7 @@ __all__ = [
     "BudgetUsageProjection",
     "budget_limited_detail",
     "budget_limited_reason",
+    "recoverable_execution_reason",
     "recoverable_terminal_status",
 ]
 
@@ -158,6 +159,35 @@ def budget_limited_reason(data: Mapping[str, object]) -> SupervisorReasonCode | 
     except ValueError:
         return None
     return reason if reason in _BUDGET_REASON_CODES else None
+
+
+_STUCK_REASON_CODES = frozenset(
+    {
+        SupervisorReasonCode.REPEATED_ACTION_OBSERVATION,
+        SupervisorReasonCode.REPEATED_ACTION_ERROR,
+        SupervisorReasonCode.PERIODIC_CYCLE,
+        SupervisorReasonCode.NO_PROGRESS,
+        SupervisorReasonCode.WEB_SEARCH_UNAVAILABLE,
+    }
+)
+
+
+def recoverable_execution_reason(
+    data: Mapping[str, object],
+) -> SupervisorReasonCode | None:
+    """Return a known reason for a recoverable terminal outcome."""
+
+    status = recoverable_terminal_status(data)
+    raw_reason = data.get("execution_reason")
+    if status is None or not isinstance(raw_reason, str):
+        return None
+    try:
+        reason = SupervisorReasonCode(raw_reason)
+    except ValueError:
+        return None
+    if status is AgentExecutionStatus.BUDGET_LIMITED:
+        return reason if reason in _BUDGET_REASON_CODES else None
+    return reason if reason in _STUCK_REASON_CODES else None
 
 
 def recoverable_terminal_status(

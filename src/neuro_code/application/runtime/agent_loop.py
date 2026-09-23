@@ -745,7 +745,8 @@ class AgentLoopRunner:
                 )
                 LOGGER.debug(
                     "supervision checkpoint=%s step=%s tool=%s decision=%s reason_code=%s "
-                    "counters=%s status=%s",
+                    "counters=%s status=%s replan_attempted=%s replan_count=%s "
+                    "cycle_period=%s progress_since_replan=%s",
                     record.checkpoint.value,
                     record.model_step,
                     record.tool_name,
@@ -753,6 +754,10 @@ class AgentLoopRunner:
                     record.decision.reason_code.value,
                     record.snapshot.counters,
                     record.snapshot.status.value,
+                    record.decision.replan_attempted,
+                    record.decision.replan_count,
+                    record.decision.cycle_period,
+                    record.decision.progress_since_replan,
                 )
                 if self._supervision_observer is not None:
                     self._supervision_observer(record)
@@ -1633,6 +1638,15 @@ class AgentLoopRunner:
                 "finalization_attempts": len(finalization.attempts),
                 "illegal_tool_calls": finalization.illegal_tool_calls,
             }
+            if decision is not None:
+                completion_data.update(
+                    {
+                        "replan_attempted": decision.replan_attempted,
+                        "replan_count": decision.replan_count,
+                        "cycle_period": decision.cycle_period,
+                        "progress_since_replan": decision.progress_since_replan,
+                    }
+                )
             if ultracode_execution_id is not None:
                 completion_data.update(
                     {

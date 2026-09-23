@@ -3006,8 +3006,52 @@ activate `SyntheticReason.RUNTIME_SUPERVISION` for the next request in
 the general batch-first evidence-gathering policy. Neither message is appended
 to session items. When new progress resolves an active replan notice, the loop
 appends a bounded resolution notice rather than rewriting an already-sent
-request prefix. Tool execution order and the existing stuck detectors are
-unchanged. See [ADR 0105](adr/0105-unified-execution-budget-and-replan-guidance.md).
+request prefix. Ordered batch execution remains unchanged. Repetition and cycle
+detectors now request one bounded strategy recovery before a terminal stuck
+decision; meaningful evidence or workspace/plan/verification progress clears
+that recovery pressure. See [ADR 0105](adr/0105-unified-execution-budget-and-replan-guidance.md)
+and [ADR 0174](adr/0174-agent-reliability-and-web-search-recovery.md).
+
+## Workspace evidence, Web Search capability, and bounded loop recovery
+
+Stable runtime guidance asks the Agent to establish workspace evidence first.
+When local evidence does not contain a required public or external fact, the
+Agent uses `web_search` if the active binding exposes it; otherwise it states
+the capability blocker and separates locally verified evidence from the
+unverified external portion. This does not impose a blanket restriction on
+explicitly requested shell networking, and shell scraping is not a silent
+replacement for public research.
+
+`WebSearchMode.AUTO` resolves only from trusted capability and executable
+backend facts. An explicitly supported MAIN hosted-search path is preferred
+when it can coexist with client tools. Otherwise an executable configured
+`WEB_SEARCH` route is used; if none is configured, composition checks eligible
+configured provider profiles in stable name order and selects the first route
+whose concrete hosted-search backend and credentials are available. MAIN and
+its failover profiles are not promoted into an independent sidecar. Unknown
+capabilities remain unknown. If resolution or the binding's tool allowlist
+prevents execution, `web_search` is not registered and the binding carries a
+typed unavailable reason.
+
+The application-owned `RuntimeWebCapabilityInspection` reports effective
+search availability/path, a bounded provider/model label, a typed reason when
+unavailable, and the effective Web Fetch path. It excludes endpoint and
+credential values. The TUI `/status` projection reads this inspection from the
+active binding, after provider composition and tool filtering, so it reflects
+the tools actually available to that Agent.
+
+The supervisor treats repeated actions, repeated errors, and periodic cycles
+as detectors rather than immediate terminal decisions. The first detection
+creates one bounded per-turn recovery state and a request-only replan notice.
+The state contains only a typed reason, hashed behavior signature, cycle
+period, and tool-count boundary; it is neither persisted nor exposed to the
+model. Novel evidence and workspace, plan, verification, or external-state
+progress clear the recovery state. If the same failure pressure remains
+without meaningful progress after the bounded strategy opportunity, the
+supervisor marks the turn stuck. Existing model/tool budgets still bound
+execution. Safe diagnostics report reason code and bounded recovery counters,
+never raw arguments, result bodies, secrets, URLs, or signatures. See
+[ADR 0174](adr/0174-agent-reliability-and-web-search-recovery.md).
 
 ## Bounded long-task Runtime guidance, compaction, and segments
 
