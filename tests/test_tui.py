@@ -46,11 +46,18 @@ from neuro_code.application.ports.provider_settings import (
     ManagedProviderSettings,
     ManagedProxyPolicy,
 )
+from neuro_code.application.ports.runtime_capabilities import (
+    RuntimeWebCapabilityInspection,
+    WebSearchAvailability,
+    WebSearchUnavailableReason,
+)
 from neuro_code.application.ports.tools import (
     MAX_TOOL_OUTPUT_ARTIFACT_READ_BYTES,
     ToolOutputArtifact,
     ToolOutputArtifactRead,
 )
+from neuro_code.application.ports.web_fetch import WebFetchExecutionPath
+from neuro_code.application.ports.web_search import WebSearchExecutionPath
 from neuro_code.application.providers import ChangeProviderRequest, ProviderChangeService
 from neuro_code.application.runtime.agent import AgentRunResult, EventSink
 from neuro_code.application.sessions import SessionTurnService
@@ -124,7 +131,10 @@ from neuro_code.domain.workspace_undo import (
     WorkspaceUndoState,
 )
 from neuro_code.infrastructure.providers.provider_settings import JsonProviderSettingsStore
-from neuro_code.interfaces.tui import recoverable_terminal_status
+from neuro_code.interfaces.tui import (
+    recoverable_execution_reason,
+    recoverable_terminal_status,
+)
 from neuro_code.interfaces.tui.app import NeuroCodeApp
 from neuro_code.interfaces.tui.clipboard import ClipboardImage, ClipboardWriteResult
 from neuro_code.interfaces.tui.screens import (
@@ -1850,6 +1860,25 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(data=data):
                 self.assertIsNone(recoverable_terminal_status(data))
+        self.assertIs(
+            recoverable_execution_reason(
+                {
+                    "execution_status": "stuck",
+                    "execution_reason": "periodic_cycle",
+                    "recoverable": True,
+                }
+            ),
+            SupervisorReasonCode.PERIODIC_CYCLE,
+        )
+        self.assertIsNone(
+            recoverable_execution_reason(
+                {
+                    "execution_status": "budget_limited",
+                    "execution_reason": "periodic_cycle",
+                    "recoverable": True,
+                }
+            )
+        )
 
     async def test_plan_queue_commands_report_unavailable_and_failed_paths(self) -> None:
         """The explicit queue surface fails closed when its collaborators are absent.
@@ -2795,7 +2824,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             (
                 AgentExecutionStatus.STUCK,
                 SupervisorReasonCode.REPEATED_ACTION_OBSERVATION,
-                "session.stuck_recoverable",
+                "turn.stuck_repeated_observation",
             ),
             (
                 AgentExecutionStatus.BUDGET_LIMITED,
@@ -6035,6 +6064,35 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual([entry.text for entry in app.entries], ["Transcript cleared."])
             self.assertEqual(runner.prompts, [])
+
+    async def test_status_reports_effective_web_capability_and_safe_unavailable_reason(
+        self,
+    ) -> None:
+        runner = TuiConversation()
+        profiles = ProfileTuiController()
+        profiles.runtime_web_capabilities = RuntimeWebCapabilityInspection(
+            WebSearchAvailability.UNAVAILABLE,
+            WebSearchExecutionPath.UNAVAILABLE,
+            WebSearchUnavailableReason.NO_COMPATIBLE_PROVIDER,
+            fetch_path=WebFetchExecutionPath.LOCAL,
+        )
+        app = NeuroCodeApp(
+            runner,
+            provider_controller=profiles,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            prompt = app.query_one("#prompt", PromptInput)
+            prompt.value = "/status"
+            await pilot.press("enter")
+            await pilot.pause()
+
+        self.assertIn("Web Search: unavailable", app.entries[-1].text)
+        self.assertIn("no compatible search provider configured", app.entries[-1].text)
+        self.assertIn("Web Fetch: local", app.entries[-1].text)
 
     async def test_undo_slash_command_projects_a_bounded_local_result(self) -> None:
         runner = UndoTuiConversation(

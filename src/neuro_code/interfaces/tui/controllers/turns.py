@@ -31,6 +31,7 @@ from neuro_code.domain.conversation.context import estimate_context_tokens, esti
 from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
 from neuro_code.domain.conversation.messages import ContentPart
 from neuro_code.domain.execution import (
+    AgentExecutionStatus,
     SupervisorReasonCode,
     TurnCancellationPolicy,
 )
@@ -39,7 +40,7 @@ from neuro_code.interfaces.tui.controllers.base import TuiAppControllerMixin
 from neuro_code.interfaces.tui.execution import (
     BudgetUsageProjection,
     budget_limited_detail,
-    budget_limited_reason,
+    recoverable_execution_reason,
     recoverable_terminal_status,
 )
 from neuro_code.interfaces.tui.state import (
@@ -62,6 +63,13 @@ _BUDGET_REASON_TEXT_KEYS = {
     SupervisorReasonCode.OUTPUT_TOKEN_BUDGET: "turn.budget_reason.output_token_budget",
     SupervisorReasonCode.TOTAL_TOKEN_BUDGET: "turn.budget_reason.total_token_budget",
     SupervisorReasonCode.CONTEXT_WINDOW_BUDGET: "turn.budget_reason.context_window_budget",
+}
+_STUCK_REASON_TEXT_KEYS = {
+    SupervisorReasonCode.REPEATED_ACTION_OBSERVATION: "turn.stuck_repeated_observation",
+    SupervisorReasonCode.REPEATED_ACTION_ERROR: "turn.stuck_repeated_error",
+    SupervisorReasonCode.PERIODIC_CYCLE: "turn.stuck_periodic_cycle",
+    SupervisorReasonCode.NO_PROGRESS: "turn.stuck_no_progress",
+    SupervisorReasonCode.WEB_SEARCH_UNAVAILABLE: "turn.stuck_web_search_unavailable",
 }
 
 
@@ -526,7 +534,11 @@ class TurnControllerMixin(TuiAppControllerMixin):
                 self._refresh_runtime_bar()
             self._finish_streamed_assistant_response(result, fallback=response)
             if self._terminal_execution_recoverable and self._terminal_execution_status is not None:
-                if self._terminal_execution_reason is not None:
+                if (
+                    self._terminal_execution_status == AgentExecutionStatus.BUDGET_LIMITED.value
+                    and self._terminal_execution_reason in _BUDGET_REASON_TEXT_KEYS
+                ):
+                    assert self._terminal_execution_reason is not None
                     reason_key = _BUDGET_REASON_TEXT_KEYS[self._terminal_execution_reason]
                     reason = ui_text(self._language, reason_key)
                     usage = (
@@ -561,6 +573,15 @@ class TurnControllerMixin(TuiAppControllerMixin):
                             used=usage[0],
                             limit=usage[1],
                         )
+                elif (
+                    self._terminal_execution_status == AgentExecutionStatus.STUCK.value
+                    and self._terminal_execution_reason in _STUCK_REASON_TEXT_KEYS
+                ):
+                    assert self._terminal_execution_reason is not None
+                    self._write_ui_entry(
+                        "recoverable",
+                        _STUCK_REASON_TEXT_KEYS[self._terminal_execution_reason],
+                    )
                 else:
                     self._write_ui_entry(
                         "recoverable",
@@ -839,7 +860,7 @@ class TurnControllerMixin(TuiAppControllerMixin):
             if execution_status is not None:
                 self._terminal_execution_status = execution_status.value
                 self._terminal_execution_recoverable = True
-                self._terminal_execution_reason = budget_limited_reason(data)
+                self._terminal_execution_reason = recoverable_execution_reason(data)
                 if self._terminal_budget_usage is None:
                     self._terminal_budget_usage = BudgetUsageProjection.from_event_data(data)
                 else:

@@ -25,7 +25,12 @@ from neuro_code.application.ports.background_tasks import (
 )
 from neuro_code.application.ports.configuration import AppConfig, ProviderProfile
 from neuro_code.application.ports.model import ModelCapabilitySet, ModelProvider
+from neuro_code.application.ports.runtime_capabilities import (
+    WebSearchAvailability,
+    WebSearchUnavailableReason,
+)
 from neuro_code.application.ports.sandbox import LocalProcessSandbox
+from neuro_code.application.ports.web_search import WebSearchExecutionPath
 from neuro_code.application.runtime.supervision import ExecutionControlMode
 from neuro_code.application.sessions import GetSessionSummaryRequest, SessionApplicationService
 from neuro_code.application.sessions.binding import ConversationBindingResourceScope
@@ -265,9 +270,13 @@ context_window_tokens = 65536
         mode: str,
         main_model: str,
         include_search_route: bool,
+        include_search_profile: bool | None = None,
     ) -> None:
         state.mkdir(exist_ok=True)
         route = '\n[routing.web_search]\nprofile = "search"\n' if include_search_route else ""
+        search_profile_enabled = (
+            include_search_route if include_search_profile is None else include_search_profile
+        )
         search_profile = (
             (
                 "\n[providers.search]\n"
@@ -279,7 +288,7 @@ context_window_tokens = 65536
                 'builtin_tools = ["google_search"]\n'
                 'proxy_mode = "direct"\n'
             )
-            if include_search_route
+            if search_profile_enabled
             else ""
         )
         (state / "config.toml").write_text(
@@ -378,11 +387,178 @@ proxy_mode = "direct"
                 )
                 sidecar_binding = await sidecar_application.create_binding()
                 self.assertIn("web_search", sidecar_binding.runner._runtime._tools.names())
+                self.assertIsNotNone(sidecar_binding.runtime_web_capabilities)
+                assert sidecar_binding.runtime_web_capabilities is not None
+                self.assertIs(
+                    sidecar_binding.runtime_web_capabilities.search_availability,
+                    WebSearchAvailability.AVAILABLE,
+                )
+                self.assertIs(
+                    sidecar_binding.runtime_web_capabilities.search_path,
+                    WebSearchExecutionPath.SIDECAR_HOSTED,
+                )
                 self.assertEqual(
                     [profile.builtin_tools for profile in sidecar_calls],
                     [("google_search",), ()],
                 )
                 await sidecar_application.close()
+
+    async def test_auto_discovers_trusted_configured_search_profile_without_explicit_route(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            self._write_gemini_web_config(
+                state,
+                mode="auto",
+                main_model="gemini-2.5-flash",
+                include_search_route=False,
+                include_search_profile=True,
+            )
+
+            def provider_factory(config: AppConfig, failover: bool) -> ModelProvider:
+                del failover
+                return ApplicationCapabilityProviderFixture(
+                    GeminiInteractionsProvider.implementation_capabilities(
+                        model=config.provider.model,
+                        builtin_tools=config.provider.builtin_tools,
+                    )
+                )
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "HOME": str(root),
+                    "NEURO_CODE_HOME": str(state),
+                    "GEMINI_KEY": "gemini-key",
+                    "SEARCH_KEY": "search-key",
+                },
+                clear=True,
+            ):
+                application = await ApplicationComposition.open(
+                    ApplicationSettings(cwd=root),
+                    provider_factory=provider_factory,
+                )
+                try:
+                    binding = await application.create_binding()
+                    self.assertIn("web_search", binding.runner._runtime._tools.names())
+                    inspection = binding.runtime_web_capabilities
+                    self.assertIsNotNone(inspection)
+                    assert inspection is not None
+                    self.assertIs(inspection.search_availability, WebSearchAvailability.AVAILABLE)
+                    self.assertEqual(inspection.search_profile, "search")
+                    self.assertEqual(inspection.search_model, "gemini-3.6-flash")
+                finally:
+                    await application.close()
+
+    async def test_auto_without_search_candidate_is_explicitly_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            self._write_gemini_web_config(
+                state,
+                mode="auto",
+                main_model="gemini-2.5-flash",
+                include_search_route=False,
+                include_search_profile=False,
+            )
+
+            def provider_factory(config: AppConfig, failover: bool) -> ModelProvider:
+                del failover
+                return ApplicationCapabilityProviderFixture(
+                    GeminiInteractionsProvider.implementation_capabilities(
+                        model=config.provider.model,
+                        builtin_tools=config.provider.builtin_tools,
+                    )
+                )
+
+            with patch.dict(
+                "os.environ",
+                {"HOME": str(root), "NEURO_CODE_HOME": str(state), "GEMINI_KEY": "main-key"},
+                clear=True,
+            ):
+                application = await ApplicationComposition.open(
+                    ApplicationSettings(cwd=root),
+                    provider_factory=provider_factory,
+                )
+                try:
+                    binding = await application.create_binding()
+                    self.assertNotIn("web_search", binding.runner._runtime._tools.names())
+                    inspection = binding.runtime_web_capabilities
+                    self.assertIsNotNone(inspection)
+                    assert inspection is not None
+                    self.assertIs(inspection.search_availability, WebSearchAvailability.UNAVAILABLE)
+                    self.assertIs(
+                        inspection.search_reason,
+                        WebSearchUnavailableReason.NO_COMPATIBLE_PROVIDER,
+                    )
+                finally:
+                    await application.close()
+
+    async def test_auto_does_not_promote_unknown_search_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            state.mkdir()
+            (state / "config.toml").write_text(
+                """
+[web_search]
+mode = "auto"
+
+[routing]
+default = "main"
+
+[providers.main]
+protocol = "openai-chat"
+dialect = "deepseek-v4"
+service_id = "deepseek"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "MAIN_KEY"
+proxy_mode = "direct"
+
+[providers.unknown]
+protocol = "openai-responses"
+model = "unknown-search-model"
+base_url = "https://api.openai.com/v1"
+api_key_env = "UNKNOWN_KEY"
+proxy_mode = "direct"
+""",
+                encoding="utf-8",
+            )
+
+            def provider_factory(config: AppConfig, failover: bool) -> ModelProvider:
+                del config, failover
+                return ApplicationCapabilityProviderFixture(ModelCapabilitySet.all_unknown())
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "HOME": str(root),
+                    "NEURO_CODE_HOME": str(state),
+                    "MAIN_KEY": "main-key",
+                    "UNKNOWN_KEY": "unknown-key",
+                },
+                clear=True,
+            ):
+                application = await ApplicationComposition.open(
+                    ApplicationSettings(cwd=root),
+                    provider_factory=provider_factory,
+                )
+                try:
+                    binding = await application.create_binding()
+                    self.assertNotIn("web_search", binding.runner._runtime._tools.names())
+                    inspection = binding.runtime_web_capabilities
+                    self.assertIsNotNone(inspection)
+                    assert inspection is not None
+                    self.assertIs(inspection.search_availability, WebSearchAvailability.UNAVAILABLE)
+                    self.assertIs(
+                        inspection.search_reason,
+                        WebSearchUnavailableReason.NO_COMPATIBLE_PROVIDER,
+                    )
+                finally:
+                    await application.close()
 
     async def test_china_main_profiles_use_local_web_search_sidecar_and_local_fetch(self) -> None:
         cases = (

@@ -2066,6 +2066,58 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_local_missing_target_escalates_to_exposed_web_search_without_looping(
+        self,
+    ) -> None:
+        local_discovery = MetadataFixtureTool(
+            "list_tree",
+            ToolResult("workspace contains project A; project B source is absent"),
+        )
+        public_search = MetadataFixtureTool(
+            "web_search",
+            ToolResult("project B public documentation and architecture evidence"),
+        )
+        provider = ScriptedProvider(
+            (
+                (
+                    ModelToolCall(ToolCall("local", "list_tree", {"path": "."})),
+                    ModelCompleted("tool_calls"),
+                ),
+                (
+                    ModelToolCall(
+                        ToolCall("external", "web_search", {"query": "project B architecture"})
+                    ),
+                    ModelCompleted("tool_calls"),
+                ),
+                (
+                    ModelTextDelta("comparison completed with local and public evidence"),
+                    ModelCompleted("stop"),
+                ),
+            )
+        )
+        runtime = AgentRuntime(
+            provider=provider,
+            tools=MinimalToolCollection((local_discovery, public_search)),
+            workspace_change_observer=EmptyWorkspaceChangeObserver(),
+            permissions=PermissionManager(),
+            tool_context=ToolContext(Path("/workspace")),
+            execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
+        )
+
+        result = await runtime.run("Compare project A in this workspace with public project B")
+
+        self.assertEqual(result.response, "comparison completed with local and public evidence")
+        self.assertEqual(len(provider.calls), 3)
+        self.assertEqual(len(local_discovery.calls), 1)
+        self.assertEqual(len(public_search.calls), 1)
+        self.assertIn("web_search", {item.name for item in provider.tool_definitions[0]})
+        self.assertIsNone(result.outcome)
+        first_system_content = "\n".join(
+            message.content for message in provider.calls[0].messages if message.role is Role.SYSTEM
+        )
+        self.assertIn("public facts absent locally", first_system_content)
+        self.assertIn("web_search", first_system_content)
+
     async def test_observe_only_records_replan_without_injecting_guidance(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tool = SequencedEvidenceFixtureTool(

@@ -578,6 +578,16 @@ class SupervisionTraceRecord:
             raise ValueError("supervision trace decision must be canonical")
 
 
+@dataclass(frozen=True, slots=True)
+class _RecoveryState:
+    """Bounded per-turn state for one detected strategy failure."""
+
+    reason_code: SupervisorReasonCode
+    signature: str
+    cycle_period: int | None
+    start_tool_call_count: int
+
+
 class SupervisionObserver(Protocol):
     """Receives a redacted, typed trace without affecting agent events.
 
@@ -650,6 +660,9 @@ class AgentExecutionSupervisor:
         self._last_plan_fingerprint: str | None = None
         self._last_verification_token: str | None = None
         self._last_external_state_token: str | None = None
+        self._recovery_state: _RecoveryState | None = None
+        self._replan_count = 0
+        self._progress_since_replan = False
 
     @property
     def snapshot(self) -> ExecutionSnapshot:
@@ -700,6 +713,9 @@ class AgentExecutionSupervisor:
             0,
             0,
         )
+        self._recovery_state = None
+        self._replan_count = 0
+        self._progress_since_replan = False
         return self._snapshot
 
     def pause_wall_clock(self) -> None:
@@ -906,7 +922,13 @@ class AgentExecutionSupervisor:
             for prior in prior_recent
         )
         explicit_progress = (
-            observation.progress_kind in {ProgressKind.EVIDENCE, ProgressKind.VERIFICATION}
+            observation.progress_kind
+            in {
+                ProgressKind.EVIDENCE,
+                ProgressKind.PLAN,
+                ProgressKind.VERIFICATION,
+                ProgressKind.EXTERNAL_STATE,
+            }
             and prior_observation_changed
         )
         workspace_progress = (
@@ -921,6 +943,9 @@ class AgentExecutionSupervisor:
             or external_changed
             or explicit_progress
         )
+        if made_progress and self._recovery_state is not None:
+            self._recovery_state = None
+            self._progress_since_replan = True
         return made_progress, workspace_progress
 
     def _evaluate(self, *, include_model_reserve: bool) -> SupervisorDecision:
@@ -944,42 +969,40 @@ class AgentExecutionSupervisor:
                     recent,
                     recent[-1].behavior_signature,
                 )
-            if error_repeat_count >= self._thresholds.repeating_action_error_stuck:
-                return self._mark_stuck(
+            if error_repeat_count >= self._thresholds.repeating_action_error:
+                signature = _sha256(
+                    json.dumps(recent[-1].behavior_signature, separators=(",", ":"))
+                )
+                return self._recover_or_stop(
                     SupervisorReasonCode.REPEATED_ACTION_ERROR,
+                    signature,
                     "the same tool action and error repeated",
                 )
-            if exact_repeat_count >= self._thresholds.repeating_action_observation_stuck:
-                return self._mark_stuck(
+            if exact_repeat_count >= self._thresholds.repeating_action_observation:
+                signature = _sha256(
+                    json.dumps(recent[-1].behavior_signature, separators=(",", ":"))
+                )
+                return self._recover_or_stop(
                     SupervisorReasonCode.REPEATED_ACTION_OBSERVATION,
+                    signature,
                     "the same tool action and observation repeated",
                 )
-            if self._has_periodic_cycle(recent):
-                return self._mark_stuck(
+            cycle = self._periodic_cycle(recent)
+            if cycle is not None:
+                period, signature = cycle
+                return self._recover_or_stop(
                     SupervisorReasonCode.PERIODIC_CYCLE,
+                    signature,
                     "a repeated tool interaction cycle was detected",
-                )
-            if snapshot.consecutive_no_progress_rounds >= self._thresholds.no_progress_stuck_rounds:
-                return self._mark_stuck(
-                    SupervisorReasonCode.NO_PROGRESS,
-                    "tool rounds stopped producing meaningful progress",
-                )
-            if error_repeat_count >= self._thresholds.repeating_action_error:
-                return self._replan(
-                    SupervisorReasonCode.REPEATED_ACTION_ERROR,
-                    "the same tool error requires a new approach",
-                )
-            if exact_repeat_count >= self._thresholds.repeating_action_observation:
-                return self._replan(
-                    SupervisorReasonCode.REPEATED_ACTION_OBSERVATION,
-                    "the same tool result requires a new approach",
+                    cycle_period=period,
                 )
             if (
                 snapshot.consecutive_no_progress_rounds
                 >= self._thresholds.no_progress_replan_rounds
             ):
-                return self._replan(
+                return self._recover_or_stop(
                     SupervisorReasonCode.NO_PROGRESS,
+                    f"no-progress:{snapshot.consecutive_no_progress_rounds}",
                     "tool rounds are not producing meaningful progress",
                 )
 
@@ -990,7 +1013,11 @@ class AgentExecutionSupervisor:
                     SupervisorReasonCode.MODEL_CALL_BUDGET,
                     "model call budget is exhausted",
                 )
-        return self._continue_decision()
+        return self._continue_decision(
+            replan_attempted=self._replan_count > 0,
+            replan_count=self._replan_count,
+            progress_since_replan=self._progress_since_replan,
+        )
 
     def _tool_batch_budget_decision(
         self,
@@ -1056,33 +1083,113 @@ class AgentExecutionSupervisor:
             )
         return None
 
-    def _has_periodic_cycle(self, recent: Sequence[ToolInteractionFingerprint]) -> bool:
-        repetitions = self._thresholds.alternating_cycle_repetitions
+    def _periodic_cycle(
+        self,
+        recent: Sequence[ToolInteractionFingerprint],
+    ) -> tuple[int, str] | None:
+        required_repetitions = self._thresholds.alternating_cycle_repetitions
         for period in range(2, self._thresholds.max_cycle_period + 1):
-            required = period * repetitions
-            if len(recent) < required:
+            maximum_repeat = len(recent) - period
+            if maximum_repeat < required_repetitions:
                 continue
-            pattern = tuple(item.behavior_signature for item in recent[-period:])
-            repeated = tuple(item.behavior_signature for item in recent[-required:-period])
-            if pattern == repeated:
-                return True
-        return False
+            signatures = tuple(item.behavior_signature for item in recent)
+            for repeated_count in range(maximum_repeat, required_repetitions - 1, -1):
+                start = len(signatures) - period - repeated_count
+                pattern = signatures[start : start + period]
+                repeated = signatures[start + period :]
+                if all(value == pattern[index % period] for index, value in enumerate(repeated)):
+                    rotations = tuple(pattern[index:] + pattern[:index] for index in range(period))
+                    signature = _sha256(json.dumps(min(rotations), separators=(",", ":")))
+                    return period, signature
+        return None
 
-    def _continue_decision(self) -> SupervisorDecision:
+    def _has_periodic_cycle(self, recent: Sequence[ToolInteractionFingerprint]) -> bool:
+        return self._periodic_cycle(recent) is not None
+
+    def _recover_or_stop(
+        self,
+        code: SupervisorReasonCode,
+        signature: str,
+        reason: str,
+        *,
+        cycle_period: int | None = None,
+    ) -> SupervisorDecision:
+        snapshot = self._require_started()
+        prior = self._recovery_state
+        if prior is not None:
+            required_strategy_calls = prior.cycle_period or 1
+            if (
+                snapshot.counters.tool_calls_executed - prior.start_tool_call_count
+                < required_strategy_calls
+            ):
+                return self._continue_decision(
+                    replan_attempted=self._replan_count > 0,
+                    replan_count=self._replan_count,
+                    cycle_period=prior.cycle_period,
+                    progress_since_replan=self._progress_since_replan,
+                )
+            return self._mark_stuck(
+                code,
+                f"{reason}; bounded recovery did not make progress",
+                replan_attempted=self._replan_count > 0,
+                replan_count=self._replan_count,
+                cycle_period=cycle_period or prior.cycle_period,
+                progress_since_replan=self._progress_since_replan,
+            )
+
+        self._replan_count = min(16, self._replan_count + 1)
+        self._progress_since_replan = False
+        self._recovery_state = _RecoveryState(
+            code,
+            signature,
+            cycle_period,
+            snapshot.counters.tool_calls_executed,
+        )
+        return self._replan(
+            code,
+            reason,
+            replan_count=self._replan_count,
+            cycle_period=cycle_period,
+        )
+
+    def _continue_decision(
+        self,
+        *,
+        replan_attempted: bool = False,
+        replan_count: int = 0,
+        cycle_period: int | None = None,
+        progress_since_replan: bool = False,
+    ) -> SupervisorDecision:
         return SupervisorDecision(
             SupervisorDecisionKind.CONTINUE,
             "execution may continue",
             AgentExecutionStatus.RUNNING,
             False,
+            replan_attempted=replan_attempted,
+            replan_count=replan_count,
+            cycle_period=cycle_period,
+            progress_since_replan=progress_since_replan,
         )
 
-    def _replan(self, code: SupervisorReasonCode, reason: str) -> SupervisorDecision:
+    def _replan(
+        self,
+        code: SupervisorReasonCode,
+        reason: str,
+        *,
+        replan_count: int = 0,
+        cycle_period: int | None = None,
+        progress_since_replan: bool = False,
+    ) -> SupervisorDecision:
         return SupervisorDecision(
             SupervisorDecisionKind.REPLAN,
             reason,
             AgentExecutionStatus.RUNNING,
             False,
             code,
+            replan_attempted=replan_count > 0,
+            replan_count=replan_count,
+            cycle_period=cycle_period,
+            progress_since_replan=progress_since_replan,
         )
 
     def _finalize(self, reason: str) -> SupervisorDecision:
@@ -1099,7 +1206,16 @@ class AgentExecutionSupervisor:
             SupervisorReasonCode.MODEL_CALL_RESERVE,
         )
 
-    def _mark_stuck(self, code: SupervisorReasonCode, reason: str) -> SupervisorDecision:
+    def _mark_stuck(
+        self,
+        code: SupervisorReasonCode,
+        reason: str,
+        *,
+        replan_attempted: bool = False,
+        replan_count: int = 0,
+        cycle_period: int | None = None,
+        progress_since_replan: bool = False,
+    ) -> SupervisorDecision:
         if self._mode is SupervisionMode.ENFORCE:
             self._replace_snapshot(status=AgentExecutionStatus.STUCK, termination_reason=code)
         return SupervisorDecision(
@@ -1108,6 +1224,10 @@ class AgentExecutionSupervisor:
             AgentExecutionStatus.STUCK,
             False,
             code,
+            replan_attempted=replan_attempted,
+            replan_count=replan_count,
+            cycle_period=cycle_period,
+            progress_since_replan=progress_since_replan,
         )
 
     def _budget_limited(

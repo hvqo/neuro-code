@@ -63,6 +63,7 @@ class SupervisorReasonCode(StrEnum):
     REPEATED_ACTION_ERROR = "repeated_action_error"
     PERIODIC_CYCLE = "periodic_cycle"
     NO_PROGRESS = "no_progress"
+    WEB_SEARCH_UNAVAILABLE = "web_search_unavailable"
     EXTERNAL_BLOCKED = "external_blocked"
     INTERNAL_FAILURE = "internal_failure"
 
@@ -149,6 +150,10 @@ class SupervisorDecision:
     should_finalize: bool
     reason_code: SupervisorReasonCode = SupervisorReasonCode.NONE
     detail: BudgetLimitDetail | None = None
+    replan_attempted: bool = False
+    replan_count: int = 0
+    cycle_period: int | None = None
+    progress_since_replan: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, SupervisorDecisionKind):
@@ -168,6 +173,22 @@ class SupervisorDecision:
             raise ValueError("supervisor decision reason must be non-empty safe text")
         if not isinstance(self.should_finalize, bool):
             raise ValueError("should_finalize must be a bool")
+        if not isinstance(self.replan_attempted, bool) or not isinstance(
+            self.progress_since_replan, bool
+        ):
+            raise ValueError("recovery diagnostics flags must be bools")
+        if isinstance(self.replan_count, bool) or not isinstance(self.replan_count, int):
+            raise ValueError("replan_count must be an integer")
+        if self.replan_count < 0 or self.replan_count > 16:
+            raise ValueError("replan_count must be between 0 and 16")
+        if self.replan_attempted != (self.replan_count > 0):
+            raise ValueError("replan_attempted must match replan_count")
+        if self.cycle_period is not None and (
+            isinstance(self.cycle_period, bool)
+            or not isinstance(self.cycle_period, int)
+            or not 2 <= self.cycle_period <= 16
+        ):
+            raise ValueError("cycle_period must be between 2 and 16")
 
         expected_status = {
             SupervisorDecisionKind.CONTINUE: AgentExecutionStatus.RUNNING,

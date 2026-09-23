@@ -103,6 +103,21 @@ def execute_tool(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
 ) -> SupervisorDecisionKind:
+    return execute_tool_decision(
+        supervisor,
+        tool_observation,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    ).kind
+
+
+def execute_tool_decision(
+    supervisor: AgentExecutionSupervisor,
+    tool_observation: ToolExecutionObservation,
+    *,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+) -> SupervisorDecision:
     allowed = {
         SupervisorDecisionKind.CONTINUE,
         SupervisorDecisionKind.REPLAN,
@@ -124,7 +139,7 @@ def execute_tool(
         in allowed
     )
     assert supervisor.assess_tool_batch((tool_observation.tool_name,)).kind in allowed
-    return supervisor.observe_tool_outcome(tool_observation).kind
+    return supervisor.observe_tool_outcome(tool_observation)
 
 
 class ExecutionSupervisionTests(unittest.TestCase):
@@ -671,7 +686,7 @@ class ExecutionSupervisionTests(unittest.TestCase):
         self.assertIs(execute_tool(supervisor, failed), SupervisorDecisionKind.REPLAN)
         self.assertIs(execute_tool(supervisor, failed), SupervisorDecisionKind.MARK_STUCK)
 
-    def test_abab_cycle_marks_stuck(self) -> None:
+    def test_abab_cycle_replans_then_marks_stuck_after_one_strategy_cycle(self) -> None:
         supervisor = self.supervisor()
         first = observation("search", {"query": "one"}, "one", progress_kind=ProgressKind.NONE)
         second = observation("search", {"query": "two"}, "two", progress_kind=ProgressKind.NONE)
@@ -679,9 +694,17 @@ class ExecutionSupervisionTests(unittest.TestCase):
         self.assertIs(execute_tool(supervisor, first), SupervisorDecisionKind.CONTINUE)
         self.assertIs(execute_tool(supervisor, second), SupervisorDecisionKind.CONTINUE)
         self.assertIs(execute_tool(supervisor, first), SupervisorDecisionKind.CONTINUE)
+        decision = execute_tool_decision(supervisor, second)
+        self.assertIs(decision.kind, SupervisorDecisionKind.REPLAN)
+        self.assertIs(decision.reason_code, SupervisorReasonCode.PERIODIC_CYCLE)
+        self.assertTrue(decision.replan_attempted)
+        self.assertEqual(decision.replan_count, 1)
+        self.assertEqual(decision.cycle_period, 2)
+        self.assertFalse(decision.progress_since_replan)
+        self.assertIs(execute_tool(supervisor, first), SupervisorDecisionKind.CONTINUE)
         self.assertIs(execute_tool(supervisor, second), SupervisorDecisionKind.MARK_STUCK)
 
-    def test_abcabc_cycle_marks_stuck_but_single_sequence_does_not(self) -> None:
+    def test_abcabc_cycle_gets_bounded_replan_before_stuck(self) -> None:
         supervisor = self.supervisor()
         sequence = (
             observation("search", {"query": "one"}, "one", progress_kind=ProgressKind.NONE),
@@ -690,12 +713,32 @@ class ExecutionSupervisionTests(unittest.TestCase):
         )
         for item in sequence:
             self.assertIs(execute_tool(supervisor, item), SupervisorDecisionKind.CONTINUE)
-        for item in sequence[:-1]:
-            self.assertIn(
-                execute_tool(supervisor, item),
-                {SupervisorDecisionKind.CONTINUE, SupervisorDecisionKind.REPLAN},
-            )
-        self.assertIs(execute_tool(supervisor, sequence[-1]), SupervisorDecisionKind.MARK_STUCK)
+        self.assertIs(execute_tool(supervisor, sequence[0]), SupervisorDecisionKind.CONTINUE)
+        self.assertIs(execute_tool(supervisor, sequence[1]), SupervisorDecisionKind.REPLAN)
+        self.assertIs(execute_tool(supervisor, sequence[2]), SupervisorDecisionKind.CONTINUE)
+        self.assertIs(execute_tool(supervisor, sequence[0]), SupervisorDecisionKind.CONTINUE)
+        self.assertIs(execute_tool(supervisor, sequence[1]), SupervisorDecisionKind.MARK_STUCK)
+
+    def test_progress_after_replan_clears_cycle_pressure(self) -> None:
+        supervisor = self.supervisor()
+        first = observation("search", {"query": "one"}, "one", progress_kind=ProgressKind.NONE)
+        second = observation("search", {"query": "two"}, "two", progress_kind=ProgressKind.NONE)
+        for item in (first, second, first):
+            self.assertIs(execute_tool(supervisor, item), SupervisorDecisionKind.CONTINUE)
+        decision = execute_tool_decision(supervisor, second)
+        self.assertIs(decision.kind, SupervisorDecisionKind.REPLAN)
+
+        evidence = observation(
+            "web_search",
+            {"query": "public project comparison"},
+            "new external source",
+            progress_kind=ProgressKind.EVIDENCE,
+        )
+        after_progress = execute_tool_decision(supervisor, evidence)
+        self.assertIs(after_progress.kind, SupervisorDecisionKind.CONTINUE)
+        self.assertTrue(after_progress.progress_since_replan)
+        self.assertIs(supervisor.snapshot.status, AgentExecutionStatus.RUNNING)
+        self.assertEqual(supervisor.snapshot.consecutive_no_progress_rounds, 0)
 
     def test_different_files_and_new_search_evidence_are_not_marked_stuck(self) -> None:
         supervisor = self.supervisor()

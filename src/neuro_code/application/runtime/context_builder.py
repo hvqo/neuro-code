@@ -33,17 +33,19 @@ from neuro_code.domain.workspace.instructions import InstructionDiscoveryResult
 from neuro_code.domain.workspace.skills import SkillDiscoveryResult
 
 BATCH_FIRST_RUNTIME_GUIDANCE = """Runtime evidence-gathering guidance:
-When multiple read-only operations are independent, request them in the same model step instead
-of alternating one read with one reasoning round. Prefer list_tree, grep_many, and read_files for
-bounded repository-wide evidence gathering. For repository analysis, first map the repository,
-then locate relevant symbols, batch-read the related evidence, analyze it together, and only then
-perform targeted follow-up. Use glob when a known filename or path pattern must be located.
-Review related edits with workspace_diff before verification; keep dependent operations sequential."""
+When multiple read-only operations are independent, batch them in one model step. For repository
+work, use list_tree, grep_many, and read_files to map the repository, find relevant symbols, and
+batch-read the related evidence before follow-up. Use glob for known filename/path patterns. Review
+edits with workspace_diff before verification; keep dependent operations sequential. Prefer
+workspace evidence. For required public facts absent locally, use web_search; if unavailable,
+state the blocker and mark them unverified. Do not silently substitute shell web scraping."""
 
 REPLAN_RUNTIME_GUIDANCE = """Runtime supervision guidance:
 The current approach is repeating results without sufficient progress. Change strategy. Avoid
 repeating the same tool or action with equivalent arguments. Narrow or broaden the search,
-inspect different evidence, or revise the current assumption."""
+inspect different evidence, or revise the current assumption. After local absence is established,
+stop scanning. Use web_search for required public facts; if unavailable, state the blocker and
+leave them unverified. Do not silently substitute shell scraping."""
 
 _UNLOADED_PROJECT_MEMORY_SNAPSHOT = object()
 

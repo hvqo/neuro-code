@@ -10,6 +10,7 @@ from typing import Protocol
 
 from neuro_code.application.memory.compaction_runtime import ContextCompactionCommandResult
 from neuro_code.application.permissions.broker import ApprovalHandler
+from neuro_code.application.ports.runtime_capabilities import RuntimeWebCapabilityInspection
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
 from neuro_code.application.providers.contracts import ProviderOption, ProviderSelectionResult
 from neuro_code.application.providers.service import ChangeProviderRequest
@@ -74,6 +75,9 @@ class ProviderController(Protocol):
 
     @property
     def selected_profile(self) -> str: ...
+
+    @property
+    def runtime_web_capabilities(self) -> RuntimeWebCapabilityInspection | None: ...
 
     async def change_provider(self, request: ChangeProviderRequest) -> ProviderSelectionResult: ...
 

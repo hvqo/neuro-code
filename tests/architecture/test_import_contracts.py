@@ -1889,6 +1889,7 @@ def test_canonical_port_modules_are_independently_importable() -> None:
         "neuro_code.application.ports.model",
         "neuro_code.application.ports.provider_catalog",
         "neuro_code.application.ports.provider_settings",
+        "neuro_code.application.ports.runtime_capabilities",
         "neuro_code.application.ports.sandbox",
         "neuro_code.application.ports.session_history",
         "neuro_code.application.ports.skills",
@@ -2426,6 +2427,7 @@ def test_canonical_runtime_public_types_keep_module_paths_and_metadata() -> None
         "resource_scope",
         "workspace_root",
         "workspace_mutation",
+        "runtime_web_capabilities",
     )
     assert profile.ConversationBinding.__dataclass_params__.frozen
     assert profile.ConversationBinding.__slots__ == (
@@ -2437,6 +2439,7 @@ def test_canonical_runtime_public_types_keep_module_paths_and_metadata() -> None
         "resource_scope",
         "workspace_root",
         "workspace_mutation",
+        "runtime_web_capabilities",
     )
     assert profile.ConversationBinding.__match_args__ == (
         "runner",

@@ -25,6 +25,7 @@ from neuro_code.application.memory.compaction_runtime import (
 from neuro_code.application.ports.background_tasks import BackgroundTaskManager
 from neuro_code.application.ports.model import ModelProvider
 from neuro_code.application.ports.result_adoption import WorkspaceMutationPort
+from neuro_code.application.ports.runtime_capabilities import RuntimeWebCapabilityInspection
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
 from neuro_code.application.ports.tools import Tool
 from neuro_code.application.runtime.agent import AgentRunResult, EventSink
@@ -277,6 +278,17 @@ class ConversationBinding:
     )
     workspace_root: Path | None = field(default=None, kw_only=True)
     workspace_mutation: WorkspaceMutationPort | None = field(default=None, kw_only=True)
+    runtime_web_capabilities: RuntimeWebCapabilityInspection | None = field(
+        default=None,
+        kw_only=True,
+    )
+
+    def __post_init__(self) -> None:
+        if self.runtime_web_capabilities is not None and not isinstance(
+            self.runtime_web_capabilities,
+            RuntimeWebCapabilityInspection,
+        ):
+            raise TypeError("runtime_web_capabilities must be canonical or None")
 
     async def undo_workspace(self) -> WorkspaceUndoResult:
         """Restore the latest idle-safe workspace checkpoint for this binding."""

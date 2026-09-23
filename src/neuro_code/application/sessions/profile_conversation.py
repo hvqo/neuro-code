@@ -15,6 +15,7 @@ from dataclasses import replace
 from typing import Any
 
 from neuro_code.application.memory.compaction_runtime import ContextCompactionCommandResult
+from neuro_code.application.ports.runtime_capabilities import RuntimeWebCapabilityInspection
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
 from neuro_code.application.ports.tools import Tool
 from neuro_code.application.providers.contracts import (
@@ -155,6 +156,12 @@ class ProfileConversationController:
         if capabilities is None:
             raise ConfigurationError("active binding capability metadata is missing")
         return capabilities
+
+    @property
+    def runtime_web_capabilities(self) -> RuntimeWebCapabilityInspection | None:
+        """Return the immutable web capability projection of the active binding."""
+
+        return self._binding.runtime_web_capabilities
 
     @property
     def reasoning_effort(self) -> ReasoningEffort:
