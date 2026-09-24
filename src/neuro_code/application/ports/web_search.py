@@ -60,6 +60,7 @@ class WebSearchExecutionPath(StrEnum):
     DISABLED = "disabled"
     INLINE_HOSTED = "inline_hosted"
     SIDECAR_HOSTED = "sidecar_hosted"
+    SEARCH_API = "search_api"
     UNAVAILABLE = "unavailable"
 
 
@@ -68,6 +69,7 @@ def resolve_web_search_path(
     *,
     inline_supported: bool,
     sidecar_available: bool,
+    search_api_available: bool = False,
 ) -> WebSearchExecutionPath:
     """Resolve user intent without treating UNKNOWN capability as support."""
 
@@ -80,15 +82,19 @@ def resolve_web_search_path(
             else WebSearchExecutionPath.UNAVAILABLE
         )
     if mode is WebSearchMode.SIDECAR:
+        if sidecar_available:
+            return WebSearchExecutionPath.SIDECAR_HOSTED
         return (
-            WebSearchExecutionPath.SIDECAR_HOSTED
-            if sidecar_available
+            WebSearchExecutionPath.SEARCH_API
+            if search_api_available
             else WebSearchExecutionPath.UNAVAILABLE
         )
     if inline_supported:
         return WebSearchExecutionPath.INLINE_HOSTED
     if sidecar_available:
         return WebSearchExecutionPath.SIDECAR_HOSTED
+    if search_api_available:
+        return WebSearchExecutionPath.SEARCH_API
     return WebSearchExecutionPath.UNAVAILABLE
 
 

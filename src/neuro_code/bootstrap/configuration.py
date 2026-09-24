@@ -684,6 +684,9 @@ def load_config(
         loaded_files=tuple(loaded_files),
         routes=routes,
         web_search_mode=web_search_mode,
+        web_search_api_key_env=(
+            "BRAVE_SEARCH_API_KEY" if env.get("BRAVE_SEARCH_API_KEY", "").strip() else None
+        ),
         web_fetch_mode=web_fetch_mode,
         language_servers=language_servers,
     )

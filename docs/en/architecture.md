@@ -3029,7 +3029,11 @@ when it can coexist with client tools. Otherwise an executable configured
 configured provider profiles in stable name order and selects the first route
 whose concrete hosted-search backend and credentials are available. MAIN and
 its failover profiles are not promoted into an independent sidecar. Unknown
-capabilities remain unknown. If resolution or the binding's tool allowlist
+capabilities remain unknown. When no hosted route is configured or discoverable,
+`BRAVE_SEARCH_API_KEY` enables a model-independent `SEARCH_API` path for the
+same bounded local tool. An explicit but unavailable route does not silently
+fall back to that API. `disabled` and `inline` retain their existing meanings.
+If resolution or the binding's tool allowlist
 prevents execution, `web_search` is not registered and the binding carries a
 typed unavailable reason.
 
@@ -3039,6 +3043,10 @@ unavailable, and the effective Web Fetch path. It excludes endpoint and
 credential values. The TUI `/status` projection reads this inspection from the
 active binding, after provider composition and tool filtering, so it reflects
 the tools actually available to that Agent.
+The independent API path uses a fixed HTTPS endpoint and bounded source
+projection, protects the key as an environment secret, and keeps search
+results as untrusted external evidence. See
+[ADR 0176](adr/0176-independent-search-api-backend.md).
 
 The supervisor treats repeated actions, repeated errors, and periodic cycles
 as detectors rather than immediate terminal decisions. The first detection

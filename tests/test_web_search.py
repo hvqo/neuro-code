@@ -260,20 +260,23 @@ def _hosted_profile(name: str, model: str) -> ProviderProfile:
 class WebSearchContractTests(unittest.TestCase):
     def test_path_resolution_is_explicit_and_fail_closed(self) -> None:
         cases = (
-            (WebSearchMode.DISABLED, True, True, WebSearchExecutionPath.DISABLED),
-            (WebSearchMode.AUTO, True, True, WebSearchExecutionPath.INLINE_HOSTED),
-            (WebSearchMode.AUTO, False, True, WebSearchExecutionPath.SIDECAR_HOSTED),
-            (WebSearchMode.AUTO, False, False, WebSearchExecutionPath.UNAVAILABLE),
-            (WebSearchMode.SIDECAR, True, True, WebSearchExecutionPath.SIDECAR_HOSTED),
-            (WebSearchMode.INLINE, False, True, WebSearchExecutionPath.UNAVAILABLE),
+            (WebSearchMode.DISABLED, True, True, True, WebSearchExecutionPath.DISABLED),
+            (WebSearchMode.AUTO, True, True, True, WebSearchExecutionPath.INLINE_HOSTED),
+            (WebSearchMode.AUTO, False, True, True, WebSearchExecutionPath.SIDECAR_HOSTED),
+            (WebSearchMode.AUTO, False, False, True, WebSearchExecutionPath.SEARCH_API),
+            (WebSearchMode.AUTO, False, False, False, WebSearchExecutionPath.UNAVAILABLE),
+            (WebSearchMode.SIDECAR, True, True, True, WebSearchExecutionPath.SIDECAR_HOSTED),
+            (WebSearchMode.SIDECAR, True, False, True, WebSearchExecutionPath.SEARCH_API),
+            (WebSearchMode.INLINE, False, True, True, WebSearchExecutionPath.UNAVAILABLE),
         )
-        for mode, inline, sidecar, expected in cases:
+        for mode, inline, sidecar, search_api, expected in cases:
             with self.subTest(mode=mode):
                 self.assertIs(
                     resolve_web_search_path(
                         mode,
                         inline_supported=inline,
                         sidecar_available=sidecar,
+                        search_api_available=search_api,
                     ),
                     expected,
                 )

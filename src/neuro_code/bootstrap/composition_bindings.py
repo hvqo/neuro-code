@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Collection, Sequence
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -125,6 +126,7 @@ from neuro_code.infrastructure.tools.web_fetch import WebFetchTool
 from neuro_code.infrastructure.tools.web_search import WebSearchTool
 from neuro_code.infrastructure.tools.workspace_diff import WorkspaceMutationJournal
 from neuro_code.infrastructure.web_fetch.local import LocalWebFetcher
+from neuro_code.infrastructure.web_search.brave import BraveWebSearchBackend
 from neuro_code.infrastructure.workspace.changes import MultiRootWorkspaceChangeObserver
 from neuro_code.infrastructure.workspace.paths import (
     FilesystemWorkspaceIdentity,
@@ -661,6 +663,12 @@ class CompositionBindingMixin(CompositionRootMixin):
                     selected_config,
                     allowed=search_allowed,
                 )
+                search_api_backend: BraveWebSearchBackend | None = None
+                search_api_key_env = selected_config.web_search_api_key_env
+                if search_api_key_env is not None:
+                    search_api_key = os.environ.get(search_api_key_env, "")
+                    with suppress(ValueError):
+                        search_api_backend = BraveWebSearchBackend(search_api_key)
                 sidecar_available = (
                     search_route is not None
                     and _route_has_search_credentials(search_config, search_route)
@@ -670,6 +678,11 @@ class CompositionBindingMixin(CompositionRootMixin):
                     selected_config.web_search_mode,
                     inline_supported=inline_supported,
                     sidecar_available=sidecar_available and search_allowed,
+                    search_api_available=(
+                        search_api_backend is not None
+                        and search_allowed
+                        and explicit_search_route is None
+                    ),
                 )
                 if (
                     selected_config.web_search_mode is WebSearchMode.INLINE
@@ -734,12 +747,24 @@ class CompositionBindingMixin(CompositionRootMixin):
                             )
                         )
                     )
-                if execution_path is WebSearchExecutionPath.SIDECAR_HOSTED and search_allowed:
+                if (
+                    execution_path
+                    in {
+                        WebSearchExecutionPath.SIDECAR_HOSTED,
+                        WebSearchExecutionPath.SEARCH_API,
+                    }
+                    and search_allowed
+                ):
                     tools.register(
                         WebSearchTool(
                             WebSearchService(
                                 search_config,
                                 search_resolver,
+                                direct_backend=(
+                                    search_api_backend
+                                    if execution_path is WebSearchExecutionPath.SEARCH_API
+                                    else None
+                                ),
                                 redaction_values=search_config.redaction_values(os.environ),
                             )
                         )
@@ -769,26 +794,42 @@ class CompositionBindingMixin(CompositionRootMixin):
                         search_providers=search_providers,
                     )
                 else:
-                    if execution_path is WebSearchExecutionPath.SIDECAR_HOSTED:
+                    search_profile_name: str | None
+                    if execution_path is WebSearchExecutionPath.SEARCH_API:
+                        active_search_profile = None
+                        search_profile_name = BraveWebSearchBackend.provider_profile
+                        search_model_name = BraveWebSearchBackend.model
+                    elif execution_path is WebSearchExecutionPath.SIDECAR_HOSTED:
                         if search_route is None:
                             raise RuntimeError(
                                 "resolved sidecar search path has no configured route"
                             )
                         active_search_route = search_route
-                    else:
-                        active_search_route = search_config.main_route
-                    active_search_profile = search_config.providers.get(
-                        active_search_route.provider_profile
-                    )
-                    web_search_inspection = RuntimeWebCapabilityInspection(
-                        WebSearchAvailability.AVAILABLE,
-                        execution_path,
-                        search_profile=(
+                        active_search_profile = search_config.providers.get(
+                            active_search_route.provider_profile
+                        )
+                        search_profile_name = (
                             active_search_route.provider_profile
                             if active_search_profile is not None
                             else None
-                        ),
-                        search_model=active_search_route.model,
+                        )
+                        search_model_name = active_search_route.model
+                    else:
+                        active_search_route = search_config.main_route
+                        active_search_profile = search_config.providers.get(
+                            active_search_route.provider_profile
+                        )
+                        search_profile_name = (
+                            active_search_route.provider_profile
+                            if active_search_profile is not None
+                            else None
+                        )
+                        search_model_name = active_search_route.model
+                    web_search_inspection = RuntimeWebCapabilityInspection(
+                        WebSearchAvailability.AVAILABLE,
+                        execution_path,
+                        search_profile=search_profile_name,
+                        search_model=search_model_name,
                         fetch_path=fetch_path,
                         search_providers=search_providers,
                     )

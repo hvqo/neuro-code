@@ -67,6 +67,7 @@ class CommandControllerMixin(TuiAppControllerMixin):
             WebSearchExecutionPath.DISABLED: "capability.path.disabled",
             WebSearchExecutionPath.INLINE_HOSTED: "capability.path.inline",
             WebSearchExecutionPath.SIDECAR_HOSTED: "capability.path.sidecar",
+            WebSearchExecutionPath.SEARCH_API: "capability.path.search_api",
             WebSearchExecutionPath.UNAVAILABLE: "capability.path.unavailable",
         }[inspection.search_path]
         search_parts.append(ui_text(self._language, search_path_key))

@@ -1616,12 +1616,16 @@ Runtime 门控现在会在允许的显式压缩操作外层真正执行有限的
 `WebSearchMode.AUTO` 只根据可信 capability 与可执行后端事实解析。若 MAIN 明确支持托管搜索且能与客户端工具
 共同使用，优先走该路径；否则使用已配置且可执行的 `WEB_SEARCH` route。没有显式 route 时，组合根按稳定的
 名称顺序检查已配置 Provider profile，并选择第一个同时具有具体托管搜索后端和可用凭据的 route。MAIN 与其
-故障转移 profile 不会被提升为独立 sidecar。UNKNOWN capability 保持未知。若解析失败或 binding 的工具白名单
-阻止执行，则不注册 `web_search`，并在 binding 中携带类型化的不可用原因。
+故障转移 profile 不会被提升为独立 sidecar。UNKNOWN capability 保持未知。若没有可用的托管路由，
+`BRAVE_SEARCH_API_KEY` 可以启用与模型无关的 `SEARCH_API` 路径，继续使用同一有界本地工具。
+显式但不可用的路由不会暗中回退到该 API；`disabled` 与 `inline` 的既有语义不变。若解析失败或 binding 的
+工具白名单阻止执行，则不注册 `web_search`，并在 binding 中携带类型化的不可用原因。
 
 应用层拥有的 `RuntimeWebCapabilityInspection` 报告有效的搜索可用性/路径、有界的 Provider/模型标签、不可用时的
 类型化原因，以及有效 Web Fetch 路径；它不包含 endpoint 或凭据。TUI `/status` 从当前 binding 读取该状态，
 因此展示的是 Provider 组合与工具过滤后 Agent 实际可用的能力。
+独立 API 路径使用固定 HTTPS 端点和有界来源投影，将密钥作为环境凭据保护，并继续把搜索结果视为
+不可信外部证据。详见 [ADR 0176](adr/0176-independent-search-api-backend.md)。
 
 Supervisor 把重复操作、重复错误和周期循环视为检测信号，而不是立即终态。首次检测会建立一次有界的逐回合恢复
 状态，并注入仅对当前请求可见的 replan 指引。状态只包含类型化原因、行为指纹摘要、周期长度和工具计数边界；

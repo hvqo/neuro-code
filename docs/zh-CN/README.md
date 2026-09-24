@@ -108,6 +108,23 @@ Ultracode 路由还会识别“项目/仓库范围”与明确的优化意图同
 - **MCP** — 由 session 持有的 MCP server 连接支持 stdio、Streamable HTTP 和 legacy SSE transport，并提供有边界的工具发现与执行。
 - **ACP** — 提供 partial ACP v1 适配器，支持换行分隔的 stdio，并提供有边界的 WebSocket bridge，以及部分工作区绑定的 session、permission、filesystem 和 terminal 能力。ACP 兼容性明确是 partial；ACP-transport MCP server declaration、二进制多媒体历史回放、客户端交互式终端输入/resize/PTY 方法以及任意自定义扩展仍不支持；请参阅[兼容性矩阵](compatibility-matrix.md)。
 
+### 为 DeepSeek 等模型配置独立网页搜索
+
+DeepSeek 的 Responses API 支持函数调用，但会忽略内置 `web_search` 请求类型。Neuro 的本地
+`web_search` 因此需要可执行的搜索后端。为此可获取 Brave Search API 密钥，并在启动 Neuro 的进程环境中
+提供 `BRAVE_SEARCH_API_KEY`。在 Bash 中可以避免把密钥写入 Shell 历史：
+
+```bash
+read -rsp 'Brave Search API key: ' BRAVE_SEARCH_API_KEY
+export BRAVE_SEARCH_API_KEY
+neuro
+```
+
+网页搜索模式保持为 `auto`。没有可执行托管路由时，Neuro 会使用 Brave Search API，设置页
+和 `/status` 会显示这一实际路径。搜索密钥与模型供应商密钥分开，不写入项目或对话。修改环境
+后需重启 Neuro。Brave 可能要求开通套餐，并可能对 API 调用计费。详见
+[ADR 0176](adr/0176-independent-search-api-backend.md)。
+
 ## 项目状态
 
 Neuro Code 处于 **pre-alpha** 阶段。当前源码树已包含 CLI 和无头运行时、Textual TUI、命名 provider profile、本地工具、SQLite session、权限与 sandbox 控制、MCP 连接以及 partial ACP 的已实现切片。

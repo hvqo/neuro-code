@@ -7,6 +7,7 @@ environment, and managed-settings loading belongs to ``bootstrap.configuration``
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -53,6 +54,7 @@ _GEMINI_INTERACTIONS_BUILTIN_TOOLS = frozenset({"google_search", "url_context"})
 _PROXY_ENVIRONMENT_VARIABLES = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"})
 _HTTP_PROXY_SCHEMES = frozenset({"http", "https"})
 _SOCKS_PROXY_SCHEMES = frozenset({"socks5", "socks5h"})
+_ENVIRONMENT_VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 def _canonical_url(value: str) -> str:
@@ -474,6 +476,7 @@ class AppConfig:
     web_search_mode: WebSearchMode = WebSearchMode.AUTO
     web_fetch_mode: WebFetchMode = WebFetchMode.DISABLED
     language_servers: Mapping[str, LanguageServerProfile] = field(default_factory=dict)
+    web_search_api_key_env: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "providers", MappingProxyType(dict(self.providers)))
@@ -497,6 +500,10 @@ class AppConfig:
         object.__setattr__(self, "routes", MappingProxyType(normalized_routes))
         if not isinstance(self.web_search_mode, WebSearchMode):
             raise ConfigurationError("application web_search_mode must be canonical")
+        if self.web_search_api_key_env is not None and (
+            _ENVIRONMENT_VARIABLE.fullmatch(self.web_search_api_key_env) is None
+        ):
+            raise ConfigurationError("web search API key environment variable is invalid")
         if not isinstance(self.web_fetch_mode, WebFetchMode):
             raise ConfigurationError("application web_fetch_mode must be canonical")
 
@@ -541,6 +548,8 @@ class AppConfig:
     @property
     def protected_environment_variables(self) -> frozenset[str]:
         names = set(_PROXY_ENVIRONMENT_VARIABLES)
+        if self.web_search_api_key_env is not None:
+            names.add(self.web_search_api_key_env)
         for profile in self.providers.values():
             if profile.api_key_env is not None:
                 names.add(profile.api_key_env)
@@ -557,6 +566,8 @@ class AppConfig:
 
         env: Mapping[str, str] = {} if environ is None else environ
         values: list[str] = []
+        if self.web_search_api_key_env and env.get(self.web_search_api_key_env):
+            values.append(env[self.web_search_api_key_env])
         for profile in self.providers.values():
             if profile.stored_api_key:
                 values.append(profile.stored_api_key)

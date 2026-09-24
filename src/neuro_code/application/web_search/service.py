@@ -43,10 +43,12 @@ class WebSearchService:
         routes: WebSearchRouteSource,
         resolver: WebSearchBackendResolver,
         *,
+        direct_backend: HostedWebSearch | None = None,
         redaction_values: tuple[str, ...] = (),
     ) -> None:
         self._routes = routes
         self._resolver = resolver
+        self._direct_backend = direct_backend
         self._redaction_values = tuple(redaction_values)
 
     def _safe_request(self, request: WebSearchRequest) -> WebSearchRequest:
@@ -168,23 +170,25 @@ class WebSearchService:
         event_sink: HostedWebSearchEventSink | None = None,
     ) -> WebSearchResult:
         safe_request = self._safe_request(request)
-        route = self._routes.route(RuntimeRole.WEB_SEARCH)
-        if route is None:
-            raise WebSearchError(
-                WebSearchErrorCode.SEARCH_UNAVAILABLE,
-                "WEB_SEARCH route is not configured",
-            )
-        if route.role is not RuntimeRole.WEB_SEARCH:
-            raise WebSearchError(
-                WebSearchErrorCode.SEARCH_INVALID_REQUEST,
-                "WEB_SEARCH route has an invalid runtime role",
-            )
-        backend = self._resolver.resolve(route)
+        backend = self._direct_backend
         if backend is None:
-            raise WebSearchError(
-                WebSearchErrorCode.SEARCH_UNAVAILABLE,
-                "WEB_SEARCH route has no executable hosted-search backend",
-            )
+            route = self._routes.route(RuntimeRole.WEB_SEARCH)
+            if route is None:
+                raise WebSearchError(
+                    WebSearchErrorCode.SEARCH_UNAVAILABLE,
+                    "WEB_SEARCH route is not configured",
+                )
+            if route.role is not RuntimeRole.WEB_SEARCH:
+                raise WebSearchError(
+                    WebSearchErrorCode.SEARCH_INVALID_REQUEST,
+                    "WEB_SEARCH route has an invalid runtime role",
+                )
+            backend = self._resolver.resolve(route)
+            if backend is None:
+                raise WebSearchError(
+                    WebSearchErrorCode.SEARCH_UNAVAILABLE,
+                    "WEB_SEARCH route has no executable hosted-search backend",
+                )
         if (
             backend.capabilities.status(ModelCapability.HOSTED_WEB_SEARCH)
             is not CapabilityStatus.SUPPORTED

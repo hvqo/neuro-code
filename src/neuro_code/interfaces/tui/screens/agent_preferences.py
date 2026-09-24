@@ -28,6 +28,7 @@ from neuro_code.application.ports.runtime_capabilities import (
     WebSearchUnavailableReason,
 )
 from neuro_code.application.ports.ui_preferences import UiPreferencesStore
+from neuro_code.application.ports.web_search import WebSearchExecutionPath
 from neuro_code.interfaces.tui.text import ui_text
 from neuro_code.shared.ui_language import UiLanguage
 
@@ -351,9 +352,11 @@ class AgentPreferencesScreen(ModalScreen[AgentPreferencesScreenResult | None]):
             )
         path = ui_text(
             self.language,
-            "settings.web.path.inline"
-            if inspection.search_path.value == "inline_hosted"
-            else "settings.web.path.provider",
+            {
+                WebSearchExecutionPath.INLINE_HOSTED: "settings.web.path.inline",
+                WebSearchExecutionPath.SIDECAR_HOSTED: "settings.web.path.provider",
+                WebSearchExecutionPath.SEARCH_API: "settings.web.path.search_api",
+            }[inspection.search_path],
         )
         model = "/".join(
             value for value in (inspection.search_profile, inspection.search_model) if value
@@ -366,6 +369,11 @@ class AgentPreferencesScreen(ModalScreen[AgentPreferencesScreenResult | None]):
         )
 
     def _search_provider_blocker(self) -> str:
+        if (
+            self.web_capabilities is not None
+            and self.web_capabilities.search_path is WebSearchExecutionPath.SEARCH_API
+        ):
+            return ui_text(self.language, "settings.web.search_api_auto")
         if (
             self.web_capabilities is not None
             and self.web_capabilities.search_reason is WebSearchUnavailableReason.TOOL_NOT_ALLOWED

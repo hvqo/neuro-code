@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import tempfile
 import unittest
 from collections.abc import AsyncIterator, Sequence
@@ -26,12 +27,21 @@ from neuro_code.application.ports.background_tasks import (
 )
 from neuro_code.application.ports.configuration import AppConfig, ProviderProfile
 from neuro_code.application.ports.model import ModelCapabilitySet, ModelProvider
+from neuro_code.application.ports.provider_services import DEFAULT_PROVIDER_SERVICE_CATALOG
+from neuro_code.application.ports.provider_settings import ManagedProviderProfile
 from neuro_code.application.ports.runtime_capabilities import (
     WebSearchAvailability,
     WebSearchUnavailableReason,
 )
 from neuro_code.application.ports.sandbox import LocalProcessSandbox
-from neuro_code.application.ports.web_search import WebSearchExecutionPath, WebSearchMode
+from neuro_code.application.ports.tools import ToolContext
+from neuro_code.application.ports.web_search import (
+    WebSearchExecutionPath,
+    WebSearchMode,
+    WebSearchRequest,
+    WebSearchResult,
+    WebSearchSource,
+)
 from neuro_code.application.runtime.supervision import ExecutionControlMode
 from neuro_code.application.sessions import GetSessionSummaryRequest, SessionApplicationService
 from neuro_code.application.sessions.binding import ConversationBindingResourceScope
@@ -50,6 +60,8 @@ from neuro_code.infrastructure.providers.gemini_interactions import (
     GeminiInteractionsProvider,
 )
 from neuro_code.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
+from neuro_code.infrastructure.providers.provider_settings import JsonProviderSettingsStore
+from neuro_code.infrastructure.web_search.brave import BraveWebSearchBackend
 from neuro_code.infrastructure.workspace.paths import workspaces_match
 from neuro_code.shared.errors import ConfigurationError, ToolError
 from tests.fakes import EmptyWorkspaceChangeObserver
@@ -168,6 +180,263 @@ context_window_tokens = 65536
 """,
             encoding="utf-8",
         )
+
+    async def test_search_api_is_model_neutral_for_function_calling_providers(self) -> None:
+        profiles = (
+            ("deepseek", "openai-responses", "deepseek-flash"),
+            ("qwen", "openai-chat", "qwen3.6-35b-a3b-mtp"),
+            ("anthropic", "anthropic-messages", "claude-sonnet-4-6"),
+            ("gemini", "gemini-interactions", "gemini-2.5-flash"),
+        )
+        for name, protocol, model in profiles:
+            with self.subTest(provider=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                state = root / "state"
+                state.mkdir()
+                (state / "config.toml").write_text(
+                    f'[routing]\ndefault = "{name}"\n\n'
+                    f'[providers.{name}]\nprotocol = "{protocol}"\n'
+                    f'model = "{model}"\nbase_url = "https://provider.example.com"\n'
+                    'api_key_env = "FIXTURE_KEY"\n',
+                    encoding="utf-8",
+                )
+
+                async def fake_search(
+                    backend: BraveWebSearchBackend,
+                    request: WebSearchRequest,
+                    *,
+                    event_sink: object = None,
+                ) -> WebSearchResult:
+                    del backend, event_sink
+                    return WebSearchResult(
+                        request.query,
+                        "Verified source list",
+                        sources=(
+                            WebSearchSource("https://example.com/guide", "Guide", "Brave Search"),
+                        ),
+                    )
+
+                with (
+                    patch.dict(
+                        "os.environ",
+                        {
+                            "HOME": str(root),
+                            "NEURO_CODE_HOME": str(state),
+                            "FIXTURE_KEY": "model-key",
+                            "BRAVE_SEARCH_API_KEY": "search-key",
+                        },
+                        clear=True,
+                    ),
+                    patch.object(BraveWebSearchBackend, "search", fake_search),
+                ):
+                    application = await ApplicationComposition.open(ApplicationSettings(cwd=root))
+                    try:
+                        self.assertEqual(
+                            application.config.web_search_api_key_env,
+                            "BRAVE_SEARCH_API_KEY",
+                        )
+                        self.assertIn(
+                            "brave_search_api_key",
+                            application.config.protected_environment_variables,
+                        )
+                        self.assertIn(
+                            "search-key",
+                            application.config.redaction_values(os.environ),
+                        )
+                        binding = await application.create_binding()
+                        inspection = binding.runtime_web_capabilities
+                        self.assertIsNotNone(inspection)
+                        assert inspection is not None
+                        self.assertIs(
+                            inspection.search_path,
+                            WebSearchExecutionPath.SEARCH_API,
+                        )
+                        self.assertIs(
+                            inspection.search_availability,
+                            WebSearchAvailability.AVAILABLE,
+                        )
+                        tool = binding.runner._runtime._tools.get("web_search")
+                        self.assertIsNotNone(tool)
+                        assert tool is not None
+                        result = await tool.execute({"query": "official guide"}, ToolContext(root))
+                        self.assertFalse(result.is_error)
+                        self.assertIn("[UNTRUSTED WEB EVIDENCE]", result.content)
+                        self.assertIn("https://example.com/guide", result.content)
+                    finally:
+                        await application.close()
+
+    async def test_registered_provider_services_share_the_independent_search_backend(self) -> None:
+        for service in DEFAULT_PROVIDER_SERVICE_CATALOG:
+            with (
+                self.subTest(service=service.service_id),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                state = root / "state"
+                state.mkdir()
+                base_url = service.default_base_url or "https://provider.example.com/v1"
+                model = service.static_models[0] if service.static_models else "fixture-model"
+                (state / "config.toml").write_text(
+                    '[routing]\ndefault = "main"\n\n'
+                    "[providers.main]\n"
+                    f'service_id = "{service.service_id}"\n'
+                    f'protocol = "{service.default_protocol}"\n'
+                    f'dialect = "{service.default_dialect}"\n'
+                    f'model = "{model}"\n'
+                    f'base_url = "{base_url}"\n'
+                    'api_key_env = "MODEL_KEY"\n',
+                    encoding="utf-8",
+                )
+                with patch.dict(
+                    "os.environ",
+                    {
+                        "HOME": str(root),
+                        "NEURO_CODE_HOME": str(state),
+                        "MODEL_KEY": "model-key",
+                        "BRAVE_SEARCH_API_KEY": "search-key",
+                    },
+                    clear=True,
+                ):
+                    application = await ApplicationComposition.open(ApplicationSettings(cwd=root))
+                    try:
+                        binding = await application.create_binding()
+                        self.assertIs(
+                            binding.runtime_web_capabilities.search_path,
+                            WebSearchExecutionPath.SEARCH_API,
+                        )
+                        self.assertIn("web_search", binding.runner._runtime._tools.names())
+                    finally:
+                        await application.close()
+
+    async def test_search_api_preserves_disabled_inline_and_explicit_route_boundaries(self) -> None:
+        cases = (
+            ("auto", False, False, WebSearchUnavailableReason.NO_COMPATIBLE_PROVIDER),
+            ("disabled", True, False, None),
+            ("inline", True, False, WebSearchUnavailableReason.MAIN_CAPABILITY_UNSUPPORTED),
+            ("auto", True, True, WebSearchUnavailableReason.CONFIGURED_ROUTE_UNAVAILABLE),
+        )
+        for mode, has_key, explicit_route, expected_reason in cases:
+            with (
+                self.subTest(mode=mode, has_key=has_key, explicit_route=explicit_route),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                state = root / "state"
+                state.mkdir()
+                route = '\n[routing.web_search]\nprofile = "search"\n' if explicit_route else ""
+                search_profile = (
+                    '\n[providers.search]\nprotocol = "openai-chat"\n'
+                    'model = "plain-chat"\nbase_url = "https://search.example.com"\n'
+                    'api_key_env = "SEARCH_KEY"\n'
+                    if explicit_route
+                    else ""
+                )
+                (state / "config.toml").write_text(
+                    f'[web_search]\nmode = "{mode}"\n\n'
+                    '[routing]\ndefault = "deepseek"\n'
+                    f'{route}\n[providers.deepseek]\nprotocol = "openai-responses"\n'
+                    'model = "deepseek-flash"\nbase_url = "https://api.deepseek.com"\n'
+                    f'api_key_env = "MODEL_KEY"\n{search_profile}',
+                    encoding="utf-8",
+                )
+                env = {
+                    "HOME": str(root),
+                    "NEURO_CODE_HOME": str(state),
+                    "MODEL_KEY": "model-key",
+                    "SEARCH_KEY": "other-model-key",
+                }
+                if has_key:
+                    env["BRAVE_SEARCH_API_KEY"] = "search-key"
+                with patch.dict("os.environ", env, clear=True):
+                    application = await ApplicationComposition.open(ApplicationSettings(cwd=root))
+                    try:
+                        if mode == "inline":
+                            with self.assertRaises(ConfigurationError):
+                                await application.create_binding()
+                            continue
+                        binding = await application.create_binding()
+                        inspection = binding.runtime_web_capabilities
+                        self.assertIsNotNone(inspection)
+                        assert inspection is not None
+                        self.assertNotIn("web_search", binding.runner._runtime._tools.names())
+                        self.assertIs(inspection.search_reason, expected_reason)
+                        self.assertIs(
+                            inspection.search_availability,
+                            WebSearchAvailability.DISABLED
+                            if mode == "disabled"
+                            else WebSearchAvailability.UNAVAILABLE,
+                        )
+                    finally:
+                        await application.close()
+
+    async def test_managed_deepseek_profile_uses_independent_search_api(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            await JsonProviderSettingsStore(state).save_profile(
+                ManagedProviderProfile(
+                    name="deepseek",
+                    protocol="openai-responses",
+                    model="deepseek-flash",
+                    base_url="https://api.deepseek.com",
+                    service_id="deepseek",
+                    api_key="model-key",
+                )
+            )
+            with patch.dict(
+                "os.environ",
+                {
+                    "HOME": str(root),
+                    "NEURO_CODE_HOME": str(state),
+                    "BRAVE_SEARCH_API_KEY": "search-key",
+                },
+                clear=True,
+            ):
+                application = await ApplicationComposition.open(ApplicationSettings(cwd=root))
+                try:
+                    binding = await application.create_binding()
+                    self.assertIs(
+                        binding.runtime_web_capabilities.search_path,
+                        WebSearchExecutionPath.SEARCH_API,
+                    )
+                    self.assertIn("web_search", binding.runner._runtime._tools.names())
+                    self.assertNotIn(
+                        "search-key", str(application.config.redacted_dict(os.environ))
+                    )
+                    restricted = await application.create_binding(
+                        allowed_tool_names=("read_file",), enable_background_tasks=False
+                    )
+                    self.assertNotIn("web_search", restricted.runner._runtime._tools.names())
+                    self.assertIs(
+                        restricted.runtime_web_capabilities.search_reason,
+                        WebSearchUnavailableReason.TOOL_NOT_ALLOWED,
+                    )
+                finally:
+                    await application.close()
+
+    async def test_whitespace_search_key_does_not_enable_backend_or_redaction(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            self._write_config(state)
+            with patch.dict(
+                "os.environ",
+                {
+                    "HOME": str(root),
+                    "NEURO_CODE_HOME": str(state),
+                    "FIXTURE_KEY": "model-key",
+                    "BRAVE_SEARCH_API_KEY": "   ",
+                },
+                clear=True,
+            ):
+                application = await ApplicationComposition.open(ApplicationSettings(cwd=root))
+                try:
+                    self.assertIsNone(application.config.web_search_api_key_env)
+                    self.assertNotIn("   ", application.config.redaction_values(os.environ))
+                    binding = await application.create_binding()
+                    self.assertNotIn("web_search", binding.runner._runtime._tools.names())
+                finally:
+                    await application.close()
 
     async def test_idle_lsp_service_does_not_delay_composition_close(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
