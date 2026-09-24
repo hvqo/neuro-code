@@ -17,11 +17,21 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
+from neuro_code.application.execution_policy import ExecutionBudgetPolicy, ExecutionProfile
+from neuro_code.application.ports.agent_preferences import (
+    AgentPreferenceResolution,
+    AgentPreferences,
+)
 from neuro_code.application.ports.configuration import resolve_http_client_policy
 from neuro_code.application.ports.provider_settings import (
     ManagedProviderSettings,
     ManagedProxyPolicy,
     ProviderSettingsStore,
+)
+from neuro_code.application.ports.runtime_capabilities import (
+    RuntimeWebCapabilityInspection,
+    WebSearchAvailability,
+    WebSearchUnavailableReason,
 )
 from neuro_code.domain.background_tasks.models import BackgroundTaskWakePolicy
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
@@ -33,6 +43,14 @@ from neuro_code.interfaces.tui.theme import ERROR_TEXT_STYLE, theme_style
 from neuro_code.interfaces.tui.widgets import MenuOptionButton
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
+
+
+def _simple_web_search_choice(value: str | None) -> str:
+    if value == "disabled":
+        return "off"
+    if value in {"sidecar", "custom"}:
+        return "custom"
+    return "auto"
 
 
 class SettingsScreen(ModalScreen[str | None]):
@@ -90,6 +108,8 @@ class SettingsScreen(ModalScreen[str | None]):
         ui_theme: UiTheme = UiTheme.PORCELAIN,
         initial_category: str | None = None,
         provider_settings: ManagedProviderSettings | None = None,
+        preference_resolution: AgentPreferenceResolution | None = None,
+        web_capabilities: RuntimeWebCapabilityInspection | None = None,
     ) -> None:
         super().__init__()
         self.selected = selected
@@ -100,21 +120,82 @@ class SettingsScreen(ModalScreen[str | None]):
         self.permission_level = permission_level
         self.ui_theme = ui_theme
         self.provider_settings = provider_settings
+        self.preference_resolution = preference_resolution or AgentPreferenceResolution(
+            defaults=AgentPreferences(
+                execution_profile="normal",
+                max_steps=24,
+                failover=True,
+                web_search_mode="auto",
+                web_fetch_mode="disabled",
+                lsp_enabled=False,
+            )
+        )
+        self.web_capabilities = web_capabilities
         self._initial_category = initial_category
         self._group = "all"
 
     GROUPS: ClassVar[dict[str, tuple[str, ...]]] = {
         "appearance": ("language", "theme", "input"),
-        "connection": ("providers", "model-requests", "network"),
-        "agent": ("agent-reasoning", "agent-interaction-mode", "execution", "verification"),
-        "tools": ("web-tools", "language-tools"),
+        "connection": ("providers", "network"),
+        "agent": ("agent-reasoning", "agent-interaction-mode", "execution"),
+        "web": ("web-tools",),
+        "development": ("language-tools", "verification"),
         "security": ("agent-permissions", "tool-intent"),
-        "background": ("background-wake", "wake-limits", "notifications"),
-        "context": ("context",),
-        "advanced": ("preferences-overview",),
+        "advanced": (
+            "model-requests",
+            "web-routing",
+            "context",
+            "notifications",
+            "wake-limits",
+            "background-wake",
+            "preferences-overview",
+        ),
     }
 
     def _entries(self) -> dict[str, tuple[str, str]]:
+        effective = self.preference_resolution.effective()
+
+        def setting_value(name: str) -> str:
+            value = getattr(effective, name)
+            if name == "max_steps" and value is None:
+                value = ExecutionBudgetPolicy.resolve(
+                    ExecutionProfile(effective.execution_profile or "normal"),
+                    max_steps=None,
+                ).max_model_calls
+            source_key = self.preference_resolution.source(name).value
+            source = ui_text(self.language, f"settings.source.{source_key}")
+            if name == "execution_profile":
+                value_text = ui_text(
+                    self.language,
+                    "settings.choice.deep" if value == "deep" else "settings.choice.normal",
+                )
+            elif name == "web_search_mode":
+                value_text = ui_text(
+                    self.language,
+                    f"settings.choice.{_simple_web_search_choice(value)}",
+                )
+            elif name == "lsp_enabled":
+                value_text = ui_text(
+                    self.language,
+                    "settings.choice.enabled" if value else "settings.choice.disabled",
+                )
+            elif name == "verification_command":
+                value_text = ui_text(
+                    self.language,
+                    "settings.overview.command_set"
+                    if value
+                    else "settings.overview.command_default",
+                )
+            else:
+                value_text = str(value) if value is not None else ""
+            return ui_text(
+                self.language,
+                "settings.summary.value_source",
+                value=value_text,
+                source=source,
+            )
+
+        search_summary = self._search_status_summary(effective.web_search_mode)
         entries = {
             "language": (
                 "settings.category.language.label",
@@ -151,9 +232,30 @@ class SettingsScreen(ModalScreen[str | None]):
         }
 
         for category in PREFERENCE_GROUPS:
+            if category == "web-tools":
+                value = search_summary
+            elif category == "execution":
+                profile = setting_value("execution_profile")
+                steps = setting_value("max_steps")
+                value = ui_text(
+                    self.language,
+                    "settings.summary.agent",
+                    profile=profile,
+                    steps=steps,
+                )
+            elif category == "language-tools":
+                value = setting_value("lsp_enabled")
+            elif category == "verification":
+                value = setting_value("verification_command")
+            elif category == "model-requests":
+                value = setting_value("failover")
+            elif category == "web-routing":
+                value = ui_text(self.language, "settings.summary.advanced")
+            else:
+                value = ui_text(self.language, "settings.summary.edit")
             entries[category] = (
                 f"settings.extra.{category}",
-                ui_text(self.language, "settings.category.network.value"),
+                value,
             )
 
         entries["preferences-overview"] = (
@@ -181,6 +283,44 @@ class SettingsScreen(ModalScreen[str | None]):
             ):
                 entries[category] = (entries[category][0], value)
         return entries
+
+    def _search_status_summary(self, mode: str | None) -> str:
+        mode_key = _simple_web_search_choice(mode)
+        mode_text = ui_text(self.language, f"settings.choice.{mode_key}")
+        inspection = self.web_capabilities
+        if inspection is None:
+            return mode_text
+        if inspection.search_availability is WebSearchAvailability.AVAILABLE:
+            status = ui_text(self.language, "settings.web.short_available")
+            identity = "/".join(
+                part for part in (inspection.search_profile, inspection.search_model) if part
+            )
+            return " · ".join(part for part in (mode_text, status, identity) if part)
+        if inspection.search_availability is WebSearchAvailability.DISABLED:
+            return " · ".join(
+                (
+                    ui_text(self.language, "settings.choice.off"),
+                    ui_text(self.language, "settings.web.short_disabled"),
+                )
+            )
+        reason = inspection.search_reason
+        reason_key = (
+            {
+                WebSearchUnavailableReason.NO_COMPATIBLE_PROVIDER: "settings.web.reason.no_provider",
+                WebSearchUnavailableReason.CONFIGURED_ROUTE_UNAVAILABLE: "settings.web.reason.route",
+                WebSearchUnavailableReason.MAIN_CAPABILITY_UNSUPPORTED: "settings.web.reason.main",
+                WebSearchUnavailableReason.TOOL_NOT_ALLOWED: "settings.web.reason.not_allowed",
+            }.get(reason, "settings.web.status.unknown")
+            if reason is not None
+            else "settings.web.status.unknown"
+        )
+        return " · ".join(
+            (
+                mode_text,
+                ui_text(self.language, "settings.web.short_unavailable"),
+                ui_text(self.language, reason_key),
+            )
+        )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings-dialog"):

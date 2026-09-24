@@ -246,7 +246,11 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.theme, UiTheme.SYSTEM.textual_name)
             self.assertEqual(preferences.saved_themes, [UiTheme.SYSTEM])
             await pilot.click("#settings-category-theme")
-            await pilot.pause()
+            for _ in range(20):
+                await pilot.pause()
+                if isinstance(app.screen, ThemeSettingsScreen):
+                    break
+            self.assertIsInstance(app.screen, ThemeSettingsScreen)
             self.assertEqual(app.focused.id, "settings-theme-system")
 
     async def test_send_button_uses_existing_submission_and_command_pipeline(self) -> None:

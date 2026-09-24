@@ -23,7 +23,10 @@ if TYPE_CHECKING:
     from rich.text import Text
     from textual.worker import Worker
 
-    from neuro_code.application.ports.agent_preferences import AgentPreferences
+    from neuro_code.application.ports.agent_preferences import (
+        AgentPreferenceResolution,
+        AgentPreferences,
+    )
     from neuro_code.application.ports.provider_catalog import ProviderCatalog
     from neuro_code.application.ports.provider_settings import (
         ManagedProviderSettings,
@@ -138,6 +141,8 @@ class TuiAppControllerMixin:
         _background_task_wake_policy_override: BackgroundTaskWakePolicy | None
         _background_task_wake_policy: BackgroundTaskWakePolicy
         _agent_preferences: AgentPreferences
+        _agent_preference_resolution: AgentPreferenceResolution
+        _runtime_reload_session_id: str | None
         _background_wake_limits: BackgroundWakeLimits
         _language: UiLanguage
         _initial_items: tuple[SessionItem, ...]

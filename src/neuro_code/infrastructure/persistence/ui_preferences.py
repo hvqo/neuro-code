@@ -13,7 +13,10 @@ from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
 
-from neuro_code.application.ports.agent_preferences import AgentPreferences
+from neuro_code.application.ports.agent_preferences import (
+    AgentPreferenceResolution,
+    AgentPreferences,
+)
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.shared.async_utils import run_blocking
@@ -70,9 +73,11 @@ class JsonUiPreferencesStore:
         async with self._write_lock:
             user = await self.load_agent_preferences()
             project = await self.load_agent_preferences(workspace)
-        values = asdict(user)
-        values.update({key: value for key, value in asdict(project).items() if value is not None})
-        return AgentPreferences(**values)
+        return AgentPreferenceResolution(
+            defaults=AgentPreferences(),
+            user=user,
+            project=project,
+        ).effective()
 
     async def save_agent_preferences(
         self, preferences: AgentPreferences, workspace: Path | None = None

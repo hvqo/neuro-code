@@ -18,6 +18,7 @@ from neuro_code.application.permissions.policy import (
     PermissionRule,
 )
 from neuro_code.application.permissions.service import ToolApprovalService
+from neuro_code.application.ports.agent_preferences import AgentPreferences
 from neuro_code.application.ports.approval import PermissionApprover
 from neuro_code.application.ports.background_tasks import (
     BackgroundTaskManager,
@@ -30,13 +31,14 @@ from neuro_code.application.ports.runtime_capabilities import (
     WebSearchUnavailableReason,
 )
 from neuro_code.application.ports.sandbox import LocalProcessSandbox
-from neuro_code.application.ports.web_search import WebSearchExecutionPath
+from neuro_code.application.ports.web_search import WebSearchExecutionPath, WebSearchMode
 from neuro_code.application.runtime.supervision import ExecutionControlMode
 from neuro_code.application.sessions import GetSessionSummaryRequest, SessionApplicationService
 from neuro_code.application.sessions.binding import ConversationBindingResourceScope
 from neuro_code.application.sessions.summary import SessionSummaryQueryService
 from neuro_code.application.settings import ApplicationSettings
 from neuro_code.application.workflows import IsolatedSubagentExecutionService, SubagentCapabilitySet
+from neuro_code.bootstrap.cli import _agent_preference_defaults
 from neuro_code.bootstrap.composition import ApplicationComposition
 from neuro_code.domain.conversation.context import ModelContext
 from neuro_code.domain.conversation.events import ModelEvent
@@ -402,6 +404,90 @@ proxy_mode = "direct"
                     [("google_search",), ()],
                 )
                 await sidecar_application.close()
+
+    async def test_custom_interactive_search_preference_reaches_runtime_tool_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            self._write_gemini_web_config(
+                state,
+                mode="disabled",
+                main_model="gemini-2.5-flash",
+                include_search_route=True,
+            )
+
+            def provider_factory(config: AppConfig, failover: bool) -> ModelProvider:
+                del failover
+                return ApplicationCapabilityProviderFixture(
+                    GeminiInteractionsProvider.implementation_capabilities(
+                        model=config.provider.model,
+                        builtin_tools=config.provider.builtin_tools,
+                    )
+                )
+
+            preferences = AgentPreferences(
+                web_search_mode="custom",
+                web_search_profile="search",
+            )
+            with patch.dict(
+                "os.environ",
+                {
+                    "HOME": str(root),
+                    "NEURO_CODE_HOME": str(state),
+                    "GEMINI_KEY": "gemini-key",
+                    "SEARCH_KEY": "search-key",
+                },
+                clear=True,
+            ):
+                application = await ApplicationComposition.open(
+                    ApplicationSettings(cwd=root, interactive_preferences=preferences),
+                    provider_factory=provider_factory,
+                )
+                try:
+                    self.assertIs(application.config.web_search_mode, WebSearchMode.SIDECAR)
+                    self.assertEqual(application.config.web_search_route.provider_profile, "search")
+                    binding = await application.create_binding()
+                    inspection = binding.runtime_web_capabilities
+                    self.assertIsNotNone(inspection)
+                    assert inspection is not None
+                    self.assertIs(inspection.search_availability, WebSearchAvailability.AVAILABLE)
+                    self.assertIs(
+                        inspection.search_path,
+                        WebSearchExecutionPath.SIDECAR_HOSTED,
+                    )
+                    self.assertEqual(inspection.search_profile, "search")
+                    registry = binding.runner._runtime._tools
+                    self.assertIn("web_search", registry.names())
+                    definition = next(
+                        item for item in registry.definitions() if item.name == "web_search"
+                    )
+                    self.assertEqual(definition.name, "web_search")
+                finally:
+                    await application.close()
+
+    async def test_sidecar_configuration_projects_to_custom_settings_value(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            self._write_gemini_web_config(
+                state,
+                mode="sidecar",
+                main_model="gemini-2.5-flash",
+                include_search_route=True,
+            )
+            with patch.dict(
+                "os.environ",
+                {"HOME": str(root), "NEURO_CODE_HOME": str(state)},
+                clear=True,
+            ):
+                config = config_module.load_config(root)
+                preferences = _agent_preference_defaults(
+                    config,
+                    ApplicationSettings(cwd=root),
+                )
+
+            self.assertEqual(preferences.web_search_mode, "custom")
+            self.assertEqual(preferences.web_search_profile, "search")
 
     async def test_auto_discovers_trusted_configured_search_profile_without_explicit_route(
         self,

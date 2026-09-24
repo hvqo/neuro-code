@@ -18,10 +18,16 @@ from typing import TYPE_CHECKING
 from neuro_code.application.acp.contracts import AcpSessionMetadata
 from neuro_code.application.acp.service import AcpApplicationService
 from neuro_code.application.execution_policy import ExecutionBudgetSource, ExecutionProfile
+from neuro_code.application.memory.compaction import ContextCompactionPolicy
 from neuro_code.application.permissions.broker import SessionApprovalBroker
+from neuro_code.application.ports.agent_preferences import (
+    AgentPreferenceResolution,
+    AgentPreferences,
+)
 from neuro_code.application.ports.configuration import AppConfig, override_provider
 from neuro_code.application.ports.git_inspection import GitInspectionApplication
 from neuro_code.application.ports.storage import SessionStore
+from neuro_code.application.ports.web_search import WebSearchMode
 from neuro_code.application.providers.contracts import ProviderOption
 from neuro_code.application.runtime.agent import AgentRunResult, EventSink
 from neuro_code.application.sessions.binding import ConversationBinding
@@ -40,6 +46,7 @@ from neuro_code.bootstrap.acp import (
 from neuro_code.bootstrap.composition import ApplicationComposition
 from neuro_code.bootstrap.composition_services import build_git_inspection_service
 from neuro_code.bootstrap.configuration import load_config
+from neuro_code.domain.background_tasks.models import BackgroundWakeLimits
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.sessions import SessionSummary
@@ -184,7 +191,7 @@ class BootstrapCliServices:
             from neuro_code.interfaces.tui.app import NeuroCodeApp
             from neuro_code.interfaces.tui.interaction import TuiUserInteraction
             from neuro_code.interfaces.tui.screens.provider import ProviderSetupApp
-            from neuro_code.interfaces.tui.state import TUI_RELOAD_PROVIDER_SETTINGS
+            from neuro_code.interfaces.tui.state import TUI_RELOAD_RUNTIME_CONFIGURATION
         except ModuleNotFoundError as error:
             if error.name in {"rich", "textual"}:
                 raise ConfigurationError(
@@ -202,6 +209,7 @@ class BootstrapCliServices:
         explicit_provider_override = any(
             value is not None for value in (args.provider, args.model, args.base_url)
         )
+        resume_session_id = args.resume
         while True:
             preflight_config = load_config(args.cwd)
             if explicit_provider_override:
@@ -258,8 +266,16 @@ class BootstrapCliServices:
                     return 0
                 continue
 
+            user_preferences = await ui_preferences.load_agent_preferences()
+            project_preferences = await ui_preferences.load_agent_preferences(preflight_config.cwd)
             preferences = await ui_preferences.load_effective_agent_preferences(
                 preflight_config.cwd
+            )
+            preference_resolution = AgentPreferenceResolution(
+                defaults=_agent_preference_defaults(preflight_config, settings),
+                user=user_preferences,
+                project=project_preferences,
+                cli=_agent_preference_cli_overrides(args, settings),
             )
             budget_explicit = (
                 getattr(args, "max_steps", None) is not None
@@ -281,6 +297,7 @@ class BootstrapCliServices:
                 )
             interactive_settings = replace(
                 interactive_settings,
+                resume_id=resume_session_id,
                 max_steps=(
                     interactive_settings.max_steps
                     if interactive_settings.execution_budget_source
@@ -299,9 +316,9 @@ class BootstrapCliServices:
             application = await self.open_application(interactive_settings)
             try:
                 user_interaction = TuiUserInteraction()
-                if args.resume is not None:
+                if resume_session_id is not None:
                     await application.session_service.prepare_resume(
-                        ResumeSessionRequest(args.resume)
+                        ResumeSessionRequest(resume_session_id)
                     )
                 approvals = SessionApprovalBroker()
                 config = application.config
@@ -337,7 +354,7 @@ class BootstrapCliServices:
                         enable_local_attached_terminals=True,
                     )
 
-                binding = await compose_scoped(config, args.resume)
+                binding = await compose_scoped(config, resume_session_id)
                 selected_profile_name = config.selected_provider
                 if selected_profile_name is None:
                     raise ConfigurationError("no provider profile is selected")
@@ -499,6 +516,7 @@ class BootstrapCliServices:
                     subagent_relationship_lifecycle=subagent_relationship_lifecycle,
                     ui_preferences=ui_preferences,
                     agent_preferences=preferences,
+                    preference_resolution=preference_resolution,
                     provider_settings_store=provider_settings_store,
                     provider_catalog=provider_catalog,
                     managed_provider_settings=managed_provider_settings,
@@ -515,8 +533,65 @@ class BootstrapCliServices:
                 return_code = app.return_code if app.return_code is not None else 0
             finally:
                 await asyncio.shield(application.close())
-            if return_code != TUI_RELOAD_PROVIDER_SETTINGS:
+            if return_code != TUI_RELOAD_RUNTIME_CONFIGURATION:
                 return return_code
+            resume_session_id = app.runtime_reload_session_id or resume_session_id
+
+
+def _agent_preference_defaults(
+    config: AppConfig, settings: ApplicationSettings
+) -> AgentPreferences:
+    """Project the effective non-TUI configuration for ordinary Settings rows."""
+
+    compaction = ContextCompactionPolicy()
+    wake_limits = BackgroundWakeLimits()
+    search_route = config.web_search_route
+    search_mode = (
+        "custom"
+        if config.web_search_mode is WebSearchMode.SIDECAR
+        else config.web_search_mode.value
+    )
+    return AgentPreferences(
+        enter_behavior="send",
+        prompt_soft_wrap=True,
+        notify_completed=False,
+        notify_failed=False,
+        wake_max_per_session=wake_limits.max_wakes_per_session,
+        wake_cooldown_seconds=int(wake_limits.cooldown_seconds),
+        compaction_recent_items=compaction.minimum_recent_items,
+        compaction_summary_tokens=compaction.max_summary_tokens,
+        execution_profile=settings.execution_profile.value,
+        max_steps=None,
+        failover=settings.failover,
+        timeout_seconds=max(1, int(config.provider.timeout_seconds)),
+        max_output_tokens=config.provider.max_output_tokens,
+        web_search_mode=search_mode,
+        web_search_profile=(
+            search_route.provider_profile
+            if search_mode == "custom" and search_route is not None
+            else None
+        ),
+        web_fetch_mode=config.web_fetch_mode.value,
+        lsp_enabled=any(profile.enabled for profile in config.language_servers.values()),
+        show_tool_intent=True,
+        verification_command=None,
+    )
+
+
+def _agent_preference_cli_overrides(
+    args: argparse.Namespace,
+    settings: ApplicationSettings,
+) -> AgentPreferences:
+    return AgentPreferences(
+        execution_profile=(
+            settings.execution_profile.value
+            if getattr(args, "execution_profile", None) is not None
+            else None
+        ),
+        max_steps=getattr(args, "max_steps", None),
+        failover=False if args.no_failover else None,
+        verification_command=settings.verification_command,
+    )
 
 
 def _provider_options(config: AppConfig) -> tuple[ProviderOption, ...]:

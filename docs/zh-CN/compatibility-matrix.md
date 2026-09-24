@@ -11,10 +11,11 @@
 | 能力 | 目标 | 状态 | 证据 / 备注 |
 |---|---|---|---|
 | Semantic text accents | TUI | intentionally-different | 13 个主题分别映射 Markdown、语法高亮、工具与 diff 的语义色；仅渲染与静态检查，未运行测试套件。 |
-| Settings visual hierarchy | TUI | intentionally-different | 宽屏默认外观分类；分组底色、条目分隔与表单间距。仅静态检查和渲染，未运行测试套件。 |
-| Scoped interactive preferences | TUI | intentionally-different | 新增八项上下文、输入、提醒与后台限制；17 项偏好均支持用户/工作区范围与启动快照查看。只做静态检查与界面渲染，未运行测试套件。 |
-| Persistent TUI agent settings | TUI | intentionally-different | 新增九项可保存并于下次 TUI 启动生效的执行、模型请求、工具与验证偏好；支持恢复继承与显式 CLI 参数优先。未运行测试套件，仅进行静态检查和界面渲染。 |
-| TUI settings navigation | TUI | intentionally-different | 五组设置导航、跨分类搜索、当前值与生效说明、窄屏单列布局；沿用已有存储与权限边界。本轮仅渲染界面，未运行测试套件。 |
+| Settings visual hierarchy | TUI | intentionally-different | 宽屏优先展示外观；分组底色、条目分隔与有效值表单。设置 UI 回归测试及完整仓库门禁覆盖界面和行为。 |
+| Scoped interactive preferences | TUI | intentionally-different | Agent 偏好支持用户和工作区范围、有效值来源、CLI 优先级、启动快照查看，并在现有 version-1 JSON 格式中增量保存可选字段。持久化与设置测试覆盖继承和范围覆盖。 |
+| Persistent TUI agent settings | TUI | intentionally-different | 运行时偏好会重建 composition 并恢复同一 Session；纯界面偏好即时生效。保留显式 CLI 优先级、权限与沙箱所有权。 |
+| TUI settings navigation | TUI | intentionally-different | 七组导航、跨分类搜索、带默认/用户/项目/CLI 来源的有效值，以及窄屏单列布局。高级页保留原始控制和既有存储边界。 |
+| Capability-driven Web Search settings | TUI | intentionally-different | Search 提供关闭/自动/自定义。自定义 profile 仅来自活动 Runtime 对凭据可用且可信 Search 后端可执行的配置投影；不可用选项 fail closed，并显示类型化原因及可选的供应商管理入口。运行时重载保留当前 Session，继续使用既有路由/工具组合。详见 [ADR 0175](adr/0175-effective-settings-and-web-capability-ux-v2.md)。 |
 | Ultracode parent-workspace freshness projection | M5 | compatible | VF-4b 从 durable target lifecycle 推导 `ResultAdoptionRecord.parent_workspace_changed`，不增加 schema column。Target 若在 final-verification 的精确 post-apply `INDETERMINATE` transition 前到达 `APPLIED`，该事实仍被保留；pre-apply 不确定以及 no-target 结果保持 false，若其他 target 已到达 `APPLIED`，partial conflict/indeterminate 结果则保留该事实。一个稳定 adoption identity 在 recovery re-entry 中仍只对应未来一次 parent verification-mutation boundary。Worker verification evidence 不导入。详见 [ADR 0156](adr/0156-ultracode-parent-workspace-freshness.md) |
 | Ultracode objective-size boundary | M5 | compatible | 唯一的 domain-owned `MAX_SWARM_OBJECTIVE_BYTES` contract 为按 UTF-8 字节计算的 4 KiB。Agent Swarm request validation 与 Ultracode marker policy 共用它；超过边界且包含 marker 的 prompt 会在 durable branch claim 之前选择 `MAIN_MAX`。这是决策前 routing，不是 fallback，恢复不会重新分类已有的 durable decision。详见 [ADR 0141](adr/0141-automatic-ultracode-delegation.md) |
 | Ultracode MAIN_MAX verification snapshot | M5 | compatible | 结构化 verification 同时支持 `MAIN_MAX` 与 `BOUNDED_SWARM` parent path。新的 request 缺少声明时由 `NormalTurnRequirementsPolicy` 只解析一次；显式非空或空 snapshot 原样冻结到 `TurnInput` 和不可变 Ultracode execution identity。Schema 30 增加两个 nullable snapshot column；NULL/NULL 保持 Legacy 模式，partial、损坏、超限或 fingerprint 不匹配的结构化 row fail closed。恢复只重放精确已提交 parent result，不重新调用 Provider 或 Finalizer。结构化 `BOUNDED_SWARM` 先执行 lower Swarm 与 adoption，再使用精确 snapshot 调用普通 parent runtime；Legacy NULL row 继续使用 external-result path。详见 [ADR 0155](adr/0155-ultracode-main-max-verification-snapshot.md) 与 [ADR 0157](adr/0157-ultracode-bounded-swarm-parent-verification.md) |
