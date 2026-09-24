@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from neuro_code.application.ports.agent_preferences import AgentPreferences
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.infrastructure.persistence.ui_preferences import JsonUiPreferencesStore
@@ -13,6 +14,23 @@ from neuro_code.shared.ui_language import UiLanguage
 
 
 class JsonUiPreferencesStoreTests(unittest.IsolatedAsyncioTestCase):
+    async def test_project_web_mode_override_clears_inherited_custom_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state" / "ui-preferences.json"
+            store = JsonUiPreferencesStore(path)
+            workspace = Path(directory) / "workspace"
+            await store.save_agent_preferences(
+                AgentPreferences(web_search_mode="custom", web_search_profile="search")
+            )
+            await store.save_agent_preferences(
+                AgentPreferences(web_search_mode="disabled"), workspace
+            )
+
+            effective = await store.load_effective_agent_preferences(workspace)
+
+            self.assertEqual(effective.web_search_mode, "disabled")
+            self.assertIsNone(effective.web_search_profile)
+
     async def test_missing_or_invalid_preferences_fall_back_to_english(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "ui-preferences.json"

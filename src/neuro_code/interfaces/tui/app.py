@@ -19,7 +19,10 @@ from textual.widgets import Button, Static
 from textual.worker import Worker
 
 from neuro_code.application.permissions.contracts import PermissionApproval, PermissionRequest
-from neuro_code.application.ports.agent_preferences import AgentPreferences
+from neuro_code.application.ports.agent_preferences import (
+    AgentPreferenceResolution,
+    AgentPreferences,
+)
 from neuro_code.application.ports.provider_catalog import (
     ProviderCatalog,
 )
@@ -679,6 +682,7 @@ class NeuroCodeApp(
         background_task_wake_policy: BackgroundTaskWakePolicy | None = None,
         background_wake_limits: BackgroundWakeLimits = _DEFAULT_BACKGROUND_WAKE_LIMITS,
         agent_preferences: AgentPreferences | None = None,
+        preference_resolution: AgentPreferenceResolution | None = None,
         user_interaction: TuiUserInteraction | None = None,
         clipboard_writer: ClipboardWriter | None = None,
         socks_supported: bool = False,
@@ -766,7 +770,22 @@ class NeuroCodeApp(
             if managed_provider_settings is not None
             else BackgroundTaskWakePolicy.DISABLED
         )
-        self._agent_preferences = agent_preferences or AgentPreferences()
+        self._agent_preference_resolution = preference_resolution or AgentPreferenceResolution(
+            defaults=AgentPreferences(
+                enter_behavior="send",
+                prompt_soft_wrap=True,
+                execution_profile="normal",
+                max_steps=24,
+                failover=True,
+                web_search_mode="auto",
+                web_fetch_mode="disabled",
+                lsp_enabled=False,
+                show_tool_intent=True,
+            ),
+            user=agent_preferences or AgentPreferences(),
+        )
+        self._agent_preferences = self._agent_preference_resolution.effective()
+        self._runtime_reload_session_id: str | None = None
         self._background_wake_limits = BackgroundWakeLimits(
             max_wakes_per_session=self._agent_preferences.wake_max_per_session
             or background_wake_limits.max_wakes_per_session,
@@ -925,6 +944,12 @@ class NeuroCodeApp(
             return None
         candidate = next(iter(screen_stack[0].query(selector)), None)
         return candidate if isinstance(candidate, expect_type) else None
+
+    @property
+    def runtime_reload_session_id(self) -> str | None:
+        """Session that should be rebound if a controlled runtime reload exits."""
+
+        return self._runtime_reload_session_id
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="header"):

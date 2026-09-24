@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from dataclasses import replace
 from functools import partial
 
 from textual.screen import ModalScreen
@@ -26,9 +27,10 @@ from neuro_code.interfaces.tui.screens.agent_preferences import (
     PREFERENCE_GROUPS,
     AgentPreferencesOverview,
     AgentPreferencesScreen,
+    AgentPreferencesScreenResult,
 )
 from neuro_code.interfaces.tui.state import (
-    TUI_RELOAD_PROVIDER_SETTINGS,
+    TUI_RELOAD_RUNTIME_CONFIGURATION,
     ProviderSettingsSubmission,
     permission_level_key,
 )
@@ -51,6 +53,20 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
         await self._apply_interaction_mode(self._interaction_mode.next)
 
     async def action_open_settings(self) -> None:
+        if self._ui_preferences is not None:
+            try:
+                user = await self._ui_preferences.load_agent_preferences()
+                project = await self._ui_preferences.load_agent_preferences(self._cwd)
+            except Exception:
+                self._write_ui_entry("error", "settings.extra.load_failed")
+            else:
+                self._agent_preference_resolution = replace(
+                    self._agent_preference_resolution,
+                    user=user,
+                    project=project,
+                )
+                self._agent_preferences = self._agent_preference_resolution.effective()
+                self._apply_agent_preferences_to_ui()
         self.push_screen(
             SettingsScreen(
                 self._language,
@@ -68,6 +84,10 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                 ui_theme=UiTheme.from_textual_name(self.theme),
                 initial_category=self._settings_last_category,
                 provider_settings=self._managed_provider_settings,
+                preference_resolution=self._agent_preference_resolution,
+                web_capabilities=getattr(
+                    self._provider_controller, "runtime_web_capabilities", None
+                ),
             ),
             self._settings_category_selected,
         )
@@ -84,7 +104,15 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                 else:
                     self.push_screen(
                         AgentPreferencesOverview(
-                            self._agent_preferences, user, project, language=self._language
+                            self._agent_preferences,
+                            user,
+                            project,
+                            language=self._language,
+                            resolution=replace(
+                                self._agent_preference_resolution,
+                                user=user,
+                                project=project,
+                            ),
                         ),
                         self._agent_preferences_closed,
                     )
@@ -96,19 +124,22 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                 self._write_ui_entry("error", "settings.extra.unavailable")
                 await self.action_open_settings()
                 return
-            try:
-                preferences = await self._ui_preferences.load_agent_preferences()
-            except Exception:
-                self._write_ui_entry("error", "settings.extra.load_failed")
-                await self.action_open_settings()
-                return
             self.push_screen(
                 AgentPreferencesScreen(
                     category,
-                    preferences,
+                    self._agent_preferences,
                     self._ui_preferences,
                     language=self._language,
                     workspace=self._cwd,
+                    resolution=self._agent_preference_resolution,
+                    web_capabilities=getattr(
+                        self._provider_controller, "runtime_web_capabilities", None
+                    ),
+                    provider_settings_available=(
+                        self._managed_provider_settings is not None
+                        and self._provider_settings_store is not None
+                    ),
+                    runtime_busy=(self._turn_worker is not None and self._turn_worker.is_running),
                 ),
                 self._agent_preferences_closed,
             )
@@ -176,13 +207,50 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                 self._background_wake_settings_selected,
             )
 
-    async def _agent_preferences_closed(self, result: None) -> None:
-        if self._ui_preferences is not None:
+    def _apply_agent_preferences_to_ui(self) -> None:
+        if not self.is_mounted:
+            return
+        with suppress(Exception):
+            from neuro_code.interfaces.tui.widgets import PromptInput
+
+            prompt = self.query_one("#prompt", PromptInput)
+            prompt.enter_behavior = self._agent_preferences.enter_behavior or "send"
+            prompt.soft_wrap = self._agent_preferences.prompt_soft_wrap is not False
+
+    async def _agent_preferences_closed(
+        self,
+        result: AgentPreferencesScreenResult | None,
+    ) -> None:
+        if result is not None and result.manage_providers:
+            await self._settings_category_selected("providers")
+            return
+        if result is not None and result.resolution is not None:
+            self._agent_preference_resolution = result.resolution
+        elif self._ui_preferences is not None:
             with suppress(Exception):
-                self._agent_preferences = (
-                    await self._ui_preferences.load_effective_agent_preferences(self._cwd)
+                user = await self._ui_preferences.load_agent_preferences()
+                project = await self._ui_preferences.load_agent_preferences(self._cwd)
+                self._agent_preference_resolution = replace(
+                    self._agent_preference_resolution,
+                    user=user,
+                    project=project,
                 )
+        self._agent_preferences = self._agent_preference_resolution.effective()
+        self._apply_agent_preferences_to_ui()
+        if result is not None and result.reload_required:
+            self._request_runtime_configuration_reload()
+            return
+        if result is not None and result.resolution is not None:
+            self._write_ui_entry("status", "settings.extra.saved_live")
         await self.action_open_settings()
+
+    def _request_runtime_configuration_reload(self) -> None:
+        if self._turn_worker is not None and self._turn_worker.is_running:
+            self._write_ui_entry("error", "settings.extra.wait_for_turn")
+            return
+        self._runtime_reload_session_id = self._runner.session_id
+        self._write_ui_entry("status", "settings.extra.reloading")
+        self.exit(return_code=TUI_RELOAD_RUNTIME_CONFIGURATION)
 
     def _apply_ui_theme(self, selected: UiTheme) -> None:
         if self.theme == selected.textual_name:
@@ -220,7 +288,7 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
         result: ProviderSettingsSubmission | None,
     ) -> None:
         if result is not None:
-            self.exit(return_code=TUI_RELOAD_PROVIDER_SETTINGS)
+            self._request_runtime_configuration_reload()
             return
         await self.action_open_settings()
 
@@ -229,7 +297,7 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
         settings: ManagedProviderSettings | None,
     ) -> None:
         if settings is not None:
-            self.exit(return_code=TUI_RELOAD_PROVIDER_SETTINGS)
+            self._request_runtime_configuration_reload()
             return
         await self.action_open_settings()
 
@@ -238,7 +306,7 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
         settings: ManagedProviderSettings | None,
     ) -> None:
         if settings is not None:
-            self.exit(return_code=TUI_RELOAD_PROVIDER_SETTINGS)
+            self._request_runtime_configuration_reload()
             return
         await self.action_open_settings()
 

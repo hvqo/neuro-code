@@ -28,7 +28,8 @@ _TOOL_READ_NAMES = frozenset({"read_file", "read_files", "view_image"})
 _TOOL_SEARCH_NAMES = frozenset({"glob", "grep", "grep_many", "list_dir", "list_tree", "skill"})
 _TOOL_EDIT_NAMES = frozenset({"apply_patch", "search_replace", "write_file"})
 _TOOL_WAIT_NAMES = frozenset({"task_output", "wait_for_tasks", "wait_tasks"})
-TUI_RELOAD_PROVIDER_SETTINGS = 75
+TUI_RELOAD_RUNTIME_CONFIGURATION = 75
+TUI_RELOAD_PROVIDER_SETTINGS = TUI_RELOAD_RUNTIME_CONFIGURATION
 _PROMPT_MARK = "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}"
 _ERROR_MARK = "\N{MULTIPLICATION SIGN}"
 _SUCCESS_MARK = "\N{CHECK MARK}"
@@ -202,6 +203,7 @@ def permission_level_key(mode: InteractionMode, *, auto_unrestricted: bool) -> s
 
 __all__ = [
     "TUI_RELOAD_PROVIDER_SETTINGS",
+    "TUI_RELOAD_RUNTIME_CONFIGURATION",
     "CollapsingPulseAnimation",
     "ProviderSettingsSubmission",
     "ToolActivityGroupState",

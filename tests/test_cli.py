@@ -14,7 +14,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from neuro_code.application.execution_policy import ExecutionBudgetSource, ExecutionProfile
@@ -39,6 +39,7 @@ from neuro_code.application.sessions.subagent_lifecycle import (
     SubagentRelationshipActionRequest,
     SubagentRelationshipActionResult,
 )
+from neuro_code.application.sessions.turns import RunTurnRequest
 from neuro_code.application.settings import ApplicationSettings
 from neuro_code.application.tools import SessionToolOutputArtifactApplicationService
 from neuro_code.application.workflows import (
@@ -113,6 +114,7 @@ from neuro_code.interfaces.cli.subagents import (
 from neuro_code.interfaces.cli.subagents import (
     run_subagent_lifecycle as _run_subagent_lifecycle,
 )
+from neuro_code.interfaces.tui.state import TUI_RELOAD_RUNTIME_CONFIGURATION
 from neuro_code.shared.errors import ConfigurationError, ProviderError
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
@@ -1965,10 +1967,12 @@ api_key_env = "FIXTURE_KEY"
                 encoding="utf-8",
             )
             captured: dict[str, object] = {}
+            launch_count = 0
+            opened_resume_ids: list[str | None] = []
+            launch_session_ids: list[str | None] = []
+            launch_item_counts: list[int] = []
 
             class TuiFixture:
-                return_code: int | None = None
-
                 def __init__(
                     self,
                     runner: object,
@@ -1989,6 +1993,7 @@ api_key_env = "FIXTURE_KEY"
                     queued_plan_execution_service: object,
                     ui_preferences: object,
                     agent_preferences: object,
+                    preference_resolution: object,
                     provider_settings_store: object,
                     provider_catalog: object,
                     managed_provider_settings: object,
@@ -2006,6 +2011,11 @@ api_key_env = "FIXTURE_KEY"
                     user_interaction: object,
                     socks_supported: bool,
                 ) -> None:
+                    nonlocal launch_count
+                    self.launch_index = launch_count
+                    launch_count += 1
+                    self.return_code: int | None = 0
+                    self.runtime_reload_session_id: str | None = None
                     captured.update(
                         runner=runner,
                         turn_service=turn_service,
@@ -2023,6 +2033,8 @@ api_key_env = "FIXTURE_KEY"
                         plan_scheduling_service=plan_scheduling_service,
                         queued_plan_execution_service=queued_plan_execution_service,
                         ui_preferences=ui_preferences,
+                        agent_preferences=agent_preferences,
+                        preference_resolution=preference_resolution,
                         provider_settings_store=provider_settings_store,
                         provider_catalog=provider_catalog,
                         managed_provider_settings=managed_provider_settings,
@@ -2039,9 +2051,28 @@ api_key_env = "FIXTURE_KEY"
                         cwd=cwd,
                         socks_supported=socks_supported,
                     )
+                    launch_item_counts.append(len(initial_items))
 
                 async def run_async(self) -> None:
+                    session_id = cast(Any, captured["runner"]).session_id
+                    if self.launch_index == 0:
+                        await cast(SessionTurnService, captured["turn_service"]).run_turn(
+                            RunTurnRequest("Persist this session before reloading settings.")
+                        )
+                        session_id = cast(Any, captured["runner"]).session_id
+                        self.runtime_reload_session_id = session_id
+                        self.return_code = TUI_RELOAD_RUNTIME_CONFIGURATION
+                    launch_session_ids.append(session_id)
                     captured["ran"] = True
+
+            original_open_application = BootstrapCliServices.open_application
+
+            async def capture_open_application(
+                services: BootstrapCliServices,
+                settings: ApplicationSettings,
+            ) -> object:
+                opened_resume_ids.append(settings.resume_id)
+                return await original_open_application(services, settings)
 
             with (
                 patch.dict(
@@ -2057,6 +2088,7 @@ api_key_env = "FIXTURE_KEY"
                     "neuro_code.bootstrap.factories.create_routed_provider",
                     return_value=CliProvider(),
                 ),
+                patch.object(BootstrapCliServices, "open_application", capture_open_application),
                 patch("neuro_code.interfaces.tui.app.NeuroCodeApp", TuiFixture),
             ):
                 exit_code = main(("--cwd", str(root)))
@@ -2079,9 +2111,14 @@ api_key_env = "FIXTURE_KEY"
             self.assertIs(captured["runner"], captured["reasoning_controller"])
             self.assertIs(captured["runner"], captured["interaction_mode_controller"])
             self.assertIsInstance(captured["turn_service"], SessionTurnService)
-            self.assertEqual(captured["initial_items"], ())
+            self.assertEqual(opened_resume_ids, [None, launch_session_ids[0]])
+            self.assertIsNotNone(launch_session_ids[0])
+            self.assertEqual(launch_session_ids[1], launch_session_ids[0])
+            self.assertEqual(launch_item_counts[0], 0)
+            self.assertGreaterEqual(launch_item_counts[1], 2)
             self.assertEqual(captured["language"], UiLanguage.SIMPLIFIED_CHINESE)
             self.assertEqual(captured["ui_theme"], UiTheme.GRAPHITE)
+            self.assertIsNotNone(captured["preference_resolution"])
             self.assertIsInstance(captured["provider_catalog"], PersistentProviderCatalog)
             self.assertIsInstance(
                 captured["tool_output_artifact_service"],
@@ -2231,6 +2268,7 @@ api_key_env = "FIXTURE_KEY"
                     queued_plan_execution_service: object,
                     ui_preferences: object,
                     agent_preferences: object,
+                    preference_resolution: object,
                     provider_settings_store: object,
                     provider_catalog: object,
                     managed_provider_settings: object,
@@ -2264,6 +2302,7 @@ api_key_env = "FIXTURE_KEY"
                         plan_scheduling_service,
                         queued_plan_execution_service,
                         ui_preferences,
+                        preference_resolution,
                         provider_settings_store,
                         provider_catalog,
                         managed_provider_settings,
@@ -2364,6 +2403,7 @@ api_key_env = "SECOND_KEY"
                     queued_plan_execution_service: object,
                     ui_preferences: object,
                     agent_preferences: object,
+                    preference_resolution: object,
                     provider_settings_store: object,
                     provider_catalog: object,
                     managed_provider_settings: object,
@@ -2393,6 +2433,7 @@ api_key_env = "SECOND_KEY"
                         plan_scheduling_service,
                         queued_plan_execution_service,
                         ui_preferences,
+                        preference_resolution,
                         provider_settings_store,
                         provider_catalog,
                         managed_provider_settings,
@@ -2538,6 +2579,7 @@ api_key_env = "SECOND_KEY"
                     queued_plan_execution_service: object,
                     ui_preferences: object,
                     agent_preferences: object,
+                    preference_resolution: object,
                     provider_settings_store: object,
                     provider_catalog: object,
                     managed_provider_settings: object,
@@ -2576,6 +2618,7 @@ api_key_env = "SECOND_KEY"
                         plan_scheduling_service,
                         queued_plan_execution_service,
                         session_task_controller,
+                        preference_resolution,
                         language,
                         provider_name,
                         model_name,

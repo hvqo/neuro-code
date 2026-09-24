@@ -341,6 +341,7 @@ _BOOTSTRAP_COMPOSITION_MIXIN_OWNERS = {
 
 _BOOTSTRAP_COMPOSITION_PRIVATE_HELPER_OWNERS = {
     "_automatic_search_route": "neuro_code.bootstrap.composition_bindings",
+    "_available_search_provider_options": "neuro_code.bootstrap.composition_bindings",
     "_main_request_budget_metadata": "neuro_code.bootstrap.composition_bindings",
     "_profile_has_search_credentials": "neuro_code.bootstrap.composition_bindings",
     "_route_has_search_credentials": "neuro_code.bootstrap.composition_bindings",

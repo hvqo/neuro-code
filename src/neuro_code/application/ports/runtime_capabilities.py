@@ -35,6 +35,22 @@ def _safe_display(value: str | None, *, name: str) -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeSearchProviderOption:
+    """Credential-free label for a provider proven executable for Search."""
+
+    profile: str
+    model: str
+
+    def __post_init__(self) -> None:
+        profile = _safe_display(self.profile, name="search profile")
+        model = _safe_display(self.model, name="search model")
+        if profile is None or model is None:
+            raise ValueError("search provider option requires a profile and model")
+        object.__setattr__(self, "profile", profile)
+        object.__setattr__(self, "model", model)
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeWebCapabilityInspection:
     """Effective, safe web-tool status after composition and tool filtering.
 
@@ -48,6 +64,7 @@ class RuntimeWebCapabilityInspection:
     search_profile: str | None = None
     search_model: str | None = None
     fetch_path: WebFetchExecutionPath = WebFetchExecutionPath.DISABLED
+    search_providers: tuple[RuntimeSearchProviderOption, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.search_availability, WebSearchAvailability):
@@ -86,9 +103,18 @@ class RuntimeWebCapabilityInspection:
         object.__setattr__(
             self, "search_model", _safe_display(self.search_model, name="search_model")
         )
+        providers = tuple(self.search_providers)
+        if len(providers) > 64 or any(
+            not isinstance(option, RuntimeSearchProviderOption) for option in providers
+        ):
+            raise ValueError("search provider options must be a bounded canonical tuple")
+        if len({option.profile for option in providers}) != len(providers):
+            raise ValueError("search provider profiles must be unique")
+        object.__setattr__(self, "search_providers", providers)
 
 
 __all__ = [
+    "RuntimeSearchProviderOption",
     "RuntimeWebCapabilityInspection",
     "WebSearchAvailability",
     "WebSearchUnavailableReason",

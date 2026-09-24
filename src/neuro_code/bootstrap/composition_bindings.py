@@ -59,6 +59,7 @@ from neuro_code.application.ports.parent_context_relay import (
 )
 from neuro_code.application.ports.routing import ModelRoute, RuntimeRole
 from neuro_code.application.ports.runtime_capabilities import (
+    RuntimeSearchProviderOption,
     RuntimeWebCapabilityInspection,
     WebSearchAvailability,
     WebSearchUnavailableReason,
@@ -206,6 +207,31 @@ def _automatic_search_route(config: AppConfig) -> ModelRoute | None:
         if resolver.resolve(route) is not None:
             return route
     return None
+
+
+def _available_search_provider_options(
+    config: AppConfig,
+    *,
+    allowed: bool,
+) -> tuple[RuntimeSearchProviderOption, ...]:
+    """Project only credentialed profiles with a trusted executable Search backend."""
+
+    if not allowed:
+        return ()
+    resolver = RoutedWebSearchBackendResolver(config)
+    options: list[RuntimeSearchProviderOption] = []
+    for profile in sorted(
+        config.providers.values(), key=lambda item: (item.name.casefold(), item.name)
+    ):
+        if not _profile_has_search_credentials(profile):
+            continue
+        route = ModelRoute(RuntimeRole.WEB_SEARCH, profile.name, profile.model)
+        if resolver.resolve(route) is None:
+            continue
+        options.append(RuntimeSearchProviderOption(profile.name, profile.model))
+        if len(options) >= 64:
+            break
+    return tuple(options)
 
 
 def _route_has_search_credentials(config: AppConfig, route: ModelRoute) -> bool:
@@ -631,6 +657,10 @@ class CompositionBindingMixin(CompositionRootMixin):
                             },
                         )
                 search_resolver = RoutedWebSearchBackendResolver(search_config)
+                search_providers = _available_search_provider_options(
+                    selected_config,
+                    allowed=search_allowed,
+                )
                 sidecar_available = (
                     search_route is not None
                     and _route_has_search_credentials(search_config, search_route)
@@ -719,6 +749,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                         WebSearchAvailability.DISABLED,
                         WebSearchExecutionPath.DISABLED,
                         fetch_path=fetch_path,
+                        search_providers=search_providers,
                     )
                 elif execution_path is WebSearchExecutionPath.UNAVAILABLE:
                     reason = (
@@ -735,6 +766,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                         WebSearchExecutionPath.UNAVAILABLE,
                         reason,
                         fetch_path=fetch_path,
+                        search_providers=search_providers,
                     )
                 else:
                     if execution_path is WebSearchExecutionPath.SIDECAR_HOSTED:
@@ -758,6 +790,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                         ),
                         search_model=active_search_route.model,
                         fetch_path=fetch_path,
+                        search_providers=search_providers,
                     )
                 for tool in additional_tools:
                     if (
