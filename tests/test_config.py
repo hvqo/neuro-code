@@ -390,6 +390,31 @@ api_key_env = "FIXTURE_KEY"
             self.assertNotIn(secret, repr(config))
             self.assertNotIn(secret, repr(config.redacted_dict()))
 
+    def test_saved_search_api_key_loads_from_state_and_environment_overrides_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = JsonProviderSettingsStore(root / ".neuro-code")
+            asyncio.run(store.save_brave_search_api_key("saved-search-secret"))
+
+            config = load_config(root, home=root, environ={})
+            self.assertEqual(config.search_api_key, "saved-search-secret")
+            self.assertIn("saved-search-secret", config.redaction_values({}))
+            self.assertNotIn("saved-search-secret", repr(config))
+            self.assertNotIn("saved-search-secret", repr(config.redacted_dict()))
+
+            overridden = load_config(
+                root,
+                home=root,
+                environ={"BRAVE_SEARCH_API_KEY": "environment-search-secret"},
+            )
+            self.assertEqual(overridden.search_api_key, "environment-search-secret")
+            self.assertIn(
+                "environment-search-secret",
+                overridden.redaction_values({"BRAVE_SEARCH_API_KEY": "environment-search-secret"}),
+            )
+            self.assertIn("brave_search_api_key", overridden.protected_environment_variables)
+            self.assertNotIn("environment-search-secret", repr(overridden.redacted_dict()))
+
     def test_managed_profile_inherits_global_proxy_and_context_capacity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

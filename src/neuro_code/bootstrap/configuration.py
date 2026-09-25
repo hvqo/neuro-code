@@ -671,6 +671,7 @@ def load_config(
     web_search_mode = _web_search_mode_from_data(data)
     web_fetch_mode = _web_fetch_mode_from_data(data)
     language_servers = _language_servers_from_data(data)
+    environment_search_api_key = env.get("BRAVE_SEARCH_API_KEY", "").strip()
 
     return AppConfig(
         cwd=resolved_cwd,
@@ -684,6 +685,8 @@ def load_config(
         loaded_files=tuple(loaded_files),
         routes=routes,
         web_search_mode=web_search_mode,
+        web_search_api_key_env=("BRAVE_SEARCH_API_KEY" if environment_search_api_key else None),
+        search_api_key=environment_search_api_key or managed.brave_search_api_key,
         web_fetch_mode=web_fetch_mode,
         language_servers=language_servers,
     )

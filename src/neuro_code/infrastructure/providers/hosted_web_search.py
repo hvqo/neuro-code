@@ -29,6 +29,7 @@ from neuro_code.application.ports.model import (
 )
 from neuro_code.application.ports.routing import ModelRoute, RuntimeRole
 from neuro_code.application.ports.web_search import (
+    MAX_WEB_SEARCH_ROUTE_TRACE_EVENTS,
     HostedWebSearch,
     HostedWebSearchEvent,
     HostedWebSearchEventSink,
@@ -38,6 +39,10 @@ from neuro_code.application.ports.web_search import (
     WebSearchErrorCode,
     WebSearchRequest,
     WebSearchResult,
+    WebSearchRouteKind,
+    WebSearchRouteName,
+    WebSearchRoutePhase,
+    WebSearchRouteTraceEvent,
     WebSearchSource,
 )
 from neuro_code.domain.conversation.context import ModelContext
@@ -53,6 +58,10 @@ from neuro_code.infrastructure.providers import create_provider
 from neuro_code.infrastructure.providers.anthropic import AnthropicProvider
 from neuro_code.infrastructure.providers.gemini_interactions import GeminiInteractionsProvider
 from neuro_code.infrastructure.providers.openai_responses import OpenAIResponsesProvider
+from neuro_code.infrastructure.web_search.deepseek import (
+    DeepSeekSearchAdapter,
+    is_official_deepseek_profile,
+)
 from neuro_code.shared.errors import ConfigurationError, ProviderError
 
 SIDE_CAR_SEARCH_SYSTEM_PROMPT = (
@@ -68,6 +77,21 @@ SIDE_CAR_SEARCH_SYSTEM_PROMPT = (
 _MAX_FAILURE_DETAIL = 500
 _MAX_XAI_DOMAIN_FILTERS = 5
 _MARKDOWN_CITATION = re.compile(r"\[\[(?P<number>\d+)\]\]\((?P<url>https?://[^)\s]+)\)")
+_FALLBACK_ERROR_CODES = frozenset(
+    {
+        WebSearchErrorCode.SEARCH_UNSUPPORTED,
+        WebSearchErrorCode.SEARCH_UNAVAILABLE,
+        WebSearchErrorCode.SEARCH_TIMEOUT,
+        WebSearchErrorCode.SEARCH_PROVIDER_DID_NOT_SEARCH,
+    }
+)
+_ROUTE_UNAVAILABLE_ERROR_CODES = frozenset(
+    {
+        WebSearchErrorCode.SEARCH_UNSUPPORTED,
+        WebSearchErrorCode.SEARCH_UNAVAILABLE,
+        WebSearchErrorCode.SEARCH_TIMEOUT,
+    }
+)
 
 
 def _sidecar_context(messages: tuple[Message, ...]) -> ModelContext:
@@ -914,9 +938,30 @@ class ResponsesHostedWebSearchBackend:
         ):
             code = WebSearchErrorCode.SEARCH_INVALID_REQUEST
         elif "timeout" in lowered or "timed out" in lowered:
-            code = WebSearchErrorCode.SEARCH_TIMEOUT
+            code = WebSearchErrorCode.SEARCH_UNAVAILABLE
         elif "unsupported" in lowered or "not support" in lowered:
             code = WebSearchErrorCode.SEARCH_UNSUPPORTED
+        elif (
+            any(
+                marker in lowered
+                for marker in (
+                    "connection error",
+                    "connection refused",
+                    "could not connect",
+                    "network is unreachable",
+                    "name or service not known",
+                    "temporary failure in name resolution",
+                    "502",
+                    "503",
+                    "504",
+                    "500",
+                )
+            )
+            or "404" in lowered
+            or "408" in lowered
+            or "425" in lowered
+        ):
+            code = WebSearchErrorCode.SEARCH_UNAVAILABLE
         elif "400" in lowered or "invalid" in lowered or "bad request" in lowered:
             code = WebSearchErrorCode.SEARCH_INVALID_REQUEST
         else:
@@ -1199,18 +1244,29 @@ class GeminiHostedWebSearchBackend(ResponsesHostedWebSearchBackend):
 
 
 class RoutedHostedWebSearchBackend:
-    """Explicit WEB_SEARCH-only failover over executable hosted candidates."""
+    """Ordered Search Router over statically resolved executable candidates."""
 
     def __init__(self, candidates: Sequence[HostedWebSearch]) -> None:
         if not candidates:
             raise ValueError("hosted search failover requires candidates")
         self._candidates = tuple(candidates)
         self._active_index: int | None = None
+        self._unavailable_indices: set[int] = set()
+        self._search_lock = asyncio.Lock()
 
     @property
     def provider_profile(self) -> str:
         index = self._active_index if self._active_index is not None else 0
         return self._candidates[index].provider_profile
+
+    @property
+    def route_kind(self) -> WebSearchRouteKind:
+        index = self._active_index if self._active_index is not None else 0
+        return getattr(
+            self._candidates[index],
+            "route_kind",
+            WebSearchRouteKind.NATIVE,
+        )
 
     @property
     def model(self) -> str:
@@ -1229,39 +1285,270 @@ class RoutedHostedWebSearchBackend:
         *,
         event_sink: HostedWebSearchEventSink | None = None,
     ) -> WebSearchResult:
-        start = self._active_index if self._active_index is not None else 0
-        failures: list[str] = []
-        for index in range(start, len(self._candidates)):
-            candidate = self._candidates[index]
+        async with self._search_lock:
+            return await self._search_locked(request, event_sink=event_sink)
+
+    async def _search_locked(
+        self,
+        request: WebSearchRequest,
+        *,
+        event_sink: HostedWebSearchEventSink | None = None,
+    ) -> WebSearchResult:
+        failures: list[WebSearchError] = []
+        trace = [
+            WebSearchRouteTraceEvent(
+                self._route_name(candidate),
+                WebSearchRoutePhase.CANDIDATE,
+            )
+            for candidate in self._candidates[:MAX_WEB_SEARCH_ROUTE_TRACE_EVENTS]
+        ]
+
+        def record(event: WebSearchRouteTraceEvent) -> None:
+            if len(trace) < MAX_WEB_SEARCH_ROUTE_TRACE_EVENTS:
+                trace.append(event)
+
+        def with_trace(error: WebSearchError) -> WebSearchError:
+            return WebSearchError(
+                error.code,
+                str(error),
+                http_status=error.http_status,
+                route_trace=trace,
+            )
+
+        # Re-evaluate routes from the configured priority order on each request.
+        # A previously successful fallback must not permanently outrank a
+        # higher-priority route after a query-specific failure.
+        for index, candidate in enumerate(self._candidates):
+            route_name = self._route_name(candidate)
+            if index in self._unavailable_indices:
+                record(WebSearchRouteTraceEvent(route_name, WebSearchRoutePhase.SKIPPED))
+                continue
+            record(WebSearchRouteTraceEvent(route_name, WebSearchRoutePhase.SELECTED))
+            record(WebSearchRouteTraceEvent(route_name, WebSearchRoutePhase.DISPATCHED))
             try:
                 result = await candidate.search(request, event_sink=event_sink)
             except asyncio.CancelledError:
                 raise
             except WebSearchError as error:
-                failures.append(f"{candidate.provider_profile}: {error.code.value}")
+                record(
+                    WebSearchRouteTraceEvent(
+                        route_name,
+                        WebSearchRoutePhase.FAILED,
+                        error_code=error.code,
+                        http_status=error.http_status,
+                    )
+                )
+                if error.code not in _FALLBACK_ERROR_CODES:
+                    raise with_trace(error) from error
+                failures.append(error)
+                # DID_NOT_SEARCH describes this response, not route health. It
+                # is safe to fall back for this request, but the provider must
+                # be reconsidered on the next one.
+                if error.code in _ROUTE_UNAVAILABLE_ERROR_CODES:
+                    self._unavailable_indices.add(index)
+                next_index = next(
+                    (
+                        candidate_index
+                        for candidate_index in range(index + 1, len(self._candidates))
+                        if candidate_index not in self._unavailable_indices
+                    ),
+                    None,
+                )
+                if next_index is not None:
+                    record(
+                        WebSearchRouteTraceEvent(
+                            self._route_name(self._candidates[next_index]),
+                            WebSearchRoutePhase.FALLBACK,
+                            error_code=error.code,
+                        )
+                    )
                 continue
             self._active_index = index
-            return result
-        detail = "; ".join(failures)[:_MAX_FAILURE_DETAIL]
-        failure_codes = tuple(
-            failure.rsplit(": ", 1)[-1] for failure in failures if ": " in failure
-        )
+            record(
+                WebSearchRouteTraceEvent(
+                    route_name,
+                    WebSearchRoutePhase.SUCCEEDED,
+                    http_status=result.http_status,
+                )
+            )
+            return replace(result, route_trace=tuple(trace))
+        failure_codes = {failure.code for failure in failures}
+        last_failure = failures[-1] if failures else None
         code = (
-            WebSearchErrorCode(failure_codes[0])
-            if failure_codes and len(set(failure_codes)) == 1
-            else WebSearchErrorCode.SEARCH_PROVIDER_ERROR
+            last_failure.code
+            if last_failure is not None
+            else (
+                WebSearchErrorCode.SEARCH_UNSUPPORTED
+                if failure_codes == {WebSearchErrorCode.SEARCH_UNSUPPORTED}
+                else WebSearchErrorCode.SEARCH_UNAVAILABLE
+            )
         )
         raise WebSearchError(
             code,
-            f"all configured WEB_SEARCH providers failed: {detail}",
+            str(last_failure)
+            if last_failure is not None
+            else "all available Web Search routes are unavailable",
+            http_status=last_failure.http_status if last_failure is not None else None,
+            route_trace=trace,
         )
+
+    @staticmethod
+    def _route_name(candidate: HostedWebSearch) -> WebSearchRouteName:
+        """Use fixed diagnostic labels; never expose endpoints or profile secrets."""
+
+        configured = getattr(candidate, "diagnostic_route", None)
+        if isinstance(configured, WebSearchRouteName):
+            return configured
+        kind = getattr(candidate, "route_kind", WebSearchRouteKind.NATIVE)
+        return {
+            WebSearchRouteKind.NATIVE: WebSearchRouteName.PROVIDER_NATIVE,
+            WebSearchRouteKind.PROVIDER_ADAPTER: WebSearchRouteName.PROVIDER_ADAPTER,
+            WebSearchRouteKind.EXTERNAL_FALLBACK: WebSearchRouteName.EXTERNAL,
+            WebSearchRouteKind.DISABLED: WebSearchRouteName.EXTERNAL,
+            WebSearchRouteKind.UNAVAILABLE: WebSearchRouteName.EXTERNAL,
+        }[kind]
+
+
+class SearchCapabilityRegistry:
+    """Resolve provider/model pairs through trusted native or adapter capabilities.
+
+    Native server-side schemas remain owned by their protocol adapters. The
+    registry adds only explicitly supported provider-specific routes; it does
+    not infer search support from OpenAI compatibility or model names.
+    """
+
+    def resolve_profile(
+        self,
+        profile: ProviderProfile,
+        *,
+        model: str | None = None,
+    ) -> HostedWebSearch | None:
+        selected = replace(profile, model=model) if model is not None else profile
+        provider_adapter = self.resolve_provider_adapter(selected)
+        if provider_adapter is not None or selected.service_id == "deepseek":
+            return provider_adapter
+        if selected.protocol not in {
+            "openai-responses",
+            "anthropic-messages",
+            "gemini-interactions",
+        }:
+            return None
+        try:
+            if selected.protocol == "anthropic-messages":
+                implementation = AnthropicProvider.implementation_capabilities(
+                    model=selected.model,
+                    builtin_tools=selected.builtin_tools,
+                )
+            elif selected.protocol == "gemini-interactions":
+                implementation = GeminiInteractionsProvider.implementation_capabilities(
+                    model=selected.model,
+                    builtin_tools=selected.builtin_tools,
+                )
+            else:
+                implementation = OpenAIResponsesProvider.implementation_capabilities(
+                    dialect=selected.dialect,
+                    builtin_tools=selected.builtin_tools,
+                )
+            capabilities = selected.effective_capabilities(implementation)
+        except (ConfigurationError, ValueError, TypeError):
+            return None
+        if capabilities.status(ModelCapability.HOSTED_WEB_SEARCH) is not CapabilityStatus.SUPPORTED:
+            return None
+        sidecar_tools = ["web_search"]
+        if (
+            selected.protocol == "anthropic-messages"
+            and capabilities.status(ModelCapability.HOSTED_WEB_FETCH) is CapabilityStatus.SUPPORTED
+            and "web_fetch" in selected.builtin_tools
+        ):
+            sidecar_tools.append("web_fetch")
+        if selected.protocol == "gemini-interactions":
+            if "google_search" not in selected.builtin_tools:
+                return None
+            sidecar_tools = ["google_search"]
+            if (
+                "url_context" in selected.builtin_tools
+                and capabilities.status(ModelCapability.HOSTED_WEB_FETCH)
+                is CapabilityStatus.SUPPORTED
+                and capabilities.supports(ModelCapability.MIXED_HOSTED_AND_CLIENT_TOOLS)
+            ):
+                sidecar_tools.append("url_context")
+        sidecar_profile = replace(selected, builtin_tools=tuple(sidecar_tools))
+
+        def provider_factory(
+            observer: Callable[[Mapping[str, Any]], None],
+            request: WebSearchRequest,
+            *,
+            selected_profile: ProviderProfile = sidecar_profile,
+        ) -> ModelProvider:
+            gemini_allowed_tools = ["google_search"]
+            if "url_context" in selected_profile.builtin_tools:
+                gemini_allowed_tools.append("url_context")
+            return create_provider(
+                selected_profile,
+                response_observer=observer,
+                builtin_tool_options=_provider_tool_options(selected_profile, request),
+                tool_choice=(
+                    {"type": "tool", "name": "web_search"}
+                    if selected_profile.protocol == "anthropic-messages"
+                    else {
+                        "allowed_tools": {
+                            "mode": "any",
+                            "tools": gemini_allowed_tools,
+                        }
+                    }
+                    if selected_profile.protocol == "gemini-interactions"
+                    else "required"
+                ),
+            )
+
+        if selected.protocol == "anthropic-messages":
+            return AnthropicHostedWebSearchBackend(sidecar_profile, provider_factory)
+        if selected.protocol == "gemini-interactions":
+            return GeminiHostedWebSearchBackend(sidecar_profile, provider_factory)
+        return ResponsesHostedWebSearchBackend(sidecar_profile, provider_factory)
+
+    @staticmethod
+    def resolve_provider_adapter(
+        profile: ProviderProfile,
+    ) -> HostedWebSearch | None:
+        """Resolve only a provider-specific adapter with trusted route evidence."""
+
+        if is_official_deepseek_profile(profile):
+            return DeepSeekSearchAdapter(profile)
+        # In particular, never reinterpret a custom DeepSeek base URL as
+        # permission to send its credential to DeepSeek's official host.
+        return None
 
 
 class RoutedWebSearchBackendResolver(WebSearchBackendResolver):
-    """Resolve only the configured WEB_SEARCH route and its own fallbacks."""
+    """Resolve configured Search routes from the trusted capability registry."""
 
     def __init__(self, config: AppConfig) -> None:
         self._config = config
+        self._capabilities = SearchCapabilityRegistry()
+
+    def resolve_profile(
+        self,
+        profile_name: str,
+        *,
+        model: str | None = None,
+    ) -> HostedWebSearch | None:
+        profile = self._config.providers.get(profile_name)
+        if profile is None:
+            return None
+        return self._capabilities.resolve_profile(profile, model=model)
+
+    def resolve_provider_adapter(
+        self,
+        profile_name: str,
+        *,
+        model: str | None = None,
+    ) -> HostedWebSearch | None:
+        profile = self._config.providers.get(profile_name)
+        if profile is None:
+            return None
+        selected = replace(profile, model=model) if model is not None else profile
+        return self._capabilities.resolve_provider_adapter(selected)
 
     def resolve(self, route: ModelRoute) -> HostedWebSearch | None:
         if route.role is not RuntimeRole.WEB_SEARCH:
@@ -1269,101 +1556,9 @@ class RoutedWebSearchBackendResolver(WebSearchBackendResolver):
         names = (route.provider_profile, *route.fallback_profiles)
         candidates: list[HostedWebSearch] = []
         for index, name in enumerate(dict.fromkeys(names)):
-            profile = self._config.providers.get(name)
-            if profile is None or profile.protocol not in {
-                "openai-responses",
-                "anthropic-messages",
-                "gemini-interactions",
-            }:
-                continue
-            selected = replace(profile, model=route.model) if index == 0 else profile
-            try:
-                if selected.protocol == "anthropic-messages":
-                    implementation = AnthropicProvider.implementation_capabilities(
-                        model=selected.model,
-                        builtin_tools=selected.builtin_tools,
-                    )
-                elif selected.protocol == "gemini-interactions":
-                    implementation = GeminiInteractionsProvider.implementation_capabilities(
-                        model=selected.model,
-                        builtin_tools=selected.builtin_tools,
-                    )
-                else:
-                    implementation = OpenAIResponsesProvider.implementation_capabilities(
-                        dialect=selected.dialect,
-                        builtin_tools=selected.builtin_tools,
-                    )
-                capabilities = selected.effective_capabilities(implementation)
-            except (ConfigurationError, ValueError, TypeError):
-                continue
-            if (
-                capabilities.status(ModelCapability.HOSTED_WEB_SEARCH)
-                is not CapabilityStatus.SUPPORTED
-            ):
-                continue
-            sidecar_tools = ["web_search"]
-            if (
-                selected.protocol == "anthropic-messages"
-                and capabilities.status(ModelCapability.HOSTED_WEB_FETCH)
-                is CapabilityStatus.SUPPORTED
-                and "web_fetch" in selected.builtin_tools
-            ):
-                sidecar_tools.append("web_fetch")
-            if selected.protocol == "gemini-interactions":
-                if "google_search" not in selected.builtin_tools:
-                    continue
-                sidecar_tools = ["google_search"]
-                if (
-                    "url_context" in selected.builtin_tools
-                    and capabilities.status(ModelCapability.HOSTED_WEB_FETCH)
-                    is CapabilityStatus.SUPPORTED
-                    and capabilities.supports(ModelCapability.MIXED_HOSTED_AND_CLIENT_TOOLS)
-                ):
-                    sidecar_tools.append("url_context")
-            sidecar_profile = replace(selected, builtin_tools=tuple(sidecar_tools))
-
-            def provider_factory(
-                observer: Callable[[Mapping[str, Any]], None],
-                request: WebSearchRequest,
-                *,
-                selected_profile: ProviderProfile = sidecar_profile,
-            ) -> ModelProvider:
-                gemini_allowed_tools = ["google_search"]
-                if "url_context" in selected_profile.builtin_tools:
-                    # The current Interactions schema can restrict the set of
-                    # allowed tools, but cannot express "must call A and may
-                    # then call B" in one interaction. Allow both for the
-                    # supported combination and keep the completed Search
-                    # lifecycle as the backend success gate.
-                    gemini_allowed_tools.append("url_context")
-                return create_provider(
-                    selected_profile,
-                    response_observer=observer,
-                    builtin_tool_options=_provider_tool_options(selected_profile, request),
-                    tool_choice=(
-                        {"type": "tool", "name": "web_search"}
-                        if selected_profile.protocol == "anthropic-messages"
-                        else {
-                            "allowed_tools": {
-                                "mode": "any",
-                                "tools": gemini_allowed_tools,
-                            }
-                        }
-                        if selected_profile.protocol == "gemini-interactions"
-                        else "required"
-                    ),
-                )
-
-            if selected.protocol == "anthropic-messages":
-                candidates.append(
-                    AnthropicHostedWebSearchBackend(sidecar_profile, provider_factory)
-                )
-            elif selected.protocol == "gemini-interactions":
-                candidates.append(GeminiHostedWebSearchBackend(sidecar_profile, provider_factory))
-            else:
-                candidates.append(
-                    ResponsesHostedWebSearchBackend(sidecar_profile, provider_factory)
-                )
+            backend = self.resolve_profile(name, model=route.model if index == 0 else None)
+            if backend is not None:
+                candidates.append(backend)
         if not candidates:
             return None
         if len(candidates) == 1:
@@ -1378,6 +1573,7 @@ __all__ = [
     "ResponsesHostedWebSearchBackend",
     "RoutedHostedWebSearchBackend",
     "RoutedWebSearchBackendResolver",
+    "SearchCapabilityRegistry",
     "extract_anthropic_web_search_evidence",
     "extract_gemini_web_search_evidence",
     "extract_web_search_evidence",

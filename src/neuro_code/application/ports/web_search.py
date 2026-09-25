@@ -60,6 +60,17 @@ class WebSearchExecutionPath(StrEnum):
     DISABLED = "disabled"
     INLINE_HOSTED = "inline_hosted"
     SIDECAR_HOSTED = "sidecar_hosted"
+    SEARCH_API = "search_api"
+    UNAVAILABLE = "unavailable"
+
+
+class WebSearchRouteKind(StrEnum):
+    """Trusted class of the executable route selected for Web Search."""
+
+    DISABLED = "disabled"
+    NATIVE = "native"
+    PROVIDER_ADAPTER = "provider_adapter"
+    EXTERNAL_FALLBACK = "external_fallback"
     UNAVAILABLE = "unavailable"
 
 
@@ -68,6 +79,7 @@ def resolve_web_search_path(
     *,
     inline_supported: bool,
     sidecar_available: bool,
+    search_api_available: bool = False,
 ) -> WebSearchExecutionPath:
     """Resolve user intent without treating UNKNOWN capability as support."""
 
@@ -80,15 +92,19 @@ def resolve_web_search_path(
             else WebSearchExecutionPath.UNAVAILABLE
         )
     if mode is WebSearchMode.SIDECAR:
+        if sidecar_available:
+            return WebSearchExecutionPath.SIDECAR_HOSTED
         return (
-            WebSearchExecutionPath.SIDECAR_HOSTED
-            if sidecar_available
+            WebSearchExecutionPath.SEARCH_API
+            if search_api_available
             else WebSearchExecutionPath.UNAVAILABLE
         )
     if inline_supported:
         return WebSearchExecutionPath.INLINE_HOSTED
     if sidecar_available:
         return WebSearchExecutionPath.SIDECAR_HOSTED
+    if search_api_available:
+        return WebSearchExecutionPath.SEARCH_API
     return WebSearchExecutionPath.UNAVAILABLE
 
 
@@ -102,18 +118,105 @@ class WebSearchErrorCode(StrEnum):
     SEARCH_TIMEOUT = "SEARCH_TIMEOUT"
     SEARCH_PROVIDER_ERROR = "SEARCH_PROVIDER_ERROR"
     SEARCH_PROVIDER_DID_NOT_SEARCH = "SEARCH_PROVIDER_DID_NOT_SEARCH"
+    SEARCH_MALFORMED_RESPONSE = "SEARCH_MALFORMED_RESPONSE"
     SEARCH_INVALID_REQUEST = "SEARCH_INVALID_REQUEST"
+
+
+class WebSearchRouteName(StrEnum):
+    """Credential-free display names for routes in the runtime search trace."""
+
+    DEEPSEEK = "DeepSeek Search"
+    BRAVE = "Brave Search"
+    PROVIDER_NATIVE = "Provider Native Search"
+    PROVIDER_ADAPTER = "Provider Search Adapter"
+    EXTERNAL = "External Search"
+
+
+class WebSearchRoutePhase(StrEnum):
+    """One bounded lifecycle phase for a statically resolved Search route."""
+
+    CANDIDATE = "candidate"
+    SELECTED = "selected"
+    DISPATCHED = "dispatched"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    FALLBACK = "fallback"
+    SKIPPED = "skipped"
+
+
+MAX_WEB_SEARCH_ROUTE_TRACE_EVENTS = 64
+
+
+@dataclass(frozen=True, slots=True)
+class WebSearchRouteTraceEvent:
+    """Safe, bounded route lifecycle evidence without query or credential data."""
+
+    route: WebSearchRouteName
+    phase: WebSearchRoutePhase
+    error_code: WebSearchErrorCode | None = None
+    http_status: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.route, WebSearchRouteName):
+            raise TypeError("route trace name must be canonical")
+        if not isinstance(self.phase, WebSearchRoutePhase):
+            raise TypeError("route trace phase must be canonical")
+        if self.error_code is not None and not isinstance(self.error_code, WebSearchErrorCode):
+            raise TypeError("route trace error code must be canonical or None")
+        if self.http_status is not None and (
+            isinstance(self.http_status, bool)
+            or not isinstance(self.http_status, int)
+            or not 100 <= self.http_status <= 599
+        ):
+            raise ValueError("route trace HTTP status must be between 100 and 599")
+
+
+def render_web_search_route_trace(events: Sequence[WebSearchRouteTraceEvent]) -> str:
+    """Render a compact, secret-free route lifecycle for the Tool Inspector."""
+
+    parts: list[str] = []
+    for event in events[:MAX_WEB_SEARCH_ROUTE_TRACE_EVENTS]:
+        if not isinstance(event, WebSearchRouteTraceEvent):
+            raise TypeError("route trace events must be canonical")
+        detail = event.route.value + ":" + event.phase.value
+        if event.error_code is not None:
+            detail += ":" + event.error_code.value
+        if event.http_status is not None:
+            detail += f":HTTP {event.http_status}"
+        parts.append(detail)
+    rendered = " → ".join(parts)
+    return rendered if len(rendered) <= 2_048 else rendered[:2_047] + "…"
 
 
 class WebSearchError(NeuroCodeError):
     """A normalized, credential-free hosted-search failure."""
 
-    def __init__(self, code: WebSearchErrorCode, message: str) -> None:
+    def __init__(
+        self,
+        code: WebSearchErrorCode,
+        message: str,
+        *,
+        http_status: int | None = None,
+        route_trace: Sequence[WebSearchRouteTraceEvent] = (),
+    ) -> None:
         if not isinstance(code, WebSearchErrorCode):
             raise TypeError("web search error code must be canonical")
+        if http_status is not None and (
+            isinstance(http_status, bool)
+            or not isinstance(http_status, int)
+            or not 100 <= http_status <= 599
+        ):
+            raise ValueError("HTTP status must be between 100 and 599")
+        events = tuple(route_trace)
+        if len(events) > MAX_WEB_SEARCH_ROUTE_TRACE_EVENTS or any(
+            not isinstance(event, WebSearchRouteTraceEvent) for event in events
+        ):
+            raise ValueError("route trace must contain bounded canonical events")
         bounded = " ".join(str(message).split())[:1_000]
         super().__init__(bounded or code.value)
         self.code = code
+        self.http_status = http_status
+        self.route_trace = events
 
 
 def _bounded_text(
@@ -344,6 +447,8 @@ class WebSearchResult:
     model: str = ""
     truncated: bool = False
     metadata: Mapping[str, object] | None = None
+    route_trace: tuple[WebSearchRouteTraceEvent, ...] = ()
+    http_status: int | None = None
 
     def __post_init__(self) -> None:
         _bounded_text(self.query, name="web search result query", maximum=MAX_QUERY_CHARS)
@@ -356,6 +461,17 @@ class WebSearchResult:
             truncated = True
         if not isinstance(self.truncated, bool):
             raise TypeError("web search result truncated must be a boolean")
+        route_trace = tuple(self.route_trace)
+        if len(route_trace) > MAX_WEB_SEARCH_ROUTE_TRACE_EVENTS or any(
+            not isinstance(event, WebSearchRouteTraceEvent) for event in route_trace
+        ):
+            raise ValueError("route trace must contain bounded canonical events")
+        if self.http_status is not None and (
+            isinstance(self.http_status, bool)
+            or not isinstance(self.http_status, int)
+            or not 100 <= self.http_status <= 599
+        ):
+            raise ValueError("HTTP status must be between 100 and 599")
         if not all(isinstance(source, WebSearchSource) for source in self.sources):
             raise TypeError("web search sources must be canonical")
         if not all(isinstance(citation, WebSearchCitation) for citation in self.citations):
@@ -427,6 +543,7 @@ class WebSearchResult:
         object.__setattr__(self, "model", model)
         object.__setattr__(self, "truncated", truncated)
         object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "route_trace", route_trace)
 
     def _fixed_bytes(self) -> int:
         source_bytes = sum(_source_bytes(source) for source in self.sources)
@@ -521,6 +638,7 @@ __all__ = [
     "MAX_SOURCE_TITLE_CHARS",
     "MAX_SOURCE_URL_CHARS",
     "MAX_TOTAL_RESULT_BYTES",
+    "MAX_WEB_SEARCH_ROUTE_TRACE_EVENTS",
     "HostedWebSearch",
     "HostedWebSearchEvent",
     "HostedWebSearchEventSink",
@@ -534,6 +652,11 @@ __all__ = [
     "WebSearchQueryPort",
     "WebSearchRequest",
     "WebSearchResult",
+    "WebSearchRouteKind",
+    "WebSearchRouteName",
+    "WebSearchRoutePhase",
+    "WebSearchRouteTraceEvent",
     "WebSearchSource",
+    "render_web_search_route_trace",
     "resolve_web_search_path",
 ]

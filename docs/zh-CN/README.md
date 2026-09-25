@@ -108,6 +108,27 @@ Ultracode 路由还会识别“项目/仓库范围”与明确的优化意图同
 - **MCP** — 由 session 持有的 MCP server 连接支持 stdio、Streamable HTTP 和 legacy SSE transport，并提供有边界的工具发现与执行。
 - **ACP** — 提供 partial ACP v1 适配器，支持换行分隔的 stdio，并提供有边界的 WebSocket bridge，以及部分工作区绑定的 session、permission、filesystem 和 terminal 能力。ACP 兼容性明确是 partial；ACP-transport MCP server declaration、二进制多媒体历史回放、客户端交互式终端输入/resize/PTY 方法以及任意自定义扩展仍不支持；请参阅[兼容性矩阵](compatibility-matrix.md)。
 
+### 为 DeepSeek 等模型配置独立网页搜索
+
+DeepSeek 的 OpenAI 兼容 Responses 和 Chat 接口不会执行内置 `web_search`。对于官方 DeepSeek
+供应商配置，Neuro 会使用 DeepSeek 的 Anthropic 兼容 Search 适配器，并且只有在配置指向 DeepSeek
+官方 HTTPS 端点时才复用已有的 DeepSeek 密钥；不会把自定义地址或兼容网关的密钥发送到官方端点。
+Brave Search 是最后的独立兜底。获取 Brave Search API 密钥后，可打开
+**设置 → 网页能力 → Brave 网页搜索 API 密钥**进行配置。Neuro 会将密钥保存在用户 state
+目录的 `credentials.json` 中，与模型配置分开且不写入仓库。该文件当前不加密，也不使用系统密钥链。
+也可以设置 `BRAVE_SEARCH_API_KEY`；环境变量会覆盖设置中保存的值。在 Bash 中可避免把密钥写入 Shell 历史：
+
+```bash
+read -rsp 'Brave Search API key: ' BRAVE_SEARCH_API_KEY
+export BRAVE_SEARCH_API_KEY
+neuro
+```
+
+网页搜索模式保持为 `auto`。没有可执行的原生或供应商适配器路由时，Neuro 会将 Brave Search API
+作为最后兜底，设置页和 `/status` 会显示这一实际路径。搜索密钥与模型供应商密钥分开，不写入项目或对话。通过设置页保存后，
+运行时会重新加载并恢复当前会话。Brave 可能要求开通套餐，并可能对 API 调用计费。详见
+[ADR 0177](adr/0177-independent-search-api-backend.md)。
+
 ## 项目状态
 
 Neuro Code 处于 **pre-alpha** 阶段。当前源码树已包含 CLI 和无头运行时、Textual TUI、命名 provider profile、本地工具、SQLite session、权限与 sandbox 控制、MCP 连接以及 partial ACP 的已实现切片。

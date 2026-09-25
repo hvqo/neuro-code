@@ -12,6 +12,24 @@ from neuro_code.shared.ui_language import UiLanguage
 
 
 class ToolActivityPresentationTests(unittest.TestCase):
+    def test_search_route_trace_is_visible_in_tool_inspector_metadata(self) -> None:
+        trace = (
+            "DeepSeek Search:candidate → DeepSeek Search:selected → "
+            "DeepSeek Search:dispatched → DeepSeek Search:succeeded"
+        )
+        inspector = present_tool_inspector(
+            ToolCallSnapshot(
+                call_id="search-call",
+                name="web_search",
+                phase="completed",
+                metadata={"web_search_route_trace": trace},
+            ),
+            language=UiLanguage.ENGLISH,
+        )
+
+        self.assertIn("web_search_route_trace", inspector.meta)
+        self.assertIn("DeepSeek Search:dispatched", inspector.meta)
+
     def test_generic_renderer_fallback_is_bounded_and_redacted(self) -> None:
         content = "\n".join(
             ["API_KEY=sk-genericsecret123", *(f"result line {index}" for index in range(40))]

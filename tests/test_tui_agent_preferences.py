@@ -20,7 +20,10 @@ from neuro_code.application.ports.runtime_capabilities import (
     WebSearchAvailability,
     WebSearchUnavailableReason,
 )
-from neuro_code.application.ports.web_search import WebSearchExecutionPath
+from neuro_code.application.ports.web_search import (
+    WebSearchExecutionPath,
+    WebSearchRouteKind,
+)
 from neuro_code.interfaces.tui.app import NeuroCodeApp
 from neuro_code.interfaces.tui.screens.agent_preferences import (
     AgentPreferencesOverview,
@@ -398,7 +401,7 @@ async def test_unavailable_search_shows_fail_closed_status_and_provider_entry() 
         assert "unavailable" in str(
             screen.query_one("#agent-preferences-web-status", Static).renderable
         )
-        assert "No executable Search provider" in str(
+        assert "No executable Search backend" in str(
             screen.query_one("#agent-preferences-no-search-provider", Static).renderable
         )
         assert screen.query_one("#agent-preferences-manage-providers", Button)
@@ -407,6 +410,80 @@ async def test_unavailable_search_shows_fail_closed_status_and_provider_entry() 
             "auto",
             "custom",
         ]
+
+
+async def test_search_api_status_does_not_claim_a_hosted_model_provider() -> None:
+    store = UiPreferencesFixture()
+    resolution = AgentPreferenceResolution(
+        defaults=AgentPreferences(web_search_mode="auto", web_fetch_mode="disabled")
+    )
+    inspection = RuntimeWebCapabilityInspection(
+        WebSearchAvailability.AVAILABLE,
+        WebSearchExecutionPath.SEARCH_API,
+        search_profile="brave-search-api",
+        search_model="Brave Web Search",
+    )
+    app = NeuroCodeApp(
+        TuiConversation(),
+        ui_preferences=store,
+        provider_name="deepseek",
+        model_name="deepseek-flash",
+        cwd=Path("/tmp"),
+    )
+    screen = AgentPreferencesScreen(
+        "web-tools",
+        resolution.effective(),
+        store,
+        language=UiLanguage.ENGLISH,
+        resolution=resolution,
+        web_capabilities=inspection,
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(screen)
+        await pilot.pause()
+        status = str(screen.query_one("#agent-preferences-web-status", Static).renderable)
+        assert "Brave Search API" in status
+        assert "active as the final fallback" in str(
+            screen.query_one("#agent-preferences-no-search-provider", Static).renderable
+        )
+
+
+async def test_provider_adapter_status_displays_configured_brave_fallback() -> None:
+    store = UiPreferencesFixture()
+    resolution = AgentPreferenceResolution(
+        defaults=AgentPreferences(web_search_mode="auto", web_fetch_mode="disabled")
+    )
+    inspection = RuntimeWebCapabilityInspection(
+        WebSearchAvailability.AVAILABLE,
+        WebSearchExecutionPath.SIDECAR_HOSTED,
+        search_profile="DeepSeek Search",
+        search_model="deepseek-flash",
+        search_route_kind=WebSearchRouteKind.PROVIDER_ADAPTER,
+        search_fallback="Brave Search",
+    )
+    app = NeuroCodeApp(
+        TuiConversation(),
+        ui_preferences=store,
+        provider_name="deepseek",
+        model_name="deepseek-flash",
+        cwd=Path("/tmp"),
+    )
+    screen = AgentPreferencesScreen(
+        "web-tools",
+        resolution.effective(),
+        store,
+        language=UiLanguage.ENGLISH,
+        resolution=resolution,
+        web_capabilities=inspection,
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(screen)
+        await pilot.pause()
+        status = str(screen.query_one("#agent-preferences-web-status", Static).renderable)
+        assert "DeepSeek Search/deepseek-flash" in status
+        assert "Fallback: Brave Search" in status
 
 
 async def test_search_permission_blocker_does_not_suggest_provider_changes() -> None:

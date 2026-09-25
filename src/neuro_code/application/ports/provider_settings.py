@@ -175,6 +175,7 @@ class ManagedProviderSettings:
     default_provider: str | None = None
     proxy_defaults: ManagedProxyPolicy = field(default_factory=ManagedProxyPolicy)
     background_task_wake_policy: BackgroundTaskWakePolicy = BackgroundTaskWakePolicy.DISABLED
+    brave_search_api_key: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if len(self.profiles) > _MAX_PROFILES:
@@ -186,6 +187,19 @@ class ManagedProviderSettings:
             raise ConfigurationError("managed default provider does not exist")
         if not isinstance(self.background_task_wake_policy, BackgroundTaskWakePolicy):
             raise ConfigurationError("background task wake policy must be canonical")
+        if self.brave_search_api_key is not None and not isinstance(self.brave_search_api_key, str):
+            raise ConfigurationError("Brave Search API key must be a string")
+        if self.brave_search_api_key is not None and not self.brave_search_api_key.strip():
+            object.__setattr__(self, "brave_search_api_key", None)
+        if self.brave_search_api_key is not None and (
+            len(self.brave_search_api_key) > _MAX_API_KEY_CHARACTERS
+            or not self.brave_search_api_key.isascii()
+            or any(
+                ord(character) < 33 or ord(character) == 127
+                for character in self.brave_search_api_key
+            )
+        ):
+            raise ConfigurationError("Brave Search API key is invalid")
 
     def profile(self, name: str) -> ManagedProviderProfile | None:
         return next((profile for profile in self.profiles if profile.name == name), None)
@@ -228,6 +242,11 @@ class ProviderSettingsStore(Protocol):
     async def save_background_task_wake_policy(
         self,
         policy: BackgroundTaskWakePolicy,
+    ) -> ManagedProviderSettings: ...
+
+    async def save_brave_search_api_key(
+        self,
+        api_key: str | None,
     ) -> ManagedProviderSettings: ...
 
     async def delete_profile(self, name: str) -> ManagedProviderSettings: ...

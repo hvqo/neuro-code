@@ -14,6 +14,7 @@ from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.interfaces.tui.controllers.base import TuiAppControllerMixin
 from neuro_code.interfaces.tui.screens import (
     BackgroundWakeSettingsScreen,
+    BraveSearchApiKeySettingsScreen,
     InteractionModeScreen,
     LanguageSettingsScreen,
     NetworkProxySettingsScreen,
@@ -206,6 +207,22 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                 ),
                 self._background_wake_settings_selected,
             )
+            return
+        if category == "search-api-key":
+            if self._managed_provider_settings is None or self._provider_settings_store is None:
+                return
+            if self._turn_worker is not None and self._turn_worker.is_running:
+                self._write_ui_entry("error", "settings.extra.wait_for_turn")
+                await self.action_open_settings()
+                return
+            self.push_screen(
+                BraveSearchApiKeySettingsScreen(
+                    language=self._language,
+                    provider_settings=self._managed_provider_settings,
+                    provider_settings_store=self._provider_settings_store,
+                ),
+                self._search_api_key_settings_selected,
+            )
 
     def _apply_agent_preferences_to_ui(self) -> None:
         if not self.is_mounted:
@@ -302,6 +319,15 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
         await self.action_open_settings()
 
     async def _background_wake_settings_selected(
+        self,
+        settings: ManagedProviderSettings | None,
+    ) -> None:
+        if settings is not None:
+            self._request_runtime_configuration_reload()
+            return
+        await self.action_open_settings()
+
+    async def _search_api_key_settings_selected(
         self,
         settings: ManagedProviderSettings | None,
     ) -> None:

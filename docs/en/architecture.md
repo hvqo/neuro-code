@@ -3022,23 +3022,39 @@ unverified external portion. This does not impose a blanket restriction on
 explicitly requested shell networking, and shell scraping is not a silent
 replacement for public research.
 
-`WebSearchMode.AUTO` resolves only from trusted capability and executable
-backend facts. An explicitly supported MAIN hosted-search path is preferred
-when it can coexist with client tools. Otherwise an executable configured
-`WEB_SEARCH` route is used; if none is configured, composition checks eligible
-configured provider profiles in stable name order and selects the first route
-whose concrete hosted-search backend and credentials are available. MAIN and
-its failover profiles are not promoted into an independent sidecar. Unknown
-capabilities remain unknown. If resolution or the binding's tool allowlist
+`WebSearchMode.AUTO` resolves only from the trusted Search capability registry
+and executable backend facts. Its order is MAIN native search when it can
+coexist with client tools, a registered provider adapter or configured hosted
+Search route, then the user-configured Brave Search API. The DeepSeek adapter
+is available only for a DeepSeek service profile on the exact official HTTPS
+host and documented base path; custom endpoints and gateways never send their
+credentials to DeepSeek's Search endpoint. OpenAI Responses, Anthropic
+Messages, and Gemini Interactions retain their protocol-specific adapters.
+OpenAI-compatible Qwen or other profiles do not gain Search support by
+protocol resemblance. A saved Brave key under Settings → Web or
+`BRAVE_SEARCH_API_KEY` enables the final model-independent fallback; the
+environment value overrides the saved value. Unsupported and unavailable
+routes can fall through, while authentication, rate limits, invalid requests,
+and malformed responses surface without silently hiding the cause. A
+`did-not-search` response only fails the current request and does not quarantine
+the provider. New requests reconsider the configured priority order, even when
+the previous request succeeded through a fallback. Confirmed route-wide
+unsupported or endpoint-unavailable failures are not retried during the active
+binding. `disabled` remains off and explicit `inline` still requires MAIN native Search.
+If resolution or the binding's tool allowlist
 prevents execution, `web_search` is not registered and the binding carries a
 typed unavailable reason.
 
 The application-owned `RuntimeWebCapabilityInspection` reports effective
-search availability/path, a bounded provider/model label, a typed reason when
-unavailable, and the effective Web Fetch path. It excludes endpoint and
-credential values. The TUI `/status` projection reads this inspection from the
-active binding, after provider composition and tool filtering, so it reflects
-the tools actually available to that Agent.
+search availability/path, route kind, a bounded provider/model label, configured
+fallback, a typed reason when unavailable, and the effective Web Fetch path.
+It excludes endpoint and credential values. The TUI Settings and `/status`
+projections read this inspection from the active binding, after provider
+composition and tool filtering, so they reflect the routes actually available
+to that Agent. Search adapters return bounded provider-neutral evidence, keep
+credentials at the provider boundary, and treat results as untrusted external
+data. See
+[ADR 0177](adr/0177-independent-search-api-backend.md).
 
 The supervisor treats repeated actions, repeated errors, and periodic cycles
 as detectors rather than immediate terminal decisions. The first detection

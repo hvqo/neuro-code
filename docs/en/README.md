@@ -775,6 +775,34 @@ the proxy may change upstream providers. A project-local override may set
 trusted. Opaque reasoning is then replayed solely when the stored profile
 affinity fingerprint matches exactly.
 
+### Independent Web Search for DeepSeek and other MAIN models
+
+DeepSeek's OpenAI-compatible Responses and Chat interfaces do not execute
+built-in `web_search`. For an official DeepSeek provider profile, Neuro uses
+DeepSeek's Anthropic-compatible Search adapter and reuses the configured
+DeepSeek key only when the profile points to DeepSeek's official HTTPS endpoint.
+Custom bases and compatibility gateways are never sent to that endpoint.
+Brave Search is the final independent fallback. Obtain a Brave Search API key
+and open **Settings → Web → Brave Search API key**. Neuro stores it in its
+user-state `credentials.json`, separate from model profiles and outside the
+repository. This file is not encrypted or backed by a system keychain. You can
+also use `BRAVE_SEARCH_API_KEY`; that environment variable overrides the saved
+value. For a Bash session, enter the key without putting it in shell history:
+
+```bash
+read -rsp 'Brave Search API key: ' BRAVE_SEARCH_API_KEY
+export BRAVE_SEARCH_API_KEY
+neuro
+```
+
+Keep Web Search mode on `auto`. When no native or provider-specific route is
+executable, Neuro uses Brave Search API as the final fallback and reports that
+route in Settings and `/status`. The key
+is separate from the model provider key and is not saved in the project or
+conversation. Saving it in Settings rebuilds the runtime and resumes the
+current session. Brave may require a plan and may charge for API calls. See
+[ADR 0177](adr/0177-independent-search-api-backend.md).
+
 ### Local safe Web Fetch
 
 Local Web Fetch is opt-in and defaults to disabled. Add the following only

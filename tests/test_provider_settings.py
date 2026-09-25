@@ -80,6 +80,30 @@ class JsonProviderSettingsStoreTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(store.metadata_path.stat().st_mode & 0o777, 0o600)
                 self.assertEqual(store.credentials_path.stat().st_mode & 0o777, 0o600)
 
+    async def test_brave_search_key_round_trips_and_survives_other_settings_updates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = JsonProviderSettingsStore(Path(directory) / "state")
+            saved = await store.save_brave_search_api_key("brave-secret")
+
+            self.assertEqual(saved.brave_search_api_key, "brave-secret")
+            self.assertNotIn("brave-secret", repr(saved))
+            self.assertNotIn("brave-secret", store.metadata_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                json.loads(store.credentials_path.read_text(encoding="utf-8"))[
+                    "brave_search_api_key"
+                ],
+                "brave-secret",
+            )
+
+            await store.save_proxy_defaults(ManagedProxyPolicy("direct"))
+            await store.save_profile(self._profile())
+            self.assertEqual((await store.load()).brave_search_api_key, "brave-secret")
+
+            removed = await store.save_brave_search_api_key(None)
+            self.assertIsNone(removed.brave_search_api_key)
+            credentials = json.loads(store.credentials_path.read_text(encoding="utf-8"))
+            self.assertNotIn("brave_search_api_key", credentials)
+
     async def test_persisted_supported_claim_cannot_enable_unimplemented_hosted_wire_behavior(
         self,
     ) -> None:

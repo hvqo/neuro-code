@@ -344,7 +344,7 @@ _BOOTSTRAP_COMPOSITION_PRIVATE_HELPER_OWNERS = {
     "_available_search_provider_options": "neuro_code.bootstrap.composition_bindings",
     "_main_request_budget_metadata": "neuro_code.bootstrap.composition_bindings",
     "_profile_has_search_credentials": "neuro_code.bootstrap.composition_bindings",
-    "_route_has_search_credentials": "neuro_code.bootstrap.composition_bindings",
+    "_credentialed_search_route": "neuro_code.bootstrap.composition_bindings",
     "_without_main_inline_web_search": "neuro_code.bootstrap.composition_bindings",
     "_without_main_inline_web_fetch": "neuro_code.bootstrap.composition_bindings",
 }

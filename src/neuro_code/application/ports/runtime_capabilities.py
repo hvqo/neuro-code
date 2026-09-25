@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from neuro_code.application.ports.web_fetch import WebFetchExecutionPath
-from neuro_code.application.ports.web_search import WebSearchExecutionPath
+from neuro_code.application.ports.web_search import (
+    WebSearchExecutionPath,
+    WebSearchRouteKind,
+)
 
 
 class WebSearchAvailability(StrEnum):
@@ -63,6 +66,8 @@ class RuntimeWebCapabilityInspection:
     search_reason: WebSearchUnavailableReason | None = None
     search_profile: str | None = None
     search_model: str | None = None
+    search_route_kind: WebSearchRouteKind | None = None
+    search_fallback: str | None = None
     fetch_path: WebFetchExecutionPath = WebFetchExecutionPath.DISABLED
     search_providers: tuple[RuntimeSearchProviderOption, ...] = ()
 
@@ -73,6 +78,10 @@ class RuntimeWebCapabilityInspection:
             raise TypeError("search_path must be canonical")
         if not isinstance(self.fetch_path, WebFetchExecutionPath):
             raise TypeError("fetch_path must be canonical")
+        if self.search_route_kind is not None and not isinstance(
+            self.search_route_kind, WebSearchRouteKind
+        ):
+            raise TypeError("search_route_kind must be canonical or None")
         if self.search_reason is not None and not isinstance(
             self.search_reason, WebSearchUnavailableReason
         ):
@@ -102,6 +111,18 @@ class RuntimeWebCapabilityInspection:
         )
         object.__setattr__(
             self, "search_model", _safe_display(self.search_model, name="search_model")
+        )
+        if self.search_route_kind is None:
+            route_kind = {
+                WebSearchExecutionPath.DISABLED: WebSearchRouteKind.DISABLED,
+                WebSearchExecutionPath.INLINE_HOSTED: WebSearchRouteKind.NATIVE,
+                WebSearchExecutionPath.SIDECAR_HOSTED: WebSearchRouteKind.NATIVE,
+                WebSearchExecutionPath.SEARCH_API: WebSearchRouteKind.EXTERNAL_FALLBACK,
+                WebSearchExecutionPath.UNAVAILABLE: WebSearchRouteKind.UNAVAILABLE,
+            }[self.search_path]
+            object.__setattr__(self, "search_route_kind", route_kind)
+        object.__setattr__(
+            self, "search_fallback", _safe_display(self.search_fallback, name="search_fallback")
         )
         providers = tuple(self.search_providers)
         if len(providers) > 64 or any(
