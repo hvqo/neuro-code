@@ -12,7 +12,7 @@ from time import monotonic
 
 from neuro_code.application.ports.model import ModelCapabilitySet, ModelProvider, ModelToolPolicy
 from neuro_code.domain.conversation.context import ModelContext
-from neuro_code.domain.conversation.events import ModelEvent
+from neuro_code.domain.conversation.events import ModelEvent, ModelRequestTrajectoryObserved
 from neuro_code.domain.tools import ToolDefinition
 from neuro_code.infrastructure.providers.failure_policy import ProviderFailurePolicy
 from neuro_code.shared.errors import (
@@ -156,7 +156,8 @@ class ResilientModelProvider:
             try:
                 iterator = self._provider.stream(context, tools, tool_policy=tool_policy)
                 async for event in iterator:
-                    emitted = True
+                    if not isinstance(event, ModelRequestTrajectoryObserved):
+                        emitted = True
                     yield event
                 self._successes += 1
                 self._consecutive_failures = 0

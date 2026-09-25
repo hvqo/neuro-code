@@ -14,8 +14,13 @@ from neuro_code.application.ports.provider_catalog import (
     ProviderConnectionSpec,
 )
 from neuro_code.domain.conversation.context import ModelContext
-from neuro_code.domain.conversation.events import ModelEvent, ModelTextDelta
+from neuro_code.domain.conversation.events import (
+    ModelEvent,
+    ModelRequestTrajectoryObserved,
+    ModelTextDelta,
+)
 from neuro_code.domain.conversation.messages import Message, Role
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.infrastructure.providers.catalog_cache import PersistentProviderCatalog
 from neuro_code.infrastructure.providers.resilience import ResilientModelProvider
 from neuro_code.shared.errors import ProviderError, ProviderFailureKind
@@ -80,6 +85,62 @@ class ProviderResilienceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.calls, 2)
         self.assertEqual(resilient.health.successes, 1)
         self.assertNotIn("api", json.dumps(resilient.health.to_dict()))
+
+    async def test_digest_only_trajectory_does_not_suppress_pre_output_retry(self) -> None:
+        digest = "0" * 64
+
+        class DiagnosticProvider(_Provider):
+            async def stream(
+                self,
+                context: ModelContext,
+                tools: tuple[object, ...],
+                *,
+                tool_policy: ModelToolPolicy = ModelToolPolicy.ALLOWED,
+            ) -> AsyncIterator[ModelEvent]:
+                del context, tools, tool_policy
+                self.calls += 1
+                yield ModelRequestTrajectoryObserved(
+                    sequence=self.calls,
+                    source=ModelRequestSource.MAIN_TURN,
+                    provider=self.provider_name,
+                    model=self.model_name,
+                    context_generation=0,
+                    cache_epoch=0,
+                    boundary_reason=None,
+                    message_fingerprints=(digest,),
+                    message_count=1,
+                    tool_count=0,
+                    tools_fingerprint=digest,
+                    stable_prefix_fingerprint=digest,
+                    request_fingerprint=digest,
+                    common_prefix_messages=None,
+                    first_divergence_index=None,
+                    previous_message_count=None,
+                    append_only=None,
+                )
+                if self.calls == 1:
+                    raise ProviderError.classified(
+                        ProviderFailureKind.NETWORK,
+                        "pre-output request failure",
+                    )
+                yield ModelTextDelta("ok")
+
+        provider = DiagnosticProvider(failures=0)
+        resilient = ResilientModelProvider(provider, max_attempts=2, backoff_seconds=0)
+        events = [
+            event
+            async for event in resilient.stream(
+                ModelContext((Message(Role.USER, "hello"),)),
+                (),
+            )
+        ]
+
+        self.assertEqual(provider.calls, 2)
+        self.assertEqual(
+            sum(isinstance(event, ModelRequestTrajectoryObserved) for event in events),
+            2,
+        )
+        self.assertTrue(any(isinstance(event, ModelTextDelta) for event in events))
 
     async def test_catalog_falls_back_to_a_persisted_result_on_network_failure(self) -> None:
         delegate = _Catalog()

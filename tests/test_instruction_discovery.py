@@ -691,11 +691,16 @@ class TestRuntimeInstructionInjection:
             item
             for item in captured_contexts[0].items
             if isinstance(item, Message)
-            and item.synthetic_reason is SyntheticReason.PROJECT_INSTRUCTIONS
+            and item.synthetic_reason
+            in {
+                SyntheticReason.PROJECT_INSTRUCTIONS,
+                SyntheticReason.INSTRUCTION_SCOPE_REVISION,
+            }
         ]
-        assert len(second_instr) == 1
-        assert "version 2" in second_instr[0].content
-        assert "version 1" not in second_instr[0].content
+        assert len(second_instr) == 2
+        assert "version 1" in second_instr[0].content
+        assert "version 2" in second_instr[1].content
+        assert "supersedes earlier instruction revisions" in second_instr[1].content
 
 
 # ---------------------------------------------------------------------------
@@ -970,11 +975,18 @@ class TestAgentRuntimeDeepScope:
             item
             for item in captured_contexts[1].items
             if isinstance(item, Message)
-            and item.synthetic_reason is SyntheticReason.PROJECT_INSTRUCTIONS
+            and item.synthetic_reason
+            in {
+                SyntheticReason.PROJECT_INSTRUCTIONS,
+                SyntheticReason.INSTRUCTION_SCOPE_REVISION,
+            }
         ]
-        assert len(step2_instr) == 1
+        assert len(step2_instr) == 2
         assert "root: use 2-space indent" in step2_instr[0].content
-        assert "deep: use 4-space indent" in step2_instr[0].content
+        assert "deep: use 4-space indent" not in step2_instr[0].content
+        assert "root: use 2-space indent" in step2_instr[1].content
+        assert "deep: use 4-space indent" in step2_instr[1].content
+        assert "src/deep/AGENTS.md" in step2_instr[1].content
 
     async def test_subtree_isolation_in_runtime(self, tmp_path: Path) -> None:
         """When read_file moves from src/foo/ to src/bar/, the deep AGENTS.md
@@ -1077,10 +1089,15 @@ class TestAgentRuntimeDeepScope:
             item
             for item in captured_contexts[1].items
             if isinstance(item, Message)
-            and item.synthetic_reason is SyntheticReason.PROJECT_INSTRUCTIONS
+            and item.synthetic_reason
+            in {
+                SyntheticReason.PROJECT_INSTRUCTIONS,
+                SyntheticReason.INSTRUCTION_SCOPE_REVISION,
+            }
         ]
         assert len(step2_instr) == 1
         assert "foo rules" in step2_instr[0].content
+        assert "src/foo/AGENTS.md" in step2_instr[0].content
         assert "bar rules" not in step2_instr[0].content
 
         # Step 3 (after reading src/bar/file.txt): instruction includes "bar rules"
@@ -1089,11 +1106,20 @@ class TestAgentRuntimeDeepScope:
             item
             for item in captured_contexts[2].items
             if isinstance(item, Message)
-            and item.synthetic_reason is SyntheticReason.PROJECT_INSTRUCTIONS
+            and item.synthetic_reason
+            in {
+                SyntheticReason.PROJECT_INSTRUCTIONS,
+                SyntheticReason.INSTRUCTION_SCOPE_REVISION,
+            }
         ]
-        assert len(step3_instr) == 1
-        assert "bar rules" in step3_instr[0].content
-        assert "foo rules" not in step3_instr[0].content
+        assert len(step3_instr) == 2
+        latest_revision = step3_instr[-1].content
+        assert "bar rules" in latest_revision
+        assert "foo rules" in step3_instr[0].content
+        assert "foo rules" not in latest_revision
+        assert "src/bar/AGENTS.md" in latest_revision
+        assert "src/foo/AGENTS.md" not in latest_revision
+        assert "directory scopes omitted here are no longer active" in latest_revision
 
 
 # ---------------------------------------------------------------------------

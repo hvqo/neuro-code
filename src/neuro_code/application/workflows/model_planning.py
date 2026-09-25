@@ -20,6 +20,7 @@ from neuro_code.application.runtime.agent import EventSink
 from neuro_code.application.sessions.binding import ConversationBinding
 from neuro_code.application.workflows.task_dag import CreateTaskDagRequest
 from neuro_code.domain.conversation.messages import Message, Role
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.execution import TurnSource
 from neuro_code.domain.model_planning import (
     MAX_MODEL_PLANNING_OBJECTIVE_BYTES,
@@ -234,6 +235,7 @@ class ModelDagPlanningApplicationService:
                 sink=None,
                 turn_id=fenced.planner_turn_id,
                 turn_source=TurnSource.USER,
+                model_request_source=ModelRequestSource.WORKFLOW_CHILD,
             )
         except asyncio.CancelledError:
             await asyncio.shield(self._mark_indeterminate(fenced))

@@ -1800,25 +1800,34 @@ framework detection 和 public verification UI 不在本切片范围内。VF-4c 
 
 ## 面向 Prompt Cache 的模型请求投影与用量
 
-面向缓存稳定性的上下文契约为 `Stable Prefix → Append-only Conversation → Volatile Tail`。稳定前缀包含
-请求范围 system 策略、确定顺序的工具定义，以及有序的项目指令、Skills 和 Project Memory projection。
-Project Memory 每个 active context generation 只读取一次；即使后台提取更新 store，generation 活跃期间
-快照仍保持字节稳定。新建或恢复 Session、project attach/move/detach，以及已提交的 Fresh Context
-Rollover 会刷新；重命名保留相同的项目身份。Full compaction 不是 generation boundary，因此不会刷新。
-项目指令和 Skills 保持现有的工作区刷新行为，源内容不变时其有序序列化也保持稳定。
+面向缓存完整性的请求契约升级为 `Stable Prefix → Monotonic Provider Projection → Explicit Cache Boundaries`。
+稳定前缀包含请求范围 system 策略、确定顺序的工具定义，以及有序的项目指令、Skills 和 Project Memory
+projection。Project Memory 每个 active context generation 只读取一次；即使后台提取更新 store，generation
+活跃期间快照仍保持字节稳定。新建或恢复 Session、project attach/move/detach，以及已提交的 Fresh Context
+Rollover 会刷新；重命名保留相同的项目身份。Full compaction 不刷新 Project Memory snapshot，但它本身是
+显式的 cache boundary。项目指令和 Skills 在首次请求固定稳定快照，之后的作用域/目录变化作为带完整当前范围
+说明的合成修订追加；更深目录规则仍适用于对应目录，兄弟目录规则不会跨作用域生效。
 
-可变的计划修订、segment checkpoint、预算压力、REPLAN 状态和当前 Working Set 不会写回 system 消息，也不会
-插入到持久化会话条目之前。Working Set 与有界 synthetic runtime notices 位于 append-only conversation
-之后，作为 volatile tail context。预算指引只会在离散的 `CONSERVE`、`FOCUS`、`FINAL_STAGE` 压力状态
-发生转换时追加，不会在每个模型步骤重写精确的
-剩余计数。这些通知不会进入会话持久化、恢复重放或压缩源条目。后台任务完成提醒是一个有意保留的
-单请求尾部例外：只有 Provider 成功完成后才会确认它。
+规范 Session History、Provider Projection Journal 与 Provider Wire Request 是三个不同投影。规范历史由既有
+Session owner 持有；有界、仅内存的 journal 只接受应用拥有的 typed synthetic control messages，按规范条目边界
+追加 Working Set、计划、预算、监督、指令范围和技能目录修订；较新的 Working Set/预算修订会明确标注其权威性，
+较早的分段 checkpoint 保留为已确认进度。Journal 不进入持久化、恢复、导出或压缩输入。重启会建立
+新 binding/epoch 并从当前稳定快照重建，不试图恢复 journal。最终 Provider adapter 在构造真实请求体后、派发前
+记录按进程随机 HMAC key 计算的消息/工具/稳定前缀/请求指纹与形状 metadata；默认关闭，可用
+`NEURO_PROMPT_TRAJECTORY=1` 显式开启。轨迹不保留正文、工具参数、隐藏 reasoning、headers 或凭据；超出有界消息
+数量时不比较截断前缀。Provider 用量只采用其实际报告且语义明确的字段，无法可靠计算的缓存比例保持 `None`。
 
-因此，在未变化的长回合中，请求 *N + 1* 保留相同的稳定前缀，在对话中追加新的持久条目，然后带上当前
-volatile tail。历史内容只会在明确的缓存失效 context boundary，或测量证明收益足够时才追溯改写。
-Project Memory、Working Set 以及未来的 microcompaction/compaction 都必须同时权衡 token reduction、cache
-preservation 和 correctness。这不承诺一定命中缓存：各 Provider 的缓存键、分词方式、保留时间和可缓存
-条件不同；真实项目指令或技能发生变更时，使相应前缀失效正是正确行为。
+同一 cache epoch 中的普通 Main Agent 请求应使上一次 Provider-visible message sequence 成为下一次的精确消息边界前缀，
+并保持 tool definitions 不变。Working Set、运行时 notices、Project Instructions 与 Skills 的后续变化只向 projection
+journal 追加；相同修订不会重复追加。绑定/Project scope、模型/供应商、工具 schema、配置重载、Microcompaction
+批次、Full Compaction 和 Fresh Context Rollover 是显式边界；Project Memory rename 不构成边界。预算指引只会在离散的
+`CONSERVE`、`FOCUS`、`FINAL_STAGE` 压力状态变化时追加，不会每步重写剩余计数。后台任务完成提醒仍是一个仅在 Provider
+成功后确认的单请求尾部例外。超限 journal fail closed，而不会静默丢弃已可见修订。此结构性契约不保证 Provider 一定命中
+缓存：缓存键、分词、保留时间和资格均由供应商决定；token reduction、cache preservation 与 correctness 必须共同权衡。
+
+历史内容只会在明确的 cache boundary，或测量证明收益足够时才追溯改写。Project Memory、Working Set、
+Microcompaction 与 Full Compaction 都必须同时权衡 token reduction、cache preservation 和 correctness；
+真实项目指令或技能发生变更时，使相应上下文发生边界变化或追加修订才是正确行为。
 
 ## Microcompaction V1（微压缩）
 
@@ -1828,7 +1837,7 @@ Microcompaction 是对模型可见投影执行的确定性清理，与 Full Comp
 
 应用层按 session 和 context generation 保存内存快照，记录精确 group fingerprint、稳定条目边界与前缀 fingerprint、compaction identity 和聚合 telemetry。相同快照会稳定重放；只有新的压力触发同时观察到稳定前缀/compaction 边界变化，或有意义的追加（至少八个稳定条目或 2,048 个估算 token）时，才允许建立下一批。每批一次处理全部符合条件的 group，且至少要节省 1,024 个序列化条目字节和 256 个估算 token；收益不足时返回 `NOOP`。扫描最多处理 16,384 个条目和 8 MiB 的保守序列化尺寸上限，嵌套值的深度/数量也有界；单个 assistant group 最多包含 128 个 call 和 256 个 content part。Fingerprint 集合和 Runtime 结果状态账本也有上限。该状态不持久化：进程重启后从规范历史重新投影，没有本次 Runtime 成功证据的结果会 fail closed。已提交的 Fresh Context generation 会清除快照。
 
-不包含正文的聚合 telemetry 附加到既有 Context Preflight event，记录 trigger reason、压缩的 group/result 数量、前后估算字节/token、节省量、稳定边界、可选 `NOOP` reason，以及估算值是否因来源上限而饱和。Microcompaction 不增加 Provider 专属 cache key、新 Runtime Trace 或 durable state 格式。它遵循 `Stable Prefix → Append-only Conversation → Volatile Tail`，并以批量方式改写投影，避免每次请求只清理一个结果。
+不包含正文的聚合 telemetry 附加到既有 Context Preflight event，记录 trigger reason、压缩的 group/result 数量、前后估算字节/token、节省量、稳定边界、可选 `NOOP` reason，以及估算值是否因来源上限而饱和。Microcompaction 不增加 Provider 专属 cache key、新 Runtime Trace 或 durable state 格式。它以一个有界批次建立 `MICROCOMPACTION_BATCH` cache boundary，并在同一稳定快照后保持投影不变；不能每次请求只清理一个结果造成缓存抖动。
 
 `ModelCompleted.usage` 现在携带与 Provider 无关的 `ModelUsage` 值：Provider 原始的输入/输出字段，以及可选的
 缓存读取（同时以 `cache_hit_tokens` 作为别名）、缓存写入和缓存未命中 token。输入 token 的语义会被明确标识。

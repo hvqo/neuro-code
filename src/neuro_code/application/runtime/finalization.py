@@ -10,6 +10,8 @@ model request from already available context and evidence.
 
 from __future__ import annotations
 
+import os
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -28,6 +30,7 @@ from neuro_code.application.runtime.verification import (
 from neuro_code.domain.conversation.context import ModelContext
 from neuro_code.domain.conversation.events import ModelCompleted, ModelTextDelta, ModelToolCall
 from neuro_code.domain.conversation.messages import Message, Role, ToolCall
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.execution import RequirementStrength, SupervisorReasonCode
 from neuro_code.domain.tools import ToolResult
 from neuro_code.shared.errors import ProviderError
@@ -489,6 +492,9 @@ class AgentFinalizer:
         context: ModelContext,
         evidence: FinalizationEvidence,
         rejections: Sequence[Message],
+        *,
+        trajectory_id: str | None,
+        trajectory_enabled: bool,
     ) -> ModelContext:
         return ModelContext(
             (*context.items, *rejections, Message(Role.SYSTEM, self._instruction(evidence))),
@@ -496,6 +502,12 @@ class AgentFinalizer:
             context.source_model,
             context.source_context_affinity,
             context.reasoning_effort,
+            request_source=ModelRequestSource.FINALIZER,
+            trajectory_id=trajectory_id,
+            context_generation=context.context_generation,
+            cache_epoch=context.cache_epoch,
+            cache_boundary_reason=context.cache_boundary_reason,
+            prompt_trajectory_enabled=trajectory_enabled,
         )
 
     @staticmethod
@@ -541,11 +553,24 @@ class AgentFinalizer:
 
         attempts: list[FinalizationAttempt] = []
         rejections: tuple[Message, ...] = ()
+        trajectory_enabled = os.environ.get("NEURO_PROMPT_TRAJECTORY", "").casefold() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        trajectory_id = uuid.uuid4().hex if trajectory_enabled else None
         for attempt_number in range(1, self._max_attempts + 1):
             step_text: list[str] = []
             illegal_calls: list[ToolCall] = []
             completion: ModelCompleted | None = None
-            temporary_context = self._temporary_context(context, evidence, rejections)
+            temporary_context = self._temporary_context(
+                context,
+                evidence,
+                rejections,
+                trajectory_id=trajectory_id,
+                trajectory_enabled=trajectory_enabled,
+            )
             async for event in self._provider.stream(
                 temporary_context,
                 (),

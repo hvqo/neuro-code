@@ -520,6 +520,8 @@ class WorkingSetTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(working_set_message)
         assert working_set_message is not None
         self.assertEqual(working_set_message.synthetic_reason, SyntheticReason.WORKING_SET)
+        self.assertIn("revision 3", working_set_message.content)
+        self.assertIn("highest revision supersedes earlier", working_set_message.content)
         self.assertNotIn(self.secret, working_set_message.content)
         self.assertNotIn(self.session_id, working_set_message.content)
         self.assertLessEqual(

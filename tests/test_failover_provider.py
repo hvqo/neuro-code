@@ -17,9 +17,11 @@ from neuro_code.domain.conversation.events import (
     ModelEvent,
     ModelProviderAttemptFailed,
     ModelProviderSelected,
+    ModelRequestTrajectoryObserved,
     ModelTextDelta,
 )
 from neuro_code.domain.conversation.messages import Message, Role
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.tools import ToolDefinition
 from neuro_code.infrastructure.providers.failover import FailoverModelProvider, ProviderCandidate
 from neuro_code.shared.errors import ConfigurationError, ProviderError, ProviderFailureKind
@@ -449,6 +451,50 @@ class FailoverModelProviderTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(emitted), 2)
         self.assertTrue(all(isinstance(event, ModelProviderAttemptFailed) for event in emitted))
+
+    async def test_request_trajectory_diagnostic_does_not_block_pre_output_failover(self) -> None:
+        digest = "0" * 64
+        trajectory = ModelRequestTrajectoryObserved(
+            sequence=1,
+            source=ModelRequestSource.MAIN_TURN,
+            provider="primary",
+            model="primary-model",
+            context_generation=0,
+            cache_epoch=0,
+            boundary_reason=None,
+            message_fingerprints=(digest,),
+            message_count=1,
+            tool_count=0,
+            tools_fingerprint=digest,
+            stable_prefix_fingerprint=digest,
+            request_fingerprint=digest,
+            common_prefix_messages=None,
+            first_divergence_index=None,
+            previous_message_count=None,
+            append_only=None,
+        )
+        primary = ScriptedModelProvider(
+            "primary",
+            ((trajectory, _network_failure("request failed after dispatch")),),
+        )
+        fallback = ScriptedModelProvider(
+            "fallback",
+            ((ModelTextDelta("fallback succeeded"), ModelCompleted("stop")),),
+        )
+        router = FailoverModelProvider((_candidate(primary), _candidate(fallback)))
+
+        events = [
+            event
+            async for event in router.stream(
+                ModelContext((Message(Role.USER, "fixture"),)),
+                (),
+            )
+        ]
+
+        self.assertIn(trajectory, events)
+        self.assertTrue(any(isinstance(event, ModelProviderAttemptFailed) for event in events))
+        self.assertEqual(fallback.calls, 1)
+        self.assertTrue(any(isinstance(event, ModelCompleted) for event in events))
 
     async def test_aggregate_failure_detail_is_bounded(self) -> None:
         providers = tuple(

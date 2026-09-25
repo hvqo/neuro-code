@@ -19,6 +19,10 @@ from typing import Any
 from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
 from neuro_code.application.ports.project_memory import ProjectMemoryStore
 from neuro_code.application.ports.storage import SessionStore
+from neuro_code.application.runtime.request_diagnostics import (
+    new_trajectory_id,
+    prompt_trajectory_opted_in,
+)
 from neuro_code.domain.conversation.context import ModelContext
 from neuro_code.domain.conversation.events import (
     ModelCompleted,
@@ -28,6 +32,7 @@ from neuro_code.domain.conversation.events import (
     ModelToolCall,
 )
 from neuro_code.domain.conversation.messages import Message, Role
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.memory import (
     MAX_PROJECT_MEMORY_CONTENT_BYTES,
     MAX_PROJECT_MEMORY_DESCRIPTION_CHARS,
@@ -496,6 +501,7 @@ class ProjectMemoryExtractionManager:
         )
 
     async def _generate(self, provider: ModelProvider, prompt: str) -> list[dict[str, Any]]:
+        trajectory_enabled = prompt_trajectory_opted_in()
         context = ModelContext(
             (
                 Message(Role.SYSTEM, _EXTRACTION_SYSTEM_PROMPT),
@@ -504,6 +510,9 @@ class ProjectMemoryExtractionManager:
             source_provider=provider.provider_name,
             source_model=provider.model_name,
             source_context_affinity=provider.context_affinity,
+            request_source=ModelRequestSource.PROJECT_MEMORY_EXTRACTION,
+            trajectory_id=new_trajectory_id(enabled=trajectory_enabled),
+            prompt_trajectory_enabled=trajectory_enabled,
         )
         text_parts: list[str] = []
         byte_count = 0

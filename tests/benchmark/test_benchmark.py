@@ -132,10 +132,10 @@ def test_metrics_project_observable_counts_only() -> None:
     assert metrics["agent_invoked_final_verification"] is True
 
 
-def test_taxonomy_is_bounded_and_deterministic() -> None:
+def test_taxonomy_is_bounded_and_deterministic(tmp_path: Path) -> None:
     task = task_by_id("A01-repository-lookup")
     failure_event = AgentEvent.create(1, AgentEventKind.TOOL_FAILED, {"name": "bash"})
-    verifier = verify_workspace(task, Path("/tmp"))
+    verifier = verify_workspace(task, tmp_path)
     primary, secondary, evidence = classify_failure(task, verifier, (failure_event,))
     assert primary == "TOOL_EXECUTION"
     assert validate_taxonomy(primary, secondary) == ()

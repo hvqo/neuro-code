@@ -1642,6 +1642,7 @@ def test_canonical_provider_modules_are_the_only_provider_implementations() -> N
         "neuro_code.infrastructure.providers.managed_provider_settings",
         "neuro_code.infrastructure.providers.hosted_web_search",
         "neuro_code.infrastructure.providers.resilience",
+        "neuro_code.infrastructure.providers.request_trajectory",
     }
     assert {
         module for module in modules if module.startswith("neuro_code.infrastructure.providers")
@@ -1805,12 +1806,15 @@ def test_canonical_runtime_modules_are_the_only_runtime_implementations() -> Non
         "neuro_code.application.runtime.background_task_reminders",
         "neuro_code.application.runtime.agent",
         "neuro_code.application.runtime.agent_loop",
+        "neuro_code.application.runtime.cache_continuity",
         "neuro_code.application.runtime.context_builder",
         "neuro_code.application.runtime.event_recorder",
         "neuro_code.application.runtime.finalization",
         "neuro_code.application.runtime.final_response",
         "neuro_code.application.runtime.model_step",
         "neuro_code.application.runtime.process_liveness",
+        "neuro_code.application.runtime.projection_journal",
+        "neuro_code.application.runtime.request_diagnostics",
         "neuro_code.application.runtime.supervision",
         "neuro_code.application.runtime.tool_scheduler",
         "neuro_code.application.runtime.tool_pipeline",
