@@ -256,7 +256,7 @@ class McpStdioToolCollectionTests(unittest.IsolatedAsyncioTestCase):
                 (
                     McpStdioServerConfig(
                         name="sandboxed-fixture",
-                        command=sys.executable,
+                        command=str(Path(sys.executable).resolve()),
                         args=(str(_FIXTURE),),
                         env=(("MCP_FIXTURE_SECRET", "fixture-secret-value"),),
                     ),
