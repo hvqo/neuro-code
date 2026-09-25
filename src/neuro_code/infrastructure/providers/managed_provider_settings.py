@@ -61,8 +61,10 @@ def load_managed_provider_settings(state_dir: Path) -> ManagedProviderSettings:
     credentials_path = state_dir / _CREDENTIALS_NAME
     raw_metadata = _read_json(metadata_path, missing=None)
     if raw_metadata is None:
-        return ManagedProviderSettings()
-    metadata, metadata_version = _mapping(raw_metadata, path=metadata_path)
+        metadata: Mapping[str, object] = {"providers": []}
+        metadata_version = _SCHEMA_VERSION
+    else:
+        metadata, metadata_version = _mapping(raw_metadata, path=metadata_path)
     raw_credentials = _read_json(
         credentials_path,
         missing={"version": _SCHEMA_VERSION, "api_keys": {}},
@@ -78,6 +80,18 @@ def load_managed_provider_settings(state_dir: Path) -> ManagedProviderSettings:
                 f"managed provider credentials {credentials_path} contain an invalid entry"
             )
         api_keys[name] = value.strip()
+    raw_brave_search_api_key = credentials.get("brave_search_api_key")
+    if raw_brave_search_api_key is not None and (
+        not isinstance(raw_brave_search_api_key, str)
+        or not raw_brave_search_api_key.strip()
+        or len(raw_brave_search_api_key) > 16_384
+    ):
+        raise ConfigurationError(
+            f"managed provider credentials {credentials_path} contain an invalid search key"
+        )
+    brave_search_api_key = (
+        raw_brave_search_api_key.strip() if isinstance(raw_brave_search_api_key, str) else None
+    )
 
     raw_profiles = metadata.get("providers", [])
     if not isinstance(raw_profiles, list):
@@ -207,6 +221,7 @@ def load_managed_provider_settings(state_dir: Path) -> ManagedProviderSettings:
         raw_default,
         ManagedProxyPolicy(proxy_mode, proxy_url_env),
         wake_policy,
+        brave_search_api_key,
     )
 
 

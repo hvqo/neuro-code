@@ -40,6 +40,7 @@ from neuro_code.application.ports.web_search import (
     WebSearchMode,
     WebSearchRequest,
     WebSearchResult,
+    WebSearchRouteKind,
     WebSearchSource,
 )
 from neuro_code.application.runtime.supervision import ExecutionControlMode
@@ -302,7 +303,9 @@ context_window_tokens = 65536
                         binding = await application.create_binding()
                         self.assertIs(
                             binding.runtime_web_capabilities.search_path,
-                            WebSearchExecutionPath.SEARCH_API,
+                            WebSearchExecutionPath.SIDECAR_HOSTED
+                            if service.service_id == "deepseek"
+                            else WebSearchExecutionPath.SEARCH_API,
                         )
                         self.assertIn("web_search", binding.runner._runtime._tools.names())
                     finally:
@@ -310,12 +313,18 @@ context_window_tokens = 65536
 
     async def test_search_api_preserves_disabled_inline_and_explicit_route_boundaries(self) -> None:
         cases = (
-            ("auto", False, False, WebSearchUnavailableReason.NO_COMPATIBLE_PROVIDER),
-            ("disabled", True, False, None),
-            ("inline", True, False, WebSearchUnavailableReason.MAIN_CAPABILITY_UNSUPPORTED),
-            ("auto", True, True, WebSearchUnavailableReason.CONFIGURED_ROUTE_UNAVAILABLE),
+            ("auto", False, False, WebSearchExecutionPath.SIDECAR_HOSTED, None),
+            ("disabled", True, False, WebSearchExecutionPath.DISABLED, None),
+            (
+                "inline",
+                True,
+                False,
+                WebSearchExecutionPath.UNAVAILABLE,
+                WebSearchUnavailableReason.MAIN_CAPABILITY_UNSUPPORTED,
+            ),
+            ("auto", True, True, WebSearchExecutionPath.SIDECAR_HOSTED, None),
         )
-        for mode, has_key, explicit_route, expected_reason in cases:
+        for mode, has_key, explicit_route, expected_path, expected_reason in cases:
             with (
                 self.subTest(mode=mode, has_key=has_key, explicit_route=explicit_route),
                 tempfile.TemporaryDirectory() as directory,
@@ -358,6 +367,20 @@ context_window_tokens = 65536
                         inspection = binding.runtime_web_capabilities
                         self.assertIsNotNone(inspection)
                         assert inspection is not None
+                        if mode == "disabled":
+                            self.assertIs(
+                                inspection.search_availability,
+                                WebSearchAvailability.DISABLED,
+                            )
+                            self.assertNotIn("web_search", binding.runner._runtime._tools.names())
+                            continue
+                        if expected_reason is None:
+                            self.assertIs(
+                                inspection.search_path,
+                                expected_path,
+                            )
+                            self.assertIn("web_search", binding.runner._runtime._tools.names())
+                            continue
                         self.assertNotIn("web_search", binding.runner._runtime._tools.names())
                         self.assertIs(inspection.search_reason, expected_reason)
                         self.assertIs(
@@ -369,7 +392,7 @@ context_window_tokens = 65536
                     finally:
                         await application.close()
 
-    async def test_managed_deepseek_profile_uses_independent_search_api(self) -> None:
+    async def test_managed_official_deepseek_profile_uses_provider_search_adapter(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             state = root / "state"
@@ -397,7 +420,19 @@ context_window_tokens = 65536
                     binding = await application.create_binding()
                     self.assertIs(
                         binding.runtime_web_capabilities.search_path,
-                        WebSearchExecutionPath.SEARCH_API,
+                        WebSearchExecutionPath.SIDECAR_HOSTED,
+                    )
+                    self.assertEqual(
+                        binding.runtime_web_capabilities.search_profile,
+                        "DeepSeek Search",
+                    )
+                    self.assertEqual(
+                        binding.runtime_web_capabilities.search_fallback,
+                        "Brave Search",
+                    )
+                    self.assertIs(
+                        binding.runtime_web_capabilities.search_route_kind,
+                        WebSearchRouteKind.PROVIDER_ADAPTER,
                     )
                     self.assertIn("web_search", binding.runner._runtime._tools.names())
                     self.assertNotIn(
@@ -410,6 +445,86 @@ context_window_tokens = 65536
                     self.assertIs(
                         restricted.runtime_web_capabilities.search_reason,
                         WebSearchUnavailableReason.TOOL_NOT_ALLOWED,
+                    )
+                finally:
+                    await application.close()
+
+    async def test_official_deepseek_origin_works_with_openai_catalog_id_without_brave(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            await JsonProviderSettingsStore(state).save_profile(
+                ManagedProviderProfile(
+                    name="deepseek",
+                    protocol="openai-responses",
+                    model="deepseek-flash",
+                    base_url="https://api.deepseek.com",
+                    service_id="openai",
+                    api_key="model-key",
+                )
+            )
+            with patch.dict(
+                "os.environ",
+                {"HOME": str(root), "NEURO_CODE_HOME": str(state)},
+                clear=True,
+            ):
+                application = await ApplicationComposition.open(ApplicationSettings(cwd=root))
+                try:
+                    binding = await application.create_binding()
+                    inspection = binding.runtime_web_capabilities
+                    self.assertIsNotNone(inspection)
+                    assert inspection is not None
+                    self.assertIs(inspection.search_availability, WebSearchAvailability.AVAILABLE)
+                    self.assertIs(
+                        inspection.search_path,
+                        WebSearchExecutionPath.SIDECAR_HOSTED,
+                    )
+                    self.assertEqual(inspection.search_profile, "DeepSeek Search")
+                    self.assertIsNone(inspection.search_fallback)
+                    self.assertIs(
+                        inspection.search_route_kind,
+                        WebSearchRouteKind.PROVIDER_ADAPTER,
+                    )
+                    self.assertIn("web_search", binding.runner._runtime._tools.names())
+                finally:
+                    await application.close()
+
+    async def test_saved_search_api_key_enables_search_without_environment_configuration(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            settings_store = JsonProviderSettingsStore(state)
+            await settings_store.save_profile(
+                ManagedProviderProfile(
+                    name="deepseek",
+                    protocol="openai-responses",
+                    model="deepseek-flash",
+                    base_url="https://api.deepseek.com",
+                    service_id="deepseek",
+                    api_key="model-key",
+                )
+            )
+            await settings_store.save_brave_search_api_key("saved-search-key")
+            with patch.dict(
+                "os.environ",
+                {"HOME": str(root), "NEURO_CODE_HOME": str(state)},
+                clear=True,
+            ):
+                application = await ApplicationComposition.open(ApplicationSettings(cwd=root))
+                try:
+                    binding = await application.create_binding()
+                    self.assertIs(
+                        binding.runtime_web_capabilities.search_path,
+                        WebSearchExecutionPath.SIDECAR_HOSTED,
+                    )
+                    self.assertIn("web_search", binding.runner._runtime._tools.names())
+                    self.assertIsNone(application.config.web_search_api_key_env)
+                    self.assertNotIn(
+                        "saved-search-key", repr(application.config.redacted_dict(os.environ))
                     )
                 finally:
                     await application.close()
@@ -869,7 +984,7 @@ protocol = "openai-chat"
 dialect = "deepseek-v4"
 service_id = "deepseek"
 model = "deepseek-chat"
-base_url = "https://api.deepseek.com/v1"
+base_url = "https://gateway.deepseek.example/v1"
 api_key_env = "MAIN_KEY"
 proxy_mode = "direct"
 

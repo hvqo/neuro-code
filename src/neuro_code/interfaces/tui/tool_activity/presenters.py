@@ -48,6 +48,8 @@ _META_KEYS = (
     "client_delegated",
     "output_artifact_bytes",
     "output_artifact_truncated",
+    "http_status",
+    "web_search_route_trace",
 )
 
 

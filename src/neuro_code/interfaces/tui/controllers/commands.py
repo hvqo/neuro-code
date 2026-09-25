@@ -84,6 +84,14 @@ class CommandControllerMixin(TuiAppControllerMixin):
             if inspection.search_model is not None:
                 provider = f"{provider}/{inspection.search_model}"
             search_parts.append(provider)
+        if inspection.search_fallback is not None:
+            search_parts.append(
+                ui_text(
+                    self._language,
+                    "capability.search_fallback",
+                    fallback=inspection.search_fallback,
+                )
+            )
         fetch_key = {
             WebFetchExecutionPath.DISABLED: "capability.fetch.disabled",
             WebFetchExecutionPath.LOCAL: "capability.fetch.local",

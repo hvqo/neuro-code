@@ -477,6 +477,7 @@ class AppConfig:
     web_fetch_mode: WebFetchMode = WebFetchMode.DISABLED
     language_servers: Mapping[str, LanguageServerProfile] = field(default_factory=dict)
     web_search_api_key_env: str | None = None
+    search_api_key: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "providers", MappingProxyType(dict(self.providers)))
@@ -504,6 +505,16 @@ class AppConfig:
             _ENVIRONMENT_VARIABLE.fullmatch(self.web_search_api_key_env) is None
         ):
             raise ConfigurationError("web search API key environment variable is invalid")
+        if self.search_api_key is not None and (
+            not isinstance(self.search_api_key, str)
+            or not self.search_api_key.strip()
+            or len(self.search_api_key) > 16_384
+            or not self.search_api_key.isascii()
+            or any(
+                ord(character) < 33 or ord(character) == 127 for character in self.search_api_key
+            )
+        ):
+            raise ConfigurationError("web search API key is invalid")
         if not isinstance(self.web_fetch_mode, WebFetchMode):
             raise ConfigurationError("application web_fetch_mode must be canonical")
 
@@ -566,6 +577,8 @@ class AppConfig:
 
         env: Mapping[str, str] = {} if environ is None else environ
         values: list[str] = []
+        if self.search_api_key:
+            values.append(self.search_api_key)
         if self.web_search_api_key_env and env.get(self.web_search_api_key_env):
             values.append(env[self.web_search_api_key_env])
         for profile in self.providers.values():

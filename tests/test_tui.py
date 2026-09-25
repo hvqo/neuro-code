@@ -139,6 +139,7 @@ from neuro_code.interfaces.tui.app import NeuroCodeApp
 from neuro_code.interfaces.tui.clipboard import ClipboardImage, ClipboardWriteResult
 from neuro_code.interfaces.tui.screens import (
     BackgroundWakeSettingsScreen,
+    BraveSearchApiKeySettingsScreen,
     ConfirmActionScreen,
     FullAccessConfirmScreen,
     InteractionModeScreen,
@@ -3726,6 +3727,43 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             saved = await store.load()
             self.assertEqual(saved.profiles[0].context_window_tokens, 128_000)
             self.assertIsNone(saved.profiles[0].proxy_mode)
+
+    async def test_brave_search_key_is_saved_from_web_settings_and_reloads_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = JsonProviderSettingsStore(Path(directory) / "state")
+            app = NeuroCodeApp(
+                TuiConversation(),
+                provider_settings_store=store,
+                managed_provider_settings=await store.load(),
+                provider_name="fixture",
+                model_name="fixture-model",
+                cwd=Path("/workspace"),
+            )
+
+            async with app.run_test(size=(110, 44)) as pilot:
+                await app.action_open_settings()
+                await pilot.pause()
+                search = app.screen.query_one("#settings-search", Input)
+                search.value = "Brave Search"
+                await pilot.pause()
+                app.screen.query_one("#settings-category-search-api-key", Button).focus()
+                await pilot.press("enter")
+                for _ in range(20):
+                    await pilot.pause(0.01)
+                    if isinstance(app.screen, BraveSearchApiKeySettingsScreen):
+                        break
+                self.assertIsInstance(app.screen, BraveSearchApiKeySettingsScreen)
+                api_key_input = app.screen.query_one("#search-api-key-input", Input)
+                self.assertTrue(api_key_input.password)
+                api_key_input.value = "brave-search-secret"
+                await pilot.click("#search-api-key-save")
+                for _ in range(20):
+                    await pilot.pause(0.01)
+                    if app.return_code is not None:
+                        break
+
+            self.assertEqual((await store.load()).brave_search_api_key, "brave-search-secret")
+            self.assertEqual(app.return_code, TUI_RELOAD_PROVIDER_SETTINGS)
 
     async def test_background_wake_global_default_and_provider_override_are_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {}, clear=True):

@@ -161,6 +161,8 @@ class WebSearchService:
             ),
             truncated=result.truncated,
             metadata=safe_metadata,
+            route_trace=result.route_trace,
+            http_status=result.http_status,
         )
 
     async def search(

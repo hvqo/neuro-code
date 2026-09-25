@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Mapping
 from html import unescape
 from urllib.parse import urlsplit
@@ -20,6 +21,8 @@ from neuro_code.application.ports.web_search import (
     WebSearchErrorCode,
     WebSearchRequest,
     WebSearchResult,
+    WebSearchRouteKind,
+    WebSearchRouteName,
     WebSearchSource,
 )
 
@@ -29,6 +32,8 @@ _MAX_RESPONSE_BYTES = 1_048_576
 _MAX_QUERY_CHARS = 600
 _MAX_QUERY_WORDS = 75
 _MAX_API_KEY_CHARS = 16_384
+_MAX_ERROR_RESPONSE_BYTES = 8_192
+_MAX_PROVIDER_ERROR_DETAIL_CHARS = 240
 _TIMEOUT_SECONDS = 15.0
 
 
@@ -58,6 +63,54 @@ def _search_query(request: WebSearchRequest) -> str:
     return query
 
 
+async def _provider_error_diagnostic(
+    response: httpx.Response,
+    *,
+    api_key: str,
+    query: str,
+) -> str | None:
+    """Project a tiny, sanitized part of Brave's structured 4xx error response."""
+
+    if (
+        response.headers.get("content-type", "").split(";", 1)[0].strip().casefold()
+        != "application/json"
+    ):
+        return None
+    body = bytearray()
+    async for chunk in response.aiter_bytes(chunk_size=4_096):
+        if len(body) + len(chunk) > _MAX_ERROR_RESPONSE_BYTES:
+            return None
+        body.extend(chunk)
+    try:
+        payload = json.loads(body)
+    except (UnicodeError, ValueError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, Mapping):
+        return None
+
+    parts: list[str] = []
+    code = error.get("code")
+    if (
+        isinstance(code, str)
+        and code.isascii()
+        and 0 < len(code) <= 64
+        and all(character.isalnum() or character in "_-" for character in code)
+    ):
+        parts.append(f"code={code.upper()}")
+    detail = error.get("detail")
+    if isinstance(detail, str) and detail:
+        detail = detail.replace(api_key, "[REDACTED]")
+        if query:
+            detail = re.sub(re.escape(query), "[QUERY REDACTED]", detail, flags=re.IGNORECASE)
+        detail = _display_text(detail, _MAX_PROVIDER_ERROR_DETAIL_CHARS)
+        if detail:
+            parts.append(f"detail={detail}")
+    return "; ".join(parts) if parts else None
+
+
 def _source_allowed(url: str, request: WebSearchRequest) -> bool:
     try:
         parsed = urlsplit(url)
@@ -79,13 +132,19 @@ def _source_allowed(url: str, request: WebSearchRequest) -> bool:
 
 def _project_sources(payload: object, request: WebSearchRequest) -> tuple[WebSearchSource, ...]:
     if not isinstance(payload, Mapping):
-        raise WebSearchError(WebSearchErrorCode.SEARCH_PROVIDER_ERROR, "invalid search response")
+        raise WebSearchError(
+            WebSearchErrorCode.SEARCH_MALFORMED_RESPONSE,
+            "Brave Search returned an invalid response shape",
+        )
     web = payload.get("web")
     # Brave's response schema makes `web` nullable when there are no web hits.
     if web is None and isinstance(payload.get("query"), Mapping):
         return ()
     if not isinstance(web, Mapping) or not isinstance(web.get("results"), list):
-        raise WebSearchError(WebSearchErrorCode.SEARCH_PROVIDER_ERROR, "invalid search results")
+        raise WebSearchError(
+            WebSearchErrorCode.SEARCH_MALFORMED_RESPONSE,
+            "Brave Search returned invalid result data",
+        )
     sources: list[WebSearchSource] = []
     seen_urls: set[str] = set()
     for entry in web["results"][:64]:
@@ -128,6 +187,8 @@ class BraveWebSearchBackend:
 
     provider_profile = "brave-search-api"
     model = "Brave Web Search"
+    route_kind = WebSearchRouteKind.EXTERNAL_FALLBACK
+    diagnostic_route = WebSearchRouteName.BRAVE
     capabilities = ModelCapabilitySet.from_supported(ModelCapability.HOSTED_WEB_SEARCH)
 
     def __init__(
@@ -156,6 +217,7 @@ class BraveWebSearchBackend:
         del event_sink  # This HTTP backend does not emit model-hosted tool events.
         query = _search_query(request)
         body = bytearray()
+        http_status: int | None = None
         try:
             async with asyncio.timeout(_TIMEOUT_SECONDS):
                 async with httpx.AsyncClient(
@@ -173,25 +235,42 @@ class BraveWebSearchBackend:
                             "X-Subscription-Token": self._api_key,
                         },
                     ) as response:
+                        http_status = response.status_code
                         if response.status_code in {401, 403}:
                             raise WebSearchError(
                                 WebSearchErrorCode.SEARCH_AUTHENTICATION,
                                 "Brave Search rejected the configured API key",
+                                http_status=response.status_code,
                             )
                         if response.status_code == 429:
                             raise WebSearchError(
                                 WebSearchErrorCode.SEARCH_RATE_LIMIT,
                                 "Brave Search rate limit was reached",
+                                http_status=response.status_code,
                             )
                         if response.status_code in {408, 504}:
                             raise WebSearchError(
-                                WebSearchErrorCode.SEARCH_TIMEOUT,
+                                WebSearchErrorCode.SEARCH_UNAVAILABLE,
                                 "Brave Search timed out",
+                                http_status=response.status_code,
                             )
                         if response.status_code != 200:
+                            diagnostic = None
+                            if response.status_code in {400, 422}:
+                                diagnostic = await _provider_error_diagnostic(
+                                    response,
+                                    api_key=self._api_key,
+                                    query=query,
+                                )
+                            detail = (
+                                f"; [untrusted Brave diagnostic: {diagnostic}]"
+                                if diagnostic
+                                else ""
+                            )
                             raise WebSearchError(
-                                WebSearchErrorCode.SEARCH_PROVIDER_ERROR,
-                                f"Brave Search returned HTTP {response.status_code}",
+                                WebSearchErrorCode.SEARCH_UNAVAILABLE,
+                                f"Brave Search returned HTTP {response.status_code}{detail}",
+                                http_status=response.status_code,
                             )
                         if (
                             response.headers.get("content-type", "")
@@ -201,33 +280,34 @@ class BraveWebSearchBackend:
                             != "application/json"
                         ):
                             raise WebSearchError(
-                                WebSearchErrorCode.SEARCH_PROVIDER_ERROR,
+                                WebSearchErrorCode.SEARCH_MALFORMED_RESPONSE,
                                 "Brave Search returned a non-JSON response",
                             )
                         async for chunk in response.aiter_bytes(chunk_size=16_384):
                             body.extend(chunk)
                             if len(body) > _MAX_RESPONSE_BYTES:
                                 raise WebSearchError(
-                                    WebSearchErrorCode.SEARCH_PROVIDER_ERROR,
+                                    WebSearchErrorCode.SEARCH_MALFORMED_RESPONSE,
                                     "Brave Search response exceeded the size limit",
                                 )
         except TimeoutError as error:
             raise WebSearchError(
-                WebSearchErrorCode.SEARCH_TIMEOUT, "Brave Search timed out"
+                WebSearchErrorCode.SEARCH_UNAVAILABLE, "Brave Search timed out"
             ) from error
         except httpx.TimeoutException as error:
             raise WebSearchError(
-                WebSearchErrorCode.SEARCH_TIMEOUT, "Brave Search timed out"
+                WebSearchErrorCode.SEARCH_UNAVAILABLE, "Brave Search timed out"
             ) from error
         except httpx.HTTPError as error:
             raise WebSearchError(
-                WebSearchErrorCode.SEARCH_PROVIDER_ERROR, "Brave Search request failed"
+                WebSearchErrorCode.SEARCH_UNAVAILABLE, "Brave Search endpoint is unavailable"
             ) from error
         try:
             payload = json.loads(body)
         except (UnicodeError, ValueError) as error:
             raise WebSearchError(
-                WebSearchErrorCode.SEARCH_PROVIDER_ERROR, "Brave Search returned invalid JSON"
+                WebSearchErrorCode.SEARCH_MALFORMED_RESPONSE,
+                "Brave Search returned invalid JSON",
             ) from error
         sources = _project_sources(payload, request)
         return WebSearchResult(
@@ -240,6 +320,7 @@ class BraveWebSearchBackend:
             sources=sources,
             provider_profile=self.provider_profile,
             model=self.model,
+            http_status=http_status,
         )
 
 

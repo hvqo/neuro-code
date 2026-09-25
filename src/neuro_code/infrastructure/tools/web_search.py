@@ -23,6 +23,7 @@ from neuro_code.application.ports.web_search import (
     WebSearchQueryPort,
     WebSearchRequest,
     WebSearchResult,
+    render_web_search_route_trace,
 )
 from neuro_code.domain.tools import ToolDefinition, ToolResult
 
@@ -138,10 +139,17 @@ class WebSearchTool:
                 event_sink=context.web_search_event_sink,
             )
         except WebSearchError as error:
+            metadata: dict[str, object] = {"error_code": error.code.value}
+            if error.http_status is not None:
+                metadata["http_status"] = error.http_status
+            if error.route_trace:
+                metadata["web_search_route_trace"] = render_web_search_route_trace(
+                    error.route_trace
+                )
             return ToolResult(
                 f"Web search failed ({error.code.value}): {error}",
                 is_error=True,
-                metadata={"error_code": error.code.value},
+                metadata=metadata,
             )
         except (TypeError, ValueError):
             return ToolResult(
@@ -159,6 +167,12 @@ class WebSearchTool:
                 "citation_count": len(result.citations),
                 "truncated": result.truncated,
                 "external_data": True,
+                **({"http_status": result.http_status} if result.http_status is not None else {}),
+                **(
+                    {"web_search_route_trace": render_web_search_route_trace(result.route_trace)}
+                    if result.route_trace
+                    else {}
+                ),
             },
         )
 

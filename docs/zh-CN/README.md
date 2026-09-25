@@ -110,9 +110,13 @@ Ultracode 路由还会识别“项目/仓库范围”与明确的优化意图同
 
 ### 为 DeepSeek 等模型配置独立网页搜索
 
-DeepSeek 的 Responses API 支持函数调用，但会忽略内置 `web_search` 请求类型。Neuro 的本地
-`web_search` 因此需要可执行的搜索后端。为此可获取 Brave Search API 密钥，并在启动 Neuro 的进程环境中
-提供 `BRAVE_SEARCH_API_KEY`。在 Bash 中可以避免把密钥写入 Shell 历史：
+DeepSeek 的 OpenAI 兼容 Responses 和 Chat 接口不会执行内置 `web_search`。对于官方 DeepSeek
+供应商配置，Neuro 会使用 DeepSeek 的 Anthropic 兼容 Search 适配器，并且只有在配置指向 DeepSeek
+官方 HTTPS 端点时才复用已有的 DeepSeek 密钥；不会把自定义地址或兼容网关的密钥发送到官方端点。
+Brave Search 是最后的独立兜底。获取 Brave Search API 密钥后，可打开
+**设置 → 网页能力 → Brave 网页搜索 API 密钥**进行配置。Neuro 会将密钥保存在用户 state
+目录的 `credentials.json` 中，与模型配置分开且不写入仓库。该文件当前不加密，也不使用系统密钥链。
+也可以设置 `BRAVE_SEARCH_API_KEY`；环境变量会覆盖设置中保存的值。在 Bash 中可避免把密钥写入 Shell 历史：
 
 ```bash
 read -rsp 'Brave Search API key: ' BRAVE_SEARCH_API_KEY
@@ -120,9 +124,9 @@ export BRAVE_SEARCH_API_KEY
 neuro
 ```
 
-网页搜索模式保持为 `auto`。没有可执行托管路由时，Neuro 会使用 Brave Search API，设置页
-和 `/status` 会显示这一实际路径。搜索密钥与模型供应商密钥分开，不写入项目或对话。修改环境
-后需重启 Neuro。Brave 可能要求开通套餐，并可能对 API 调用计费。详见
+网页搜索模式保持为 `auto`。没有可执行的原生或供应商适配器路由时，Neuro 会将 Brave Search API
+作为最后兜底，设置页和 `/status` 会显示这一实际路径。搜索密钥与模型供应商密钥分开，不写入项目或对话。通过设置页保存后，
+运行时会重新加载并恢复当前会话。Brave 可能要求开通套餐，并可能对 API 调用计费。详见
 [ADR 0176](adr/0176-independent-search-api-backend.md)。
 
 ## 项目状态

@@ -361,12 +361,24 @@ class AgentPreferencesScreen(ModalScreen[AgentPreferencesScreenResult | None]):
         model = "/".join(
             value for value in (inspection.search_profile, inspection.search_model) if value
         )
-        return ui_text(
+        status = ui_text(
             self.language,
             "settings.web.status.available",
             path=path,
             model=model or ui_text(self.language, "settings.web.status.model_unknown"),
         )
+        if inspection.search_fallback is not None:
+            return " · ".join(
+                (
+                    status,
+                    ui_text(
+                        self.language,
+                        "settings.web.search_fallback",
+                        fallback=inspection.search_fallback,
+                    ),
+                )
+            )
+        return status
 
     def _search_provider_blocker(self) -> str:
         if (

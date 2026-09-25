@@ -76,8 +76,11 @@ class BraveWebSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requests[0].url.host, "api.search.brave.com")
         self.assertEqual(requests[0].url.path, "/res/v1/web/search")
         self.assertEqual(requests[0].method, "POST")
+        self.assertEqual(requests[0].headers["Content-Type"], "application/json")
         self.assertEqual(requests[0].headers["X-Subscription-Token"], "test-search-key")
-        self.assertIn("site:example.com", json.loads(requests[0].content)["q"])
+        request_body = json.loads(requests[0].content)
+        self.assertIn("site:example.com", request_body["q"])
+        self.assertEqual(request_body["count"], 8)
         self.assertEqual(len(result.sources), 1)
         self.assertEqual(result.sources[0].title, "Official & current")
         self.assertEqual(result.sources[0].url, "https://docs.example.com/guide")
@@ -183,8 +186,8 @@ class BraveWebSearchTests(unittest.IsolatedAsyncioTestCase):
         cases = (
             (401, WebSearchErrorCode.SEARCH_AUTHENTICATION),
             (429, WebSearchErrorCode.SEARCH_RATE_LIMIT),
-            (503, WebSearchErrorCode.SEARCH_PROVIDER_ERROR),
-            (302, WebSearchErrorCode.SEARCH_PROVIDER_ERROR),
+            (503, WebSearchErrorCode.SEARCH_UNAVAILABLE),
+            (302, WebSearchErrorCode.SEARCH_UNAVAILABLE),
         )
         for status, expected in cases:
             with self.subTest(status=status):
@@ -198,6 +201,56 @@ class BraveWebSearchTests(unittest.IsolatedAsyncioTestCase):
                     await backend.search(WebSearchRequest("query"))
                 self.assertIs(raised.exception.code, expected)
                 self.assertNotIn("secret-value", str(raised.exception))
+
+    async def test_unprocessable_entity_surfaces_only_bounded_redacted_diagnostic(self) -> None:
+        backend = BraveWebSearchBackend(
+            "secret-value",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    422,
+                    headers={"Content-Type": "application/json"},
+                    json={
+                        "error": {
+                            "code": "invalid_subscription",
+                            "detail": (
+                                "Search plan required; key secret-value rejected "
+                                "query private phrase"
+                            ),
+                        }
+                    },
+                )
+            ),
+        )
+        with self.assertRaises(WebSearchError) as raised:
+            await backend.search(WebSearchRequest("private phrase"))
+        message = str(raised.exception)
+        self.assertIn("HTTP 422", message)
+        self.assertIn("code=INVALID_SUBSCRIPTION", message)
+        self.assertIn("Search plan required", message)
+        self.assertIn("[REDACTED]", message)
+        self.assertIn("[QUERY REDACTED]", message)
+        self.assertNotIn("secret-value", message)
+        self.assertNotIn("private phrase", message)
+
+    async def test_unbounded_or_malformed_provider_error_body_stays_generic(self) -> None:
+        for content in (
+            b"x" * 8_193,
+            b'{"error":{"code":"INVALID_REQUEST","detail":',
+        ):
+            with self.subTest(content_length=len(content)):
+                backend = BraveWebSearchBackend(
+                    "test-key",
+                    transport=httpx.MockTransport(
+                        lambda request, content=content: httpx.Response(
+                            422,
+                            headers={"Content-Type": "application/json"},
+                            content=content,
+                        )
+                    ),
+                )
+                with self.assertRaises(WebSearchError) as raised:
+                    await backend.search(WebSearchRequest("query"))
+                self.assertEqual(str(raised.exception), "Brave Search returned HTTP 422")
 
     async def test_large_or_invalid_response_and_query_fail_closed(self) -> None:
         for content in (b"x" * 1_048_577, b"not-json"):
@@ -214,7 +267,10 @@ class BraveWebSearchTests(unittest.IsolatedAsyncioTestCase):
                 )
                 with self.assertRaises(WebSearchError) as raised:
                     await backend.search(WebSearchRequest("query"))
-                self.assertIs(raised.exception.code, WebSearchErrorCode.SEARCH_PROVIDER_ERROR)
+                self.assertIs(
+                    raised.exception.code,
+                    WebSearchErrorCode.SEARCH_MALFORMED_RESPONSE,
+                )
 
         backend = BraveWebSearchBackend(
             "test-key",

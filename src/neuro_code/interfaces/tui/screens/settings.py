@@ -138,7 +138,7 @@ class SettingsScreen(ModalScreen[str | None]):
         "appearance": ("language", "theme", "input"),
         "connection": ("providers", "network"),
         "agent": ("agent-reasoning", "agent-interaction-mode", "execution"),
-        "web": ("web-tools",),
+        "web": ("web-tools", "search-api-key"),
         "development": ("language-tools", "verification"),
         "security": ("agent-permissions", "tool-intent"),
         "advanced": (
@@ -212,6 +212,16 @@ class SettingsScreen(ModalScreen[str | None]):
             "network": (
                 "settings.category.network.label",
                 ui_text(self.language, "settings.category.network.value"),
+            ),
+            "search-api-key": (
+                "settings.category.search_api_key.label",
+                ui_text(
+                    self.language,
+                    "settings.search_api_key.saved"
+                    if self.provider_settings is not None
+                    and self.provider_settings.brave_search_api_key is not None
+                    else "settings.search_api_key.not_saved",
+                ),
             ),
             "agent-reasoning": (
                 "settings.category.agent_reasoning.label",
@@ -295,7 +305,16 @@ class SettingsScreen(ModalScreen[str | None]):
             identity = "/".join(
                 part for part in (inspection.search_profile, inspection.search_model) if part
             )
-            return " · ".join(part for part in (mode_text, status, identity) if part)
+            fallback = (
+                ui_text(
+                    self.language,
+                    "settings.web.search_fallback",
+                    fallback=inspection.search_fallback,
+                )
+                if inspection.search_fallback is not None
+                else None
+            )
+            return " · ".join(part for part in (mode_text, status, identity, fallback) if part)
         if inspection.search_availability is WebSearchAvailability.DISABLED:
             return " · ".join(
                 (
@@ -346,7 +365,13 @@ class SettingsScreen(ModalScreen[str | None]):
                             for category in categories:
                                 key, value = entries[category]
                                 unavailable = (
-                                    category in {"providers", "network", "background-wake"}
+                                    category
+                                    in {
+                                        "providers",
+                                        "network",
+                                        "background-wake",
+                                        "search-api-key",
+                                    }
                                     and not self.provider_settings_available
                                 )
                                 with Vertical(
@@ -937,6 +962,140 @@ class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
         self.dismiss(None)
 
 
+class BraveSearchApiKeySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
+    """Manage the independent Brave credential without displaying its value.
+
+    在不显示密钥内容的前提下管理独立 Brave 凭据."""
+
+    CSS = """
+    BraveSearchApiKeySettingsScreen { align: center middle; background: $modal-overlay 25%; }
+    #search-api-key-dialog {
+        width: 82%; max-width: 88; height: auto; padding: $space-2 $space-3;
+        border: round $border; background: $surface;
+    }
+    #search-api-key-title { text-style: bold; color: $text-primary; margin-bottom: 1; }
+    #search-api-key-description, #search-api-key-status, #search-api-key-error {
+        color: $text-muted; height: auto; margin-bottom: 1;
+    }
+    #search-api-key-error { color: $text-primary; text-style: bold; }
+    #search-api-key-actions {
+        align-horizontal: right; border-top: solid $border; padding-top: 1; margin-top: 1;
+    }
+    #search-api-key-actions Button { margin-left: 1; }
+    """
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "cancel", "Back", show=False),
+        Binding("ctrl+c", "cancel", "Back", show=False),
+    ]
+
+    def __init__(
+        self,
+        *,
+        language: UiLanguage,
+        provider_settings: ManagedProviderSettings,
+        provider_settings_store: ProviderSettingsStore,
+    ) -> None:
+        super().__init__()
+        self.language = language
+        self.provider_settings = provider_settings
+        self.provider_settings_store = provider_settings_store
+
+    def compose(self) -> ComposeResult:
+        key_is_saved = self.provider_settings.brave_search_api_key is not None
+        yield Vertical(
+            Label(ui_text(self.language, "search_api_key.title"), id="search-api-key-title"),
+            Static(
+                ui_text(self.language, "search_api_key.description"),
+                id="search-api-key-description",
+            ),
+            Static(
+                ui_text(
+                    self.language,
+                    "settings.search_api_key.saved"
+                    if key_is_saved
+                    else "settings.search_api_key.not_saved",
+                ),
+                id="search-api-key-status",
+            ),
+            Input(
+                password=True,
+                placeholder=ui_text(
+                    self.language,
+                    "search_api_key.replace_placeholder"
+                    if key_is_saved
+                    else "search_api_key.enter_placeholder",
+                ),
+                id="search-api-key-input",
+            ),
+            Static("", id="search-api-key-error"),
+            Horizontal(
+                Button(ui_text(self.language, "settings.back"), id="search-api-key-back"),
+                Button(
+                    ui_text(self.language, "search_api_key.remove"),
+                    id="search-api-key-remove",
+                    disabled=not key_is_saved,
+                    variant="error",
+                ),
+                Button(
+                    ui_text(self.language, "search_api_key.save"),
+                    id="search-api-key-save",
+                    variant="success",
+                ),
+                id="search-api-key-actions",
+            ),
+            id="search-api-key-dialog",
+            classes="modal-dialog modal-m",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#search-api-key-input", Input).focus()
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if button_id == "search-api-key-back":
+            self.dismiss(None)
+        elif button_id == "search-api-key-remove":
+            await self._remove()
+        elif button_id == "search-api-key-save":
+            await self._save()
+
+    async def _save(self) -> None:
+        api_key = self.query_one("#search-api-key-input", Input).value.strip()
+        if not api_key:
+            if self.provider_settings.brave_search_api_key is not None:
+                self.dismiss(None)
+            else:
+                self._show_error("search_api_key.error.required")
+            return
+        try:
+            settings = await self.provider_settings_store.save_brave_search_api_key(api_key)
+        except Exception as error:
+            self._show_error(f"{type(error).__name__}: {error}")
+            return
+        self.dismiss(settings)
+
+    async def _remove(self) -> None:
+        if self.provider_settings.brave_search_api_key is None:
+            return
+        try:
+            settings = await self.provider_settings_store.save_brave_search_api_key(None)
+        except Exception as error:
+            self._show_error(f"{type(error).__name__}: {error}")
+            return
+        self.dismiss(settings)
+
+    def _show_error(self, message: str) -> None:
+        self.query_one("#search-api-key-error", Static).update(
+            Text(
+                f"{_ERROR_MARK} {message}",
+                style=theme_style(self, ERROR_TEXT_STYLE),
+            )
+        )
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
     """Edit the user-wide background-task wake default.
 
@@ -1124,6 +1283,7 @@ class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
 
 __all__ = [
     "BackgroundWakeSettingsScreen",
+    "BraveSearchApiKeySettingsScreen",
     "LanguageSettingsScreen",
     "NetworkProxySettingsScreen",
     "SettingsScreen",

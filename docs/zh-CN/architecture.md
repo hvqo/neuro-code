@@ -1613,19 +1613,23 @@ Runtime 门控现在会在允许的显式压缩操作外层真正执行有限的
 若当前 binding 暴露了 `web_search`，Agent 应使用它；否则应说明能力阻塞，并区分已在本地验证的部分与
 仍未验证的外部部分。这不会全面限制用户明确要求的 Shell 网络操作，也不会让 Shell 抓取静默替代公开资料搜索。
 
-`WebSearchMode.AUTO` 只根据可信 capability 与可执行后端事实解析。若 MAIN 明确支持托管搜索且能与客户端工具
-共同使用，优先走该路径；否则使用已配置且可执行的 `WEB_SEARCH` route。没有显式 route 时，组合根按稳定的
-名称顺序检查已配置 Provider profile，并选择第一个同时具有具体托管搜索后端和可用凭据的 route。MAIN 与其
-故障转移 profile 不会被提升为独立 sidecar。UNKNOWN capability 保持未知。若没有可用的托管路由，
-`BRAVE_SEARCH_API_KEY` 可以启用与模型无关的 `SEARCH_API` 路径，继续使用同一有界本地工具。
-显式但不可用的路由不会暗中回退到该 API；`disabled` 与 `inline` 的既有语义不变。若解析失败或 binding 的
+`WebSearchMode.AUTO` 只根据可信 Search capability registry 与可执行后端事实解析。优先顺序是：能与客户端
+工具共同使用的 MAIN 原生搜索、已注册的供应商适配器或已配置的托管 Search route、用户配置的 Brave Search API。
+DeepSeek 适配器仅适用于使用精确官方 HTTPS 主机和文档基路径的 DeepSeek service profile；自定义 endpoint 和
+网关不会把凭据发送到 DeepSeek Search 端点。OpenAI Responses、Anthropic Messages 和 Gemini Interactions
+继续使用各自的协议适配器。Qwen 或其他 OpenAI 兼容 profile 不会因协议相似而自动获得 Search 能力。可在
+“设置 → 网页能力”保存 Brave 密钥，也可使用 `BRAVE_SEARCH_API_KEY` 作为最后兜底；环境变量优先于已保存值。
+unsupported 与 unavailable 可以尝试下一 route；鉴权、限流、无效请求和格式损坏响应会直接呈现，不会被静默掩盖。
+`did-not-search` 仅使当前请求失败，不会隔离供应商；新请求会重新按配置优先级检查路由，即使上次请求通过
+fallback 成功也是如此。确认属于 route 级别的 unsupported 或 endpoint unavailable 后，才会在当前 binding
+生命周期内抑制该 route。`disabled` 仍表示关闭；显式 `inline` 仍要求 MAIN 原生 Search。若解析失败或 binding 的
 工具白名单阻止执行，则不注册 `web_search`，并在 binding 中携带类型化的不可用原因。
 
-应用层拥有的 `RuntimeWebCapabilityInspection` 报告有效的搜索可用性/路径、有界的 Provider/模型标签、不可用时的
-类型化原因，以及有效 Web Fetch 路径；它不包含 endpoint 或凭据。TUI `/status` 从当前 binding 读取该状态，
-因此展示的是 Provider 组合与工具过滤后 Agent 实际可用的能力。
-独立 API 路径使用固定 HTTPS 端点和有界来源投影，将密钥作为环境凭据保护，并继续把搜索结果视为
-不可信外部证据。详见 [ADR 0176](adr/0176-independent-search-api-backend.md)。
+应用层拥有的 `RuntimeWebCapabilityInspection` 报告有效的搜索可用性/路径、route kind、有界的 Provider/模型标签、
+已配置兜底、不可用时的类型化原因以及有效 Web Fetch 路径；它不包含 endpoint 或凭据。TUI 设置页和 `/status`
+从当前 binding 读取该状态，因此展示的是 Provider 组合与工具过滤后 Agent 实际可用的路由。搜索适配器返回有界的
+供应商无关证据，将凭据限制在 Provider 边界，并始终把结果视为不可信外部数据。详见
+[ADR 0176](adr/0176-independent-search-api-backend.md)。
 
 Supervisor 把重复操作、重复错误和周期循环视为检测信号，而不是立即终态。首次检测会建立一次有界的逐回合恢复
 状态，并注入仅对当前请求可见的 replan 指引。状态只包含类型化原因、行为指纹摘要、周期长度和工具计数边界；

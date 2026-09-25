@@ -101,6 +101,7 @@ class JsonProviderSettingsStore:
             default,
             current.proxy_defaults,
             current.background_task_wake_policy,
+            current.brave_search_api_key,
         )
         self._save(updated)
         return updated
@@ -118,6 +119,7 @@ class JsonProviderSettingsStore:
             name,
             current.proxy_defaults,
             current.background_task_wake_policy,
+            current.brave_search_api_key,
         )
         self._save(updated)
         return updated
@@ -139,6 +141,7 @@ class JsonProviderSettingsStore:
             current.default_provider,
             proxy_defaults,
             current.background_task_wake_policy,
+            current.brave_search_api_key,
         )
         self._save(updated)
         return updated
@@ -160,6 +163,28 @@ class JsonProviderSettingsStore:
             current.default_provider,
             current.proxy_defaults,
             policy,
+            current.brave_search_api_key,
+        )
+        self._save(updated)
+        return updated
+
+    async def save_brave_search_api_key(
+        self,
+        api_key: str | None,
+    ) -> ManagedProviderSettings:
+        async with self._write_lock:
+            return await run_blocking(self._save_brave_search_api_key, api_key)
+
+    def _save_brave_search_api_key(self, api_key: str | None) -> ManagedProviderSettings:
+        if api_key is not None and not isinstance(api_key, str):
+            raise ConfigurationError("Brave Search API key must be a string")
+        current = _load_managed_provider_settings(self._state_dir)
+        updated = ManagedProviderSettings(
+            current.profiles,
+            current.default_provider,
+            current.proxy_defaults,
+            current.background_task_wake_policy,
+            api_key.strip() if api_key is not None else None,
         )
         self._save(updated)
         return updated
@@ -181,6 +206,7 @@ class JsonProviderSettingsStore:
             default,
             current.proxy_defaults,
             current.background_task_wake_policy,
+            current.brave_search_api_key,
         )
         self._save(updated)
         return updated
@@ -222,6 +248,11 @@ class JsonProviderSettingsStore:
                 for profile in settings.profiles
                 if profile.api_key is not None
             },
+            **(
+                {"brave_search_api_key": settings.brave_search_api_key}
+                if settings.brave_search_api_key is not None
+                else {}
+            ),
         }
         self._atomic_write(self._credentials_path, credentials)
         self._atomic_write(self._metadata_path, metadata)

@@ -81,6 +81,7 @@ from neuro_code.application.ports.web_fetch import (
 from neuro_code.application.ports.web_search import (
     WebSearchExecutionPath,
     WebSearchMode,
+    WebSearchRouteKind,
     resolve_web_search_path,
 )
 from neuro_code.application.runtime.agent import AgentRuntime
@@ -118,6 +119,7 @@ from neuro_code.domain.workspace.skills import SkillDiscoveryResult
 from neuro_code.infrastructure.lsp.manager import LanguageServerManager
 from neuro_code.infrastructure.persistence.output_artifacts import FileToolOutputArtifactStore
 from neuro_code.infrastructure.providers.hosted_web_search import (
+    RoutedHostedWebSearchBackend,
     RoutedWebSearchBackendResolver,
 )
 from neuro_code.infrastructure.tools.filesystem_mutation import ExactWorkspaceMutationTool
@@ -236,11 +238,24 @@ def _available_search_provider_options(
     return tuple(options)
 
 
-def _route_has_search_credentials(config: AppConfig, route: ModelRoute) -> bool:
-    return any(
-        (profile := config.providers.get(name)) is not None
-        and _profile_has_search_credentials(profile)
+def _credentialed_search_route(config: AppConfig, route: ModelRoute) -> ModelRoute | None:
+    """Keep configured route order while excluding profiles without usable credentials."""
+
+    candidates = tuple(
+        name
         for name in (route.provider_profile, *route.fallback_profiles)
+        if (profile := config.providers.get(name)) is not None
+        and _profile_has_search_credentials(profile)
+    )
+    if not candidates:
+        return None
+    primary = candidates[0]
+    model = route.model if primary == route.provider_profile else config.providers[primary].model
+    return ModelRoute(
+        role=RuntimeRole.WEB_SEARCH,
+        provider_profile=primary,
+        model=model,
+        fallback_profiles=candidates[1:],
     )
 
 
@@ -664,25 +679,53 @@ class CompositionBindingMixin(CompositionRootMixin):
                     allowed=search_allowed,
                 )
                 search_api_backend: BraveWebSearchBackend | None = None
-                search_api_key_env = selected_config.web_search_api_key_env
-                if search_api_key_env is not None:
-                    search_api_key = os.environ.get(search_api_key_env, "")
+                if selected_config.search_api_key is not None:
                     with suppress(ValueError):
-                        search_api_backend = BraveWebSearchBackend(search_api_key)
-                sidecar_available = (
-                    search_route is not None
-                    and _route_has_search_credentials(search_config, search_route)
-                    and search_resolver.resolve(search_route) is not None
+                        search_api_backend = BraveWebSearchBackend(selected_config.search_api_key)
+                sidecar_candidates = []
+                main_route = selected_config.main_route
+                search_route_names = (
+                    set()
+                    if search_route is None
+                    else {search_route.provider_profile, *search_route.fallback_profiles}
+                )
+                if (
+                    search_allowed
+                    and selected_config.web_search_mode
+                    not in {WebSearchMode.DISABLED, WebSearchMode.INLINE}
+                    and not inline_supported
+                    and main_route.provider_profile not in search_route_names
+                    and _profile_has_search_credentials(
+                        selected_config.providers[main_route.provider_profile]
+                    )
+                ):
+                    main_search_backend = search_resolver.resolve_provider_adapter(
+                        main_route.provider_profile,
+                        model=main_route.model,
+                    )
+                    if main_search_backend is not None:
+                        sidecar_candidates.append(main_search_backend)
+                credentialed_search_route = (
+                    _credentialed_search_route(search_config, search_route)
+                    if search_route is not None
+                    else None
+                )
+                if credentialed_search_route is not None:
+                    configured_search_backend = search_resolver.resolve(credentialed_search_route)
+                    if configured_search_backend is not None:
+                        sidecar_candidates.append(configured_search_backend)
+                sidecar_available = bool(sidecar_candidates)
+                use_brave_fallback = (
+                    search_api_backend is not None
+                    and search_allowed
+                    and selected_config.web_search_mode
+                    not in {WebSearchMode.DISABLED, WebSearchMode.INLINE}
                 )
                 execution_path = resolve_web_search_path(
                     selected_config.web_search_mode,
                     inline_supported=inline_supported,
                     sidecar_available=sidecar_available and search_allowed,
-                    search_api_available=(
-                        search_api_backend is not None
-                        and search_allowed
-                        and explicit_search_route is None
-                    ),
+                    search_api_available=use_brave_fallback,
                 )
                 if (
                     selected_config.web_search_mode is WebSearchMode.INLINE
@@ -692,6 +735,16 @@ class CompositionBindingMixin(CompositionRootMixin):
                         "inline web search was explicitly requested but MAIN does not have "
                         "an explicitly supported hosted-search capability"
                     )
+                search_backend = None
+                if execution_path in {
+                    WebSearchExecutionPath.SIDECAR_HOSTED,
+                    WebSearchExecutionPath.SEARCH_API,
+                }:
+                    search_candidates = list(sidecar_candidates)
+                    if use_brave_fallback and search_api_backend is not None:
+                        search_candidates.append(search_api_backend)
+                    if search_candidates:
+                        search_backend = RoutedHostedWebSearchBackend(search_candidates)
                 if (
                     selected_config.web_search_mode is WebSearchMode.AUTO
                     and execution_path is not WebSearchExecutionPath.INLINE_HOSTED
@@ -755,16 +808,14 @@ class CompositionBindingMixin(CompositionRootMixin):
                     }
                     and search_allowed
                 ):
+                    if search_backend is None:
+                        raise RuntimeError("resolved Web Search path has no executable backend")
                     tools.register(
                         WebSearchTool(
                             WebSearchService(
                                 search_config,
                                 search_resolver,
-                                direct_backend=(
-                                    search_api_backend
-                                    if execution_path is WebSearchExecutionPath.SEARCH_API
-                                    else None
-                                ),
+                                direct_backend=search_backend,
                                 redaction_values=search_config.redaction_values(os.environ),
                             )
                         )
@@ -795,41 +846,50 @@ class CompositionBindingMixin(CompositionRootMixin):
                     )
                 else:
                     search_profile_name: str | None
+                    route_kind = WebSearchRouteKind.NATIVE
+                    search_fallback = None
                     if execution_path is WebSearchExecutionPath.SEARCH_API:
-                        active_search_profile = None
-                        search_profile_name = BraveWebSearchBackend.provider_profile
-                        search_model_name = BraveWebSearchBackend.model
-                    elif execution_path is WebSearchExecutionPath.SIDECAR_HOSTED:
-                        if search_route is None:
-                            raise RuntimeError(
-                                "resolved sidecar search path has no configured route"
+                        if sidecar_candidates:
+                            if search_backend is None:
+                                raise RuntimeError(
+                                    "resolved Search Router path has no executable backend"
+                                )
+                            search_profile_name = search_backend.provider_profile
+                            search_model_name = search_backend.model
+                            route_kind = getattr(
+                                search_backend,
+                                "route_kind",
+                                WebSearchRouteKind.NATIVE,
                             )
-                        active_search_route = search_route
-                        active_search_profile = search_config.providers.get(
-                            active_search_route.provider_profile
+                            search_fallback = "Brave Search"
+                        else:
+                            search_profile_name = "Brave Search"
+                            search_model_name = BraveWebSearchBackend.model
+                            route_kind = WebSearchRouteKind.EXTERNAL_FALLBACK
+                    elif execution_path is WebSearchExecutionPath.SIDECAR_HOSTED:
+                        if search_backend is None:
+                            raise RuntimeError("resolved sidecar path has no executable backend")
+                        search_profile_name = search_backend.provider_profile
+                        search_model_name = search_backend.model
+                        route_kind = getattr(
+                            search_backend,
+                            "route_kind",
+                            WebSearchRouteKind.NATIVE,
                         )
-                        search_profile_name = (
-                            active_search_route.provider_profile
-                            if active_search_profile is not None
-                            else None
-                        )
-                        search_model_name = active_search_route.model
+                        if use_brave_fallback:
+                            search_fallback = "Brave Search"
                     else:
                         active_search_route = search_config.main_route
-                        active_search_profile = search_config.providers.get(
-                            active_search_route.provider_profile
-                        )
-                        search_profile_name = (
-                            active_search_route.provider_profile
-                            if active_search_profile is not None
-                            else None
-                        )
+                        search_profile_name = active_search_route.provider_profile
                         search_model_name = active_search_route.model
+                        route_kind = WebSearchRouteKind.NATIVE
                     web_search_inspection = RuntimeWebCapabilityInspection(
                         WebSearchAvailability.AVAILABLE,
                         execution_path,
                         search_profile=search_profile_name,
                         search_model=search_model_name,
+                        search_route_kind=route_kind,
+                        search_fallback=search_fallback,
                         fetch_path=fetch_path,
                         search_providers=search_providers,
                     )

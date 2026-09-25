@@ -25,6 +25,7 @@ from neuro_code.interfaces.tui.screens.selection import (
 )
 from neuro_code.interfaces.tui.screens.settings import (
     BackgroundWakeSettingsScreen,
+    BraveSearchApiKeySettingsScreen,
     LanguageSettingsScreen,
     NetworkProxySettingsScreen,
     SettingsScreen,
@@ -34,6 +35,7 @@ from neuro_code.interfaces.tui.screens.transcript import TranscriptCopyScreen
 
 __all__ = [
     "BackgroundWakeSettingsScreen",
+    "BraveSearchApiKeySettingsScreen",
     "ConfirmActionScreen",
     "FullAccessConfirmScreen",
     "InteractionModeScreen",
