@@ -131,6 +131,51 @@ def test_wire_trajectory_is_body_free_and_reports_append_only_prefix() -> None:
     assert same_input.request_fingerprint == first.request_fingerprint
 
 
+def test_wire_trajectory_keeps_independent_baselines_for_interleaved_sources() -> None:
+    recorder = ProviderRequestTrajectoryRecorder(fingerprint_key=b"test-key-material-0123456789")
+    main_context = ModelContext(
+        (),
+        request_source=ModelRequestSource.MAIN_TURN,
+        trajectory_id="interleaved-source-fixture",
+        prompt_trajectory_enabled=True,
+    )
+    auxiliary_context = ModelContext(
+        (),
+        request_source=ModelRequestSource.FINALIZER,
+        trajectory_id="interleaved-source-fixture",
+        prompt_trajectory_enabled=True,
+    )
+    prefix = [_wire_message("system", "stable"), _wire_message("user", "question")]
+
+    first_main = recorder.observe(
+        {"messages": prefix, "tools": []},
+        context=main_context,
+        provider="p",
+        model="m",
+    )
+    finalizer = recorder.observe(
+        {"messages": [_wire_message("system", "finalize"), _wire_message("user", "answer")]},
+        context=auxiliary_context,
+        provider="p",
+        model="m",
+    )
+    second_main = recorder.observe(
+        {"messages": [*prefix, _wire_message("assistant", "new suffix")], "tools": []},
+        context=main_context,
+        provider="p",
+        model="m",
+    )
+
+    assert first_main is not None
+    assert first_main.sequence == 1
+    assert finalizer is not None
+    assert finalizer.sequence == 1
+    assert second_main is not None
+    assert second_main.sequence == 2
+    assert second_main.common_prefix_messages == 2
+    assert second_main.append_only is True
+
+
 def test_wire_trajectory_detects_retroactive_insert_and_epoch_boundary() -> None:
     recorder = ProviderRequestTrajectoryRecorder(fingerprint_key=b"test-key-material-0123456789")
     context = ModelContext(

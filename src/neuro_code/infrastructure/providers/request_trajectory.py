@@ -114,7 +114,10 @@ class ProviderRequestTrajectoryRecorder:
         if not isinstance(key, bytes) or len(key) < 16:
             raise ValueError("trajectory fingerprint key must contain at least 16 bytes")
         self._key = key
-        self._prior: OrderedDict[str, _PriorProjection] = OrderedDict()
+        # Keep independent baselines per request source. Auxiliary traffic
+        # (for example a finalizer or search sidecar) must not replace the
+        # preceding MAIN_TURN projection and hide its next divergence.
+        self._prior: OrderedDict[tuple[str, str], _PriorProjection] = OrderedDict()
 
     def observe(
         self,
@@ -172,7 +175,8 @@ class ProviderRequestTrajectoryRecorder:
             else None
         )
 
-        previous = self._prior.get(context.trajectory_id)
+        trajectory_key = (context.trajectory_id, context.request_source.value)
+        previous = self._prior.get(trajectory_key)
         sequence = previous.sequence + 1 if previous is not None else 1
         common: int | None = None
         divergence: int | None = None
@@ -246,7 +250,7 @@ class ProviderRequestTrajectoryRecorder:
             append_only=append_only,
             fingerprints_truncated=fingerprints_truncated,
         )
-        self._prior[context.trajectory_id] = _PriorProjection(
+        self._prior[trajectory_key] = _PriorProjection(
             context.cache_epoch,
             provider,
             model,
@@ -259,7 +263,7 @@ class ProviderRequestTrajectoryRecorder:
             request_options_fingerprint,
             sequence,
         )
-        self._prior.move_to_end(context.trajectory_id)
+        self._prior.move_to_end(trajectory_key)
         while len(self._prior) > MAX_TRAJECTORY_BINDINGS:
             self._prior.popitem(last=False)
         return event
