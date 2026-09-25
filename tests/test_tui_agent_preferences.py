@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, Input, Select, Static
 
 from neuro_code.application.ports.agent_preferences import (
     AgentPreferenceResolution,
@@ -74,6 +74,35 @@ async def test_settings_opens_the_agent_preferences_form_and_saves_values() -> N
         assert saved.enter_behavior == "newline"
         # The default scope is the user level (no project workspace selected).
         assert workspace is None
+
+
+async def test_execution_budget_settings_open_in_both_supported_languages() -> None:
+    for language, placeholder in (
+        (UiLanguage.SIMPLIFIED_CHINESE, "当前有效值"),
+        (UiLanguage.ENGLISH, "Current effective value"),
+    ):
+        store = UiPreferencesFixture()
+        app = NeuroCodeApp(
+            TuiConversation(),
+            ui_preferences=store,
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/tmp"),
+        )
+        screen = AgentPreferencesScreen(
+            "execution",
+            AgentPreferences(execution_profile="normal"),
+            store,
+            language=language,
+        )
+
+        async with app.run_test(size=(120, 44)) as pilot:
+            app.push_screen(screen)
+            await pilot.pause()
+
+            assert screen.query_one("#preference-execution_profile", Select)
+            max_steps = screen.query_one("#preference-max_steps", Input)
+            assert max_steps.placeholder == placeholder
 
 
 async def test_agent_preferences_save_to_the_selected_project_scope() -> None:
