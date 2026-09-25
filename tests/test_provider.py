@@ -45,6 +45,7 @@ from neuro_code.infrastructure.providers.gemini_interactions import (
     GeminiInteractionsProvider,
 )
 from neuro_code.infrastructure.providers.openai_compatible import (
+    MAX_DEEPSEEK_TOOL_ARGUMENT_REPLAY_BYTES,
     OpenAICompatibleProvider,
     _ToolCallBuffer,
 )
@@ -160,6 +161,36 @@ class OpenAICompatibleProviderTests(unittest.IsolatedAsyncioTestCase):
             dialect="kimi",
         )
         self.assertNotIn("reasoning_content", kimi_legacy._message_payload(tool_turn))
+
+    def test_deepseek_tool_enabled_requests_replay_every_historical_reasoning_message(self) -> None:
+        provider = OpenAICompatibleProvider(
+            model="deepseek-v4-flash",
+            base_url="https://api.deepseek.com",
+            api_key="fixture",
+            dialect="deepseek-v4",
+        )
+        context = ModelContext(
+            (
+                Message(Role.SYSTEM, "fixture system"),
+                Message(Role.USER, "first turn"),
+                Message(
+                    Role.ASSISTANT,
+                    "first answer",
+                    reasoning_content="fixture-only prior reasoning",
+                ),
+                Message(Role.USER, "follow up"),
+            )
+        )
+        tool = ToolDefinition("read_file", "Read one file", {"type": "object"})
+
+        enabled = provider._request_body(context, (tool,))
+        disabled = provider._request_body(context, (tool,), tool_policy=ModelToolPolicy.DISABLED)
+
+        self.assertEqual(
+            enabled["messages"][2]["reasoning_content"],
+            "fixture-only prior reasoning",
+        )
+        self.assertNotIn("reasoning_content", disabled["messages"][2])
 
     def test_china_dialects_replay_reasoning_and_map_official_request_fields(self) -> None:
         context = ModelContext(
@@ -1167,6 +1198,70 @@ class OpenAICompatibleProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0].name, "bash")
         self.assertEqual(calls[0].arguments, {"command": "echo hi"})
         self.assertNotIn("DSML", text)
+
+    async def test_deepseek_replays_bounded_original_tool_argument_json(self) -> None:
+        raw_arguments = '{ "path" : "src/a.py" }'
+        tool_delta = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-deepseek-raw-args",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": raw_arguments,
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                text=_sse(tool_delta),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        provider = OpenAICompatibleProvider(
+            model="deepseek-v4-flash",
+            base_url="https://api.deepseek.com",
+            api_key="fixture",
+            dialect="deepseek-v4",
+            transport=httpx.MockTransport(handler),
+        )
+        tool = ToolDefinition("read_file", "Read one file", {"type": "object"})
+        events = [
+            event
+            async for event in provider.stream(
+                ModelContext((Message(Role.USER, "read src/a.py"),)),
+                (tool,),
+            )
+        ]
+        call = next(event.call for event in events if isinstance(event, ModelToolCall))
+        next_context = ModelContext(
+            (
+                Message(Role.USER, "read src/a.py"),
+                Message(Role.ASSISTANT, tool_calls=(call,)),
+                Message(Role.TOOL, "file contents", tool_call_id=call.id),
+            )
+        )
+
+        replayed = provider._request_body(next_context, (tool,))
+
+        self.assertEqual(
+            replayed["messages"][1]["tool_calls"][0]["function"]["arguments"],
+            raw_arguments,
+        )
+        self.assertLessEqual(
+            provider._deepseek_tool_argument_replay_bytes,
+            MAX_DEEPSEEK_TOOL_ARGUMENT_REPLAY_BYTES,
+        )
 
     async def test_standard_deepseek_named_provider_does_not_enable_dsml(self) -> None:
         content = (

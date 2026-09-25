@@ -34,6 +34,7 @@ from neuro_code.application.workflows.subagent_capabilities import SubagentCapab
 from neuro_code.domain.background_tasks.models import BackgroundWakeState
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.messages import ContentPart, SessionItem
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.execution import (
     ExecutionBudget,
@@ -157,6 +158,7 @@ class ConversationRunner(Protocol):
         content_parts: Sequence[ContentPart] = (),
         cancellation_policy: TurnCancellationPolicy = TurnCancellationPolicy.RETAIN,
         turn_source: TurnSource = TurnSource.USER,
+        model_request_source: ModelRequestSource | None = None,
         turn_id: str | None = None,
         ultracode_execution_id: str | None = None,
         verification_requirements: VerificationRequirementsSnapshot | None = None,

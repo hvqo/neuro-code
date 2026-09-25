@@ -32,6 +32,7 @@ from neuro_code.application.workflows.writable_subagent import (
     WritableSubagentRuntime,
     WritableSubagentRuntimeFactory,
 )
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.parent_context_relay import ParentContextRelay
 from neuro_code.domain.worktree import WorktreeWorkspaceBinding
 from neuro_code.shared.errors import ConfigurationError
@@ -85,7 +86,11 @@ class _CompositionReadOnlySubagentRuntime:
     ) -> AgentRunResult:
         if self._closed:
             raise ConfigurationError("read-only subagent runtime is closed")
-        result = await self._binding.runner.run(prompt, sink=sink)
+        result = await self._binding.runner.run(
+            prompt,
+            sink=sink,
+            model_request_source=ModelRequestSource.SUBAGENT,
+        )
         if result.session_id != self._child_session_id:
             raise ConfigurationError("subagent runtime returned a different child session")
         return result
@@ -216,7 +221,11 @@ class _CompositionWritableSubagentRuntime:
     ) -> AgentRunResult:
         if self._closed:
             raise ConfigurationError("writable subagent runtime is closed")
-        result = await self._binding.runner.run(prompt, sink=sink)
+        result = await self._binding.runner.run(
+            prompt,
+            sink=sink,
+            model_request_source=ModelRequestSource.SUBAGENT,
+        )
         if result.session_id != self._child_session_id:
             raise ConfigurationError("writable child runtime returned a different child session")
         return result

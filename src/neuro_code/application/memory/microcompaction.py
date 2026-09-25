@@ -50,7 +50,7 @@ _MICROCOMPACTION_MARKER = (
     "[Older tool result omitted from active context. The prior result remains in this session's "
     "history; inspect history before relying on it.]"
 )
-_VOLATILE_TAIL_REASONS = frozenset(
+_VOLATILE_PROJECTION_REASONS = frozenset(
     {
         SyntheticReason.WORKING_SET,
         SyntheticReason.RUNTIME_PLAN,
@@ -58,6 +58,9 @@ _VOLATILE_TAIL_REASONS = frozenset(
         SyntheticReason.RUNTIME_CHECKPOINT,
         SyntheticReason.RUNTIME_SUPERVISION,
         SyntheticReason.RUNTIME_BACKGROUND_TASK,
+        SyntheticReason.RUNTIME_CONTEXT_ROLLOVER,
+        SyntheticReason.INSTRUCTION_SCOPE_REVISION,
+        SyntheticReason.SKILL_SCOPE_REVISION,
     }
 )
 
@@ -388,7 +391,7 @@ def _stable_stream(items: Sequence[SessionItem]) -> tuple[SessionItem, ...]:
     return tuple(
         item
         for item in items
-        if not (isinstance(item, Message) and item.synthetic_reason in _VOLATILE_TAIL_REASONS)
+        if not (isinstance(item, Message) and item.synthetic_reason in _VOLATILE_PROJECTION_REASONS)
     )
 
 

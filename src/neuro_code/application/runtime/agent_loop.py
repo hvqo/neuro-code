@@ -19,7 +19,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from time import monotonic
 
@@ -68,6 +68,7 @@ from neuro_code.application.runtime.background_task_reminders import (
     BACKGROUND_TASK_COMPLETION_BATCH_LIMIT,
     format_background_task_completion_reminder,
 )
+from neuro_code.application.runtime.cache_continuity import CacheContinuityState
 from neuro_code.application.runtime.context_builder import ContextBuilder
 from neuro_code.application.runtime.event_recorder import TurnEventRecorder
 from neuro_code.application.runtime.final_response import (
@@ -82,6 +83,7 @@ from neuro_code.application.runtime.finalization import (
     deterministic_fallback_result,
 )
 from neuro_code.application.runtime.model_step import ModelStepProcessor
+from neuro_code.application.runtime.request_diagnostics import prompt_trajectory_opted_in
 from neuro_code.application.runtime.supervision import (
     AgentExecutionSupervisor,
     ExecutionControlMode,
@@ -126,6 +128,10 @@ from neuro_code.domain.conversation.messages import (
     SessionItem,
     SyntheticReason,
     ToolCall,
+)
+from neuro_code.domain.conversation.prompt_continuity import (
+    CacheBoundaryReason,
+    ModelRequestSource,
 )
 from neuro_code.domain.conversation.request import ModelRequestSnapshot
 from neuro_code.domain.execution import (
@@ -272,6 +278,7 @@ class AgentLoopRunner:
     __slots__ = (
         "_active_provider_window",
         "_budgeted_supervisor_factory",
+        "_cache_continuity",
         "_compaction_runtime_gate",
         "_context_builder",
         "_context_rollover",
@@ -372,6 +379,7 @@ class AgentLoopRunner:
         self._provider_max_output_tokens = provider_max_output_tokens
         self._workspace_undo_sealer = workspace_undo_sealer
         self._microcompaction_state = MicrocompactionRuntimeState()
+        self._cache_continuity = CacheContinuityState()
 
     @property
     def provider_context_window(self) -> ProviderContextWindow | None:
@@ -399,6 +407,7 @@ class AgentLoopRunner:
         ultracode_execution_id: str | None = None,
         cancellation_policy: TurnCancellationPolicy = TurnCancellationPolicy.RETAIN,
         turn_source: TurnSource = TurnSource.USER,
+        model_request_source: ModelRequestSource | None = None,
         verification_required: bool = False,
         verification_requirements: VerificationRequirementsSnapshot | None = None,
         verification_workspace_mutation_id: str | None = None,
@@ -428,6 +437,10 @@ class AgentLoopRunner:
             raise ValueError("ultracode execution id must be a bounded non-empty identifier")
         if not isinstance(turn_source, TurnSource):
             raise TypeError("turn_source must be a TurnSource")
+        if model_request_source is not None and not isinstance(
+            model_request_source, ModelRequestSource
+        ):
+            raise TypeError("model_request_source must be a ModelRequestSource or None")
         if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
             raise ValueError("project_id must be non-empty when provided")
         if turn_source is TurnSource.USER and not prompt.strip() and not prompt_parts:
@@ -552,6 +565,24 @@ class AgentLoopRunner:
                 )
                 context_items.append(_context_rollover_runtime_message(context_rollover_generation))
         self._microcompaction_state.begin_scope(session_id, context_rollover_generation)
+        binding_boundary = self._cache_continuity.bind(
+            session_id,
+            project_id,
+            context_rollover_generation,
+        )
+        if binding_boundary is not None:
+            self._context_builder.reset_projection_epoch()
+            self._context_builder.invalidate_project_memory_snapshot()
+        configuration_boundary = self._cache_continuity.observe_configuration(
+            (
+                self._system_prompt,
+                self._context_builder.reasoning_effort.value,
+                self._context_builder.interaction_mode.value,
+                self._execution_control_mode.value,
+            )
+        )
+        if configuration_boundary is not None:
+            self._context_builder.reset_projection_epoch()
         if plan_execution_requested and (self._session_store is None or session_id is None):
             raise ConfigurationError("session-backed task storage is unavailable")
         if plan_execution_requested and self._context_builder.plan is None:
@@ -892,6 +923,22 @@ class AgentLoopRunner:
                 if not (isinstance(item, Message) and item.synthetic_reason is not None)
             )
 
+        def annotate_request_context(context: ModelContext) -> ModelContext:
+            source = model_request_source or (
+                ModelRequestSource.MAIN_TURN
+                if turn_source is TurnSource.USER
+                else ModelRequestSource.WORKFLOW_CHILD
+            )
+            return replace(
+                context,
+                request_source=source,
+                trajectory_id=self._cache_continuity.trajectory_id,
+                context_generation=context_rollover_generation,
+                cache_epoch=self._cache_continuity.cache_epoch,
+                cache_boundary_reason=self._cache_continuity.pending_boundary,
+                prompt_trajectory_enabled=prompt_trajectory_opted_in(),
+            )
+
         def canonical_model_context() -> ModelContext:
             return ModelContext(
                 tuple(context_items),
@@ -959,12 +1006,14 @@ class AgentLoopRunner:
                 (*projected.items, *additional_items),
                 working_set_message=working_set_message,
             )
-            return ModelContext(
-                model_items,
-                projected.source_provider,
-                projected.source_model,
-                projected.source_context_affinity,
-                self._context_builder.reasoning_effort,
+            return annotate_request_context(
+                ModelContext(
+                    model_items,
+                    projected.source_provider,
+                    projected.source_model,
+                    projected.source_context_affinity,
+                    self._context_builder.reasoning_effort,
+                )
             )
 
         def fresh_context_seed_items() -> tuple[SessionItem, ...]:
@@ -1003,6 +1052,11 @@ class AgentLoopRunner:
             if generation != expected_generation:
                 raise ConfigurationError("context rollover generation changed concurrently")
             context_rollover_generation = generation
+            self._cache_continuity.advance(
+                CacheBoundaryReason.FRESH_CONTEXT_ROLLOVER,
+                generation=context_rollover_generation,
+            )
+            self._context_builder.reset_projection_epoch()
             self._microcompaction_state.begin_scope(session_id, context_rollover_generation)
             pending_microcompaction_telemetry = None
             active_context_seed = fresh_context_seed_items()
@@ -1329,6 +1383,8 @@ class AgentLoopRunner:
             if persistence is None:
                 return None, True
             active_compaction_item = persistence.item
+            self._cache_continuity.advance(CacheBoundaryReason.FULL_COMPACTION)
+            self._context_builder.reset_projection_epoch()
             await emit(
                 AgentEventKind.CONTEXT_COMPACTION_COMPLETED,
                 {
@@ -1880,6 +1936,11 @@ class AgentLoopRunner:
                         ),
                         trigger_reason=trigger_reason,
                     )
+                    if (
+                        microcompaction.telemetry is not None
+                        and microcompaction.telemetry.groups_compacted > 0
+                    ):
+                        self._cache_continuity.advance(CacheBoundaryReason.MICROCOMPACTION_BATCH)
                     context = microcompaction.context
                     micro_preflight = assess_context_preflight(
                         context=context,
@@ -2066,6 +2127,22 @@ class AgentLoopRunner:
                 if terminal_before_model is not None:
                     return await complete_finalized_turn(terminal_before_model, step=step - 1)
                 await emit_budget_usage()
+                self._cache_continuity.observe_provider(
+                    self._provider.provider_name,
+                    self._provider.model_name,
+                )
+                self._cache_continuity.observe_tool_schema(
+                    [tool.to_dict() for tool in tool_definitions]
+                )
+                self._cache_continuity.observe_configuration(
+                    (
+                        self._system_prompt,
+                        self._context_builder.reasoning_effort.value,
+                        self._context_builder.interaction_mode.value,
+                        self._execution_control_mode.value,
+                    )
+                )
+                context = annotate_request_context(context)
                 request_snapshot = ModelRequestSnapshot.build(
                     context=context,
                     tools=tool_definitions,
@@ -2085,6 +2162,7 @@ class AgentLoopRunner:
                     provider=self._provider.provider_name,
                     model=self._provider.model_name,
                 )
+                self._cache_continuity.consume_boundary()
 
                 request_id = request_snapshot.request_id
                 current_step = step
@@ -2125,6 +2203,14 @@ class AgentLoopRunner:
                 has_completed_model_step = True
                 if step_result.selected_provider is not None:
                     selected = step_result.selected_provider
+                    selected_boundary = self._cache_continuity.observe_provider(
+                        selected.provider,
+                        selected.model,
+                    )
+                    if selected_boundary is not None:
+                        # FailoverModelProvider marks the selected fallback
+                        # request with the same epoch boundary before dispatch.
+                        self._cache_continuity.consume_boundary()
                     active_provider_window = (
                         ProviderContextWindow(
                             selected.provider,
@@ -2164,6 +2250,13 @@ class AgentLoopRunner:
                             **completion.usage.to_event_data(),
                             "used_tokens": used_tokens,
                             "estimated": used_tokens is None,
+                            "request_source": context.request_source.value,
+                            "cache_epoch": context.cache_epoch,
+                            "cache_boundary_reason": (
+                                context.cache_boundary_reason.value
+                                if context.cache_boundary_reason is not None
+                                else None
+                            ),
                         },
                     )
 
@@ -2514,6 +2607,11 @@ class AgentLoopRunner:
                             else None
                         ),
                     )
+                    if (
+                        post_batch_microcompaction.telemetry is not None
+                        and post_batch_microcompaction.telemetry.groups_compacted > 0
+                    ):
+                        self._cache_continuity.advance(CacheBoundaryReason.MICROCOMPACTION_BATCH)
                     post_batch_context = post_batch_microcompaction.context
                     if post_batch_microcompaction.telemetry is not None:
                         pending_microcompaction_telemetry = post_batch_microcompaction.telemetry

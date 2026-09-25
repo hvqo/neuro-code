@@ -28,6 +28,7 @@ from neuro_code.domain.conversation.events import (
     ModelProviderAttemptFailed,
     ModelProviderSelected,
     ModelReasoningDelta,
+    ModelRequestTrajectoryObserved,
     ModelTextDelta,
     ModelToolCall,
 )
@@ -226,6 +227,11 @@ class ModelStepProcessor:
                 await complete_thinking()
                 on_imperfect()
                 tool_calls.append(model_event.call)
+            elif isinstance(model_event, ModelRequestTrajectoryObserved):
+                await emit(
+                    AgentEventKind.MODEL_REQUEST_TRAJECTORY,
+                    model_event.to_event_data(),
+                )
             elif isinstance(model_event, ModelCompleted):
                 await mark_output_started("completed")
                 await complete_thinking()

@@ -19,6 +19,7 @@ from neuro_code.application.ports.task_dag_replan import (
 from neuro_code.application.runtime.agent import EventSink
 from neuro_code.application.sessions.binding import ConversationBinding
 from neuro_code.application.workflows.task_dag import CreateTaskDagRequest
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.execution import TurnSource
 from neuro_code.domain.model_planning import ModelDagProposal
 from neuro_code.domain.task_dag import TaskDag, TaskDagNodeState, TaskDagState
@@ -228,6 +229,7 @@ class TaskDagReplanApplicationService:
                 sink=None,
                 turn_id=fenced.planner_turn_id,
                 turn_source=TurnSource.USER,
+                model_request_source=ModelRequestSource.WORKFLOW_CHILD,
             )
         except asyncio.CancelledError:
             await asyncio.shield(self._mark_indeterminate(fenced))

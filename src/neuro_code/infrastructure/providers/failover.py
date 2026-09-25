@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from neuro_code.application.ports.model import (
     ModelCapabilitySet,
@@ -17,7 +17,9 @@ from neuro_code.domain.conversation.events import (
     ModelEvent,
     ModelProviderAttemptFailed,
     ModelProviderSelected,
+    ModelRequestTrajectoryObserved,
 )
+from neuro_code.domain.conversation.prompt_continuity import CacheBoundaryReason
 from neuro_code.domain.tools import ToolDefinition
 from neuro_code.infrastructure.providers.failure_policy import ProviderFailurePolicy
 from neuro_code.shared.errors import ConfigurationError, ProviderError, ProviderFailureKind
@@ -25,6 +27,7 @@ from neuro_code.shared.redaction import redact_sensitive_text
 
 _FAILURE_MESSAGE_LIMIT = 500
 _AGGREGATE_DETAIL_LIMIT = 2_000
+_MAX_REQUEST_DIAGNOSTICS_BEFORE_OUTPUT = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,11 +133,36 @@ class FailoverModelProvider:
         failures: list[tuple[str, str]] = []
         for index in range(start_index, len(self._candidates)):
             candidate = self._candidates[index]
+            request_diagnostics: list[ModelRequestTrajectoryObserved] = []
             try:
                 provider = self._provider(index)
-                iterator = provider.stream(context, tools, tool_policy=tool_policy)
-                first_event = await anext(iterator)
+                candidate_context = context
+                if index > start_index:
+                    reason = (
+                        CacheBoundaryReason.PROVIDER_SWITCH
+                        if self._candidates[start_index].name != candidate.name
+                        else CacheBoundaryReason.MODEL_SWITCH
+                    )
+                    candidate_context = replace(
+                        context,
+                        cache_epoch=context.cache_epoch + 1,
+                        cache_boundary_reason=reason,
+                    )
+                iterator = provider.stream(candidate_context, tools, tool_policy=tool_policy)
+                while True:
+                    first_event = await anext(iterator)
+                    if not isinstance(first_event, ModelRequestTrajectoryObserved):
+                        break
+                    request_diagnostics.append(first_event)
+                    if len(request_diagnostics) > _MAX_REQUEST_DIAGNOSTICS_BEFORE_OUTPUT:
+                        raise ProviderError.protocol(
+                            "provider emitted too many request diagnostics before output",
+                            provider=candidate.name,
+                            model=candidate.model,
+                        )
             except (ConfigurationError, ProviderError) as error:
+                for diagnostic in request_diagnostics:
+                    yield diagnostic
                 message = self._failure_message(error)
                 failures.append((candidate.name, message))
                 failure_kind, status_code = self._failure_projection(error)
@@ -150,6 +178,8 @@ class FailoverModelProvider:
                     raise
                 continue
             except StopAsyncIteration:
+                for diagnostic in request_diagnostics:
+                    yield diagnostic
                 empty_error = ProviderError.protocol(
                     "provider stream ended before emitting an event",
                     provider=candidate.name,
@@ -177,6 +207,8 @@ class FailoverModelProvider:
                     failover=index > 0,
                     context_window_tokens=candidate.context_window_tokens,
                 )
+            for diagnostic in request_diagnostics:
+                yield diagnostic
             yield first_event
             async for event in iterator:
                 yield event

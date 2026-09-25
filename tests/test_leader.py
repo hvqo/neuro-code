@@ -35,6 +35,7 @@ from neuro_code.application.workflows.task_dag import (
 from neuro_code.bootstrap.composition import ApplicationComposition
 from neuro_code.domain.conversation.context import ModelContext
 from neuro_code.domain.conversation.events import ModelCompleted
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.execution import TurnSource
 from neuro_code.domain.leader import (
     LeaderAttempt,
@@ -132,11 +133,14 @@ class _Runner:
         content_parts=(),
         cancellation_policy=None,
         turn_source: TurnSource = TurnSource.USER,
+        model_request_source: ModelRequestSource | None = None,
         turn_id: str | None = None,
     ) -> object:
         del sink, content_parts, cancellation_policy
         if turn_source is not TurnSource.USER:
             raise AssertionError("Leader must use the user turn source")
+        if model_request_source is not ModelRequestSource.WORKFLOW_CHILD:
+            raise AssertionError("Leader requests must be classified as workflow children")
         if self.delay is not None:
             await self.delay.wait()
         self.prompts.append(prompt)

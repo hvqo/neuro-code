@@ -54,6 +54,9 @@ from neuro_code.infrastructure.providers.image_references import (
     is_gemini_file_uri,
     parse_image_reference,
 )
+from neuro_code.infrastructure.providers.request_trajectory import (
+    DEFAULT_REQUEST_TRAJECTORY_RECORDER,
+)
 from neuro_code.shared.errors import (
     ConfigurationError,
     ProviderError,
@@ -802,6 +805,14 @@ class GeminiInteractionsProvider:
             ) from error
 
         body = self._request_body(context, tools, tool_policy=tool_policy)
+        request_trajectory = DEFAULT_REQUEST_TRAJECTORY_RECORDER.observe(
+            body,
+            context=context,
+            provider=self._provider_name,
+            model=self._model,
+        )
+        if request_trajectory is not None:
+            yield request_trajectory
         headers = {"x-goog-api-key": self._api_key, "accept": "text/event-stream"}
         steps_by_index: dict[int, dict[str, Any]] = {}
         argument_buffers: dict[int, str] = {}

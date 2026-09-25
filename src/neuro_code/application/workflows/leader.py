@@ -30,6 +30,7 @@ from neuro_code.application.workflows.task_dag import (
     RunTaskDagWaveRequest,
     TaskDagApplicationService,
 )
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.execution import TurnSource
 from neuro_code.domain.leader import (
     MAX_LEADER_EVIDENCE_BYTES,
@@ -604,6 +605,7 @@ class LeaderApplicationService:
                 sink=None,
                 turn_id=attempt.turn_id,
                 turn_source=TurnSource.USER,
+                model_request_source=ModelRequestSource.WORKFLOW_CHILD,
             )
         except asyncio.CancelledError:
             await asyncio.shield(self._mark_indeterminate(attempt, owner_id=self._owner_id))

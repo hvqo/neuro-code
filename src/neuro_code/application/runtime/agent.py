@@ -51,6 +51,7 @@ from neuro_code.domain.conversation.messages import (
     Message,
     SessionItem,
 )
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.execution import (
     ExecutionBudget,
@@ -497,6 +498,7 @@ class AgentRuntime:
         ultracode_execution_id: str | None = None,
         cancellation_policy: TurnCancellationPolicy = TurnCancellationPolicy.RETAIN,
         turn_source: TurnSource = TurnSource.USER,
+        model_request_source: ModelRequestSource | None = None,
         verification_required: bool = False,
         verification_requirements: VerificationRequirementsSnapshot | None = None,
         verification_workspace_mutation_id: str | None = None,
@@ -548,6 +550,7 @@ class AgentRuntime:
             ultracode_execution_id=ultracode_execution_id,
             cancellation_policy=cancellation_policy,
             turn_source=turn_source,
+            model_request_source=model_request_source,
             verification_required=verification_required,
             verification_requirements=effective_requirements,
             verification_workspace_mutation_id=verification_workspace_mutation_id,

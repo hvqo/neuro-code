@@ -36,6 +36,7 @@ from neuro_code.bootstrap.subagent import (
     READ_ONLY_SUBAGENT_TOOL_NAMES,
     CompositionReadOnlySubagentRuntimeFactory,
 )
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.sandbox.models import SandboxProfile
 from neuro_code.domain.session_tasks import (
     SessionTask,
@@ -175,8 +176,9 @@ class CompositionSubagentRunnerFixture:
         prompt: str,
         *,
         sink: EventSink | None = None,
+        model_request_source: ModelRequestSource | None = None,
     ) -> AgentRunResult:
-        del prompt, sink
+        del prompt, sink, model_request_source
         return AgentRunResult("child-session", "child result", (), (), (), 1)
 
 

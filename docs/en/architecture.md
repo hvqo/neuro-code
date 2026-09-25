@@ -3314,40 +3314,53 @@ work rather than another verification-foundation slice.
 
 ## Cache-friendly model request projection and usage
 
-The cache-friendly context contract is `Stable Prefix → Append-only
-Conversation → Volatile Tail`. The stable prefix contains the request-scoped
-system policy, deterministic tool definitions, and ordered project-instruction,
-skill, and Project Memory projections. Project Memory is read once per active
-context generation and remains byte-stable while that generation is active,
-even if extraction updates its store. It refreshes on a new session or resume,
-project attach/move/detach, and committed Fresh Context Rollover; rename keeps
-the same project identity. Full compaction does not refresh it because
-compaction is not a generation boundary. Project instruction and skill
-discoveries retain their existing workspace-refresh behavior and remain stable
-when their source content is unchanged.
+The cache-integrity request contract is `Stable Prefix → Monotonic Provider
+Projection → Explicit Cache Boundaries`. The stable prefix contains the
+request-scoped system policy, deterministic tool definitions, and ordered
+project-instruction, skill, and Project Memory projections. Project Memory is
+read once per active context generation and remains byte-stable while that
+generation is active, even if extraction updates its store. It refreshes on a
+new session or resume, project attach/move/detach, and committed Fresh Context
+Rollover; rename keeps the same project identity. Full Compaction does not
+refresh the Project Memory snapshot, but is itself an explicit cache boundary.
+Project instructions and skills pin their first applicable snapshots for the
+epoch; later scope or catalog changes append typed synthetic revisions that
+describe the complete current scope. Deeper directory rules remain effective
+for their directory, and sibling-scope rules do not cross into the new scope.
 
-Mutable plan revisions, segment checkpoints, budget pressure, replan state,
-and the current Working Set are not folded back into the system message or
-inserted before durable conversation items. Working Set and bounded synthetic
-runtime notices follow append-only conversation as volatile tail context.
-Budget guidance uses only
-the discrete `CONSERVE`, `FOCUS`, and `FINAL_STAGE` pressure transitions; it
-does not rewrite exact remaining counters on every model step. These notices
-are excluded from session persistence, resume replay, and compaction source
-items. A one-request background-completion reminder remains a deliberate tail
-exception because it is acknowledged only after a successful provider
-completion.
+Canonical Session History, the Provider Projection Journal, and the Provider
+Wire Request are separate projections. The existing Session owner remains the
+source of canonical history. A bounded, memory-only journal accepts only
+application-owned typed synthetic control messages and appends Working Set,
+plan, budget, supervision, instruction-scope, and skill-catalog revisions at
+durable item boundaries. Newer Working Set/budget revisions declare their
+authority; earlier segment checkpoints remain confirmed progress. Journal
+entries do not enter persistence, resume, export, or compaction inputs. Restart creates a new binding/epoch and rebuilds
+current stable snapshots instead of restoring the journal. After each final
+Provider request body is built and before dispatch, an adapter can emit
+message, tool, stable-prefix, and request fingerprints plus shape metadata,
+keyed with a process-random HMAC key. This is off by default and can be enabled
+explicitly with `NEURO_PROMPT_TRAJECTORY=1`. Trajectory data retains no body,
+tool arguments, hidden reasoning, headers, or credentials; if the bounded
+message limit is exceeded, it does not compare a truncated prefix. Provider
+cache usage uses only reported fields with known semantics; an unreliable
+reuse ratio remains `None`.
 
-This preserves the intended shape of an unchanged long turn: request *N + 1*
-keeps the same stable prefix, extends the conversation with new durable items,
-then carries its current volatile tail. Historical content is rewritten only
-at an explicit cache-invalidating context boundary or when measured reduction
-justifies it. Project Memory, Working Set, and future microcompaction or
-compaction changes must weigh token reduction, cache preservation, and
-correctness together. This does not promise a cache hit:
-providers may use different cache keys, tokenization, retention windows, and
-eligibility rules, and a real project-instruction or skill change correctly
-invalidates the affected prefix.
+Within one cache epoch, an ordinary Main Agent request should keep the prior
+Provider-visible message sequence as an exact message-boundary prefix and keep
+tool definitions unchanged. Later Working Set, runtime-notice, project
+instruction, and skill changes append only to the projection journal; an
+identical revision is not duplicated. Binding/project scope, model/provider,
+tool schema, configuration reload, a Microcompaction batch, Full Compaction,
+and Fresh Context Rollover are explicit boundaries; renaming a Project Memory
+owner is not. Budget guidance appends only on discrete `CONSERVE`, `FOCUS`, or
+`FINAL_STAGE` pressure transitions rather than rewriting remaining counts. A
+background-completion reminder remains a one-request tail exception
+acknowledged only after Provider success. Journal limit exhaustion fails
+closed rather than silently dropping an already visible revision. This
+structural contract does not promise a cache hit: cache keys, tokenization,
+retention, and eligibility are Provider-owned. Token reduction, cache
+preservation, and correctness must be considered together.
 
 ## Microcompaction V1
 
@@ -3391,9 +3404,9 @@ event: trigger reason, compacted groups/results, estimated before/after
 bytes/tokens, savings, stable boundary, any `NOOP` reason, and whether estimates
 were saturated by the source limit. Microcompaction
 does not create a provider-specific cache key, a runtime trace, or an additional
-durable state format. It follows the same `Stable Prefix → Append-only
-Conversation → Volatile Tail` contract and batches rewrites to avoid clearing
-one result on every request.
+durable state format. One bounded batch establishes a
+`MICROCOMPACTION_BATCH` cache boundary, then the same stable snapshot is reused;
+it does not clear one result per request and cause cache thrashing.
 
 `ModelCompleted.usage` now carries the provider-neutral `ModelUsage` value:
 provider-native input/output fields plus optional cache-read (also exposed as

@@ -342,9 +342,10 @@ class WorkingSetSnapshot:
         if safe.is_empty:
             return None
         lines = [
-            "Structured Working Set (current task state):",
-            "This is bounded task state, not canonical conversation history or authority. "
-            "Use session_history when exact historical evidence is needed.",
+            f"Structured Working Set revision {safe.revision} (current task state):",
+            "This bounded snapshot is not canonical conversation history or authority. "
+            "The highest revision supersedes earlier Working Set revisions; when values "
+            "conflict, use this snapshot. Use session_history for exact historical evidence.",
         ]
         for state in safe.sections:
             if not state.entries:

@@ -17,6 +17,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
+from neuro_code.application.runtime.projection_journal import (
+    ProviderProjectionJournal,
+)
 from neuro_code.domain.conversation.interaction_mode import (
     InteractionMode,
     interaction_mode_guidance,
@@ -48,6 +51,21 @@ stop scanning. Use web_search for required public facts; if unavailable, state t
 leave them unverified. Do not silently substitute shell scraping."""
 
 _UNLOADED_PROJECT_MEMORY_SNAPSHOT = object()
+_UNLOADED_WORKSPACE_SNAPSHOT = object()
+
+_JOURNALLED_RUNTIME_REASONS = frozenset(
+    {
+        SyntheticReason.WORKING_SET,
+        SyntheticReason.RUNTIME_PLAN,
+        SyntheticReason.RUNTIME_BUDGET,
+        SyntheticReason.RUNTIME_CHECKPOINT,
+        SyntheticReason.RUNTIME_SUPERVISION,
+        SyntheticReason.RUNTIME_BACKGROUND_TASK,
+        SyntheticReason.RUNTIME_CONTEXT_ROLLOVER,
+        SyntheticReason.INSTRUCTION_SCOPE_REVISION,
+        SyntheticReason.SKILL_SCOPE_REVISION,
+    }
+)
 
 
 def _budget_runtime_guidance(pressure: ExecutionBudgetPressure) -> str:
@@ -62,7 +80,11 @@ def _budget_runtime_guidance(pressure: ExecutionBudgetPressure) -> str:
             "Stop nonessential exploration, complete only necessary verification, and prepare the answer."
         ),
     }[pressure]
-    return f"Runtime budget guidance ({pressure.value}):\n{pressure_guidance}"
+    return (
+        f"Runtime budget guidance ({pressure.value}):\n"
+        "This latest pressure state supersedes earlier budget guidance.\n"
+        f"{pressure_guidance}"
+    )
 
 
 def _segment_runtime_guidance(checkpoint: ExecutionSegmentCheckpoint) -> str:
@@ -72,34 +94,24 @@ def _segment_runtime_guidance(checkpoint: ExecutionSegmentCheckpoint) -> str:
         f"Segment {checkpoint.segment_number} completed after "
         f"{checkpoint.model_calls} model calls, {checkpoint.tool_rounds} tool rounds, and "
         f"{checkpoint.tool_calls} tool calls. Confirmed progress categories: {progress}. "
+        "This is the latest execution position; earlier checkpoints remain confirmed progress. "
         "Continue the same user task in the next bounded segment. Reuse recorded evidence, avoid "
         "repeating equivalent actions, and do not claim unrecorded work."
     )
 
 
 class ContextBuilder:
-    """Build each model request's guided, injected context.
+    """Build a stable prefix and an append-only synthetic-context projection.
 
-    Stable guidance (reasoning effort, interaction mode, batch-first work)
-    is applied to the system message without persisting control text.
-    Repository
-    ``AGENTS.md`` instructions and available skills are refreshed before each
-    model step and injected as synthetic ``User`` messages; the latest
-    discovery results remain observable via ``instruction_result`` and
-    ``skill_result``.
+    The first repository instruction and skill catalog are pinned for the
+    active epoch. Later scope/catalog changes append anchored revisions to a
+    bounded in-memory journal. Working Set and runtime notices use the same
+    journal, while Project Memory remains generation-pinned. None of these
+    synthetic messages enters canonical Session history.
 
-    The bounded Project Memory index is pinned on first use and remains stable
-    until a session/scope boundary or committed fresh-context generation
-    invalidates it. The per-request Working Set is appended after conversation
-    as volatile tail context.
-
-    Dynamic plan and runtime state are rendered by explicit helper methods;
-    the loop appends those notices at safe turn boundaries rather than
-    rewriting the early request prefix.
-
-    为每个模型请求构建带指引和注入内容的上下文. 指令和技能会在每个模型步骤刷新并作为合成 User 消息注入.
-    项目记忆快照只在会话/范围边界或已提交的全新上下文 generation 后失效; Working Set 位于对话后的易变尾部.
-    动态计划和运行时状态由显式辅助方法渲染,并在安全的回合边界追加,不会改写请求前缀.
+    为请求构建稳定前缀与仅追加的 synthetic context 投影. 当前 epoch 的首份仓库指令和技能目录保持固定. 后续
+    作用域变化以有界、带锚点的修订追加. Working Set 与运行时通知共用该内存日志, Project Memory 按 generation 固定.
+    合成消息都不会进入规范 Session 历史。
     """
 
     __slots__ = (
@@ -108,13 +120,18 @@ class ContextBuilder:
         "_interaction_mode",
         "_last_instruction_result",
         "_last_skill_result",
+        "_latest_instruction_message",
+        "_latest_skill_message",
         "_parent_relay_message",
         "_plan",
         "_plan_comments",
         "_project_memory_provider",
         "_project_memory_snapshot",
+        "_projection_journal",
         "_reasoning_effort",
         "_skill_provider",
+        "_stable_instruction_message",
+        "_stable_skill_message",
     )
 
     def __init__(
@@ -152,6 +169,11 @@ class ContextBuilder:
         self._dag_result_relay_message = dag_result_relay_message
         self._last_instruction_result: InstructionDiscoveryResult | None = None
         self._last_skill_result: SkillDiscoveryResult | None = None
+        self._projection_journal = ProviderProjectionJournal()
+        self._stable_instruction_message: Message | None | object = _UNLOADED_WORKSPACE_SNAPSHOT
+        self._stable_skill_message: Message | None | object = _UNLOADED_WORKSPACE_SNAPSHOT
+        self._latest_instruction_message: Message | None | object = _UNLOADED_WORKSPACE_SNAPSHOT
+        self._latest_skill_message: Message | None | object = _UNLOADED_WORKSPACE_SNAPSHOT
 
     @property
     def reasoning_effort(self) -> ReasoningEffort:
@@ -182,6 +204,20 @@ class ContextBuilder:
         """
 
         self._project_memory_snapshot = _UNLOADED_PROJECT_MEMORY_SNAPSHOT
+
+    def reset_projection_epoch(self) -> None:
+        """Reset bounded synthetic revisions at an explicit cache boundary.
+
+        Context rewriting is authorized only when the caller has already
+        advanced its cache epoch. A new epoch can establish current instruction
+        and skill snapshots without deleting or persisting conversation truth.
+        """
+
+        self._projection_journal.reset()
+        self._stable_instruction_message = _UNLOADED_WORKSPACE_SNAPSHOT
+        self._stable_skill_message = _UNLOADED_WORKSPACE_SNAPSHOT
+        self._latest_instruction_message = _UNLOADED_WORKSPACE_SNAPSHOT
+        self._latest_skill_message = _UNLOADED_WORKSPACE_SNAPSHOT
 
     def _load_project_memory_snapshot(self) -> str | None:
         if self._project_memory_provider is None:
@@ -320,16 +356,12 @@ class ContextBuilder:
     ) -> tuple[SessionItem, ...]:
         """Apply the selected policy to a request without persisting control text.
 
-        Reasoning effort, interaction mode, and batch-first guidance are
-        appended to the system message.  Repository AGENTS.md instructions are injected as a
-        separate synthetic ``User`` message tagged with
-        ``SyntheticReason.PROJECT_INSTRUCTIONS``, placed after the system
-        message and before the first genuine user message.  This follows the
-        Rust baseline's ``ProjectInstructions`` synthetic user item pattern:
-        the instruction content never masquerades as a system or genuine user
-        message.
+        The first applicable instruction and skill snapshots are placed after
+        the system message. Later changes and runtime state are inserted at
+        their anchored conversation boundary so an earlier request remains a
+        prefix. All generated messages stay outside durable history.
 
-        将选定策略应用到请求,但不持久化控制文本. 仓库指令作为标记为合成原因的独立 User 消息注入.
+        将策略应用于请求但不持久化控制文本. 首份指令与技能快照位于 system 之后; 后续变化按锚点追加, 保留旧请求前缀.
         """
 
         if working_set_message is not None and (
@@ -344,62 +376,158 @@ class ContextBuilder:
             BATCH_FIRST_RUNTIME_GUIDANCE,
         ]
         guidance = "\n\n".join(guidance_parts)
-        rendered = [
-            item
-            for item in items
-            if not (
-                isinstance(item, Message)
-                and item.synthetic_reason
-                in {
-                    SyntheticReason.PARENT_RELAY,
-                    SyntheticReason.DAG_PREDECESSOR_RESULTS,
-                    SyntheticReason.WORKING_SET,
-                    SyntheticReason.PROJECT_MEMORY_INDEX,
-                }
-            )
-        ]
+        raw_items = tuple(items)
+        if not any(isinstance(item, Message) and item.role is Role.SYSTEM for item in raw_items):
+            raw_items = (Message(Role.SYSTEM, ""), *raw_items)
+        removable_reasons = _JOURNALLED_RUNTIME_REASONS | frozenset(
+            {
+                SyntheticReason.PARENT_RELAY,
+                SyntheticReason.DAG_PREDECESSOR_RESULTS,
+                SyntheticReason.PROJECT_MEMORY_INDEX,
+                SyntheticReason.PROJECT_INSTRUCTIONS,
+                SyntheticReason.AVAILABLE_SKILLS,
+            }
+        )
+        canonical_anchor = sum(
+            not (isinstance(item, Message) and item.synthetic_reason in removable_reasons)
+            for item in raw_items
+        )
 
-        # Apply guidance to the system message (or create one if missing).
-        system_index: int | None = None
-        for index, item in enumerate(rendered):
-            if isinstance(item, Message) and item.role is Role.SYSTEM:
-                system_index = index
-                break
-        if system_index is not None:
-            original = rendered[system_index]
-            assert isinstance(original, Message)
-            guided = Message(Role.SYSTEM, f"{original.model_content()}\n\n{guidance}")
-            rendered[system_index] = guided
-        else:
-            rendered.insert(0, Message(Role.SYSTEM, guidance))
-            system_index = 0
-
-        # Refresh and inject repository instructions as a synthetic User message.
+        # Current instructions and catalog are pinned in the stable prefix for
+        # this cache epoch. Later discovery changes append a typed revision at
+        # the point where it became visible instead of replacing old bytes.
         instruction_result = self._refresh_instructions()
-        if instruction_result is not None and instruction_result.files:
-            instruction_msg = instruction_result.instruction_message()
-            # Insert after the system message.
-            rendered.insert(system_index + 1, instruction_msg)
-
-        # Refresh and inject available skills as a synthetic User message.
-        # Inserted after the instruction message (or after the system message
-        # if no instructions were found) so the model sees skills after
-        # project conventions.
-        skill_result = self._refresh_skills()
-        if skill_result is not None and skill_result.files:
-            skill_msg = skill_result.skill_message()
-            # Find the insertion point: after the instruction message if
-            # present, otherwise after the system message.
-            insert_at = system_index + 1
-            for i in range(system_index + 1, min(len(rendered), system_index + 3)):
-                item = rendered[i]
-                if (
-                    isinstance(item, Message)
+        current_instruction = (
+            instruction_result.instruction_message()
+            if instruction_result is not None and instruction_result.files
+            else None
+        )
+        if self._instruction_provider is None:
+            current_instruction = next(
+                (
+                    item
+                    for item in raw_items
+                    if isinstance(item, Message)
                     and item.synthetic_reason is SyntheticReason.PROJECT_INSTRUCTIONS
-                ):
-                    insert_at = i + 1
-                    break
-            rendered.insert(insert_at, skill_msg)
+                ),
+                None,
+            )
+        if self._stable_instruction_message is _UNLOADED_WORKSPACE_SNAPSHOT:
+            self._stable_instruction_message = current_instruction
+            self._latest_instruction_message = current_instruction
+        elif current_instruction != self._latest_instruction_message:
+            scope_files = (
+                tuple(file.relative_path for file in instruction_result.files)
+                if instruction_result is not None
+                else ()
+            )
+            scope_label = ", ".join(scope_files) if scope_files else "none"
+            revision = Message(
+                Role.USER,
+                (
+                    "Project instruction scope revision. Current applicable AGENTS.md files "
+                    f"(shallow to deep): {scope_label}. Only the files listed in this revision "
+                    "apply to the current focus; directory scopes omitted here are no longer "
+                    "active. This complete current scope supersedes earlier instruction "
+                    "revisions.\n\n"
+                    + (
+                        current_instruction.content
+                        if current_instruction is not None
+                        else "No repository instructions are currently applicable."
+                    )
+                ),
+                synthetic_reason=SyntheticReason.INSTRUCTION_SCOPE_REVISION,
+            )
+            self._projection_journal.append(canonical_anchor, revision)
+            self._latest_instruction_message = current_instruction
+
+        skill_result = self._refresh_skills()
+        current_skill = (
+            skill_result.skill_message()
+            if skill_result is not None and skill_result.files
+            else None
+        )
+        if self._skill_provider is None:
+            current_skill = next(
+                (
+                    item
+                    for item in raw_items
+                    if isinstance(item, Message)
+                    and item.synthetic_reason is SyntheticReason.AVAILABLE_SKILLS
+                ),
+                None,
+            )
+        if self._stable_skill_message is _UNLOADED_WORKSPACE_SNAPSHOT:
+            self._stable_skill_message = current_skill
+            self._latest_skill_message = current_skill
+        elif current_skill != self._latest_skill_message:
+            revision = Message(
+                Role.USER,
+                (
+                    "Available skill catalog revision. This metadata catalog supersedes "
+                    "earlier catalog revisions; read a skill body only through its existing "
+                    "authorized tool.\n\n"
+                    + (
+                        current_skill.content
+                        if current_skill is not None
+                        else "No skills are currently available in this scope."
+                    )
+                ),
+                synthetic_reason=SyntheticReason.SKILL_SCOPE_REVISION,
+            )
+            self._projection_journal.append(canonical_anchor, revision)
+            self._latest_skill_message = current_skill
+
+        # Runtime controls and the Working Set are projection revisions, not
+        # canonical transcript entries. Anchor them to the number of canonical
+        # items already present so later requests preserve their original order.
+        canonical: list[SessionItem] = []
+        durable_boundary = 0
+        for item in raw_items:
+            if isinstance(item, Message) and item.synthetic_reason in _JOURNALLED_RUNTIME_REASONS:
+                self._projection_journal.append(durable_boundary, item)
+                continue
+            if isinstance(item, Message) and item.synthetic_reason in {
+                SyntheticReason.PARENT_RELAY,
+                SyntheticReason.DAG_PREDECESSOR_RESULTS,
+                SyntheticReason.WORKING_SET,
+                SyntheticReason.PROJECT_MEMORY_INDEX,
+                SyntheticReason.PROJECT_INSTRUCTIONS,
+                SyntheticReason.AVAILABLE_SKILLS,
+            }:
+                continue
+            canonical.append(item)
+            durable_boundary += 1
+        if working_set_message is not None:
+            self._projection_journal.append(
+                durable_boundary,
+                working_set_message,
+            )
+        rendered = self._projection_journal.project(tuple(canonical))
+
+        # Apply policy guidance to the system message without changing the
+        # order of any previously rendered provider-visible conversation item.
+        system_index = next(
+            index
+            for index, item in enumerate(rendered)
+            if isinstance(item, Message) and item.role is Role.SYSTEM
+        )
+        original = rendered[system_index]
+        assert isinstance(original, Message)
+        rendered_list = list(rendered)
+        rendered_list[system_index] = Message(
+            Role.SYSTEM,
+            f"{original.model_content()}\n\n{guidance}",
+        )
+        rendered = tuple(rendered_list)
+
+        stable_instruction = self._stable_instruction_message
+        stable_skill = self._stable_skill_message
+        prefix_context: list[Message] = []
+        if isinstance(stable_instruction, Message):
+            prefix_context.append(stable_instruction)
+        if isinstance(stable_skill, Message):
+            prefix_context.append(stable_skill)
 
         # Project memory is a generation-pinned bounded index of contextual
         # evidence. Extraction may update storage in the background, but that
@@ -409,73 +537,34 @@ class ContextBuilder:
         memory_index = self._project_memory_snapshot
         if memory_index:
             assert isinstance(memory_index, str)
-            insert_at = system_index + 1
-            while insert_at < len(rendered):
-                item = rendered[insert_at]
-                if not isinstance(item, Message) or item.synthetic_reason not in {
-                    SyntheticReason.PROJECT_INSTRUCTIONS,
-                    SyntheticReason.AVAILABLE_SKILLS,
-                }:
-                    break
-                insert_at += 1
-            rendered.insert(
-                insert_at,
+            prefix_context.append(
                 Message(
                     Role.USER,
                     memory_index,
                     synthetic_reason=SyntheticReason.PROJECT_MEMORY_INDEX,
-                ),
+                )
             )
 
         # The immutable parent relay is context rather than authority. Insert
         # its single owned copy after stable workspace context and before
         # genuine child history on every request.
         if self._parent_relay_message is not None:
-            insert_at = system_index + 1
-            while insert_at < len(rendered):
-                item = rendered[insert_at]
-                if not isinstance(item, Message) or item.synthetic_reason not in {
-                    SyntheticReason.PROJECT_INSTRUCTIONS,
-                    SyntheticReason.AVAILABLE_SKILLS,
-                    SyntheticReason.PROJECT_MEMORY_INDEX,
-                }:
-                    break
-                insert_at += 1
-            rendered.insert(insert_at, self._parent_relay_message)
+            prefix_context.append(self._parent_relay_message)
 
         # The dependency relay is a separate channel from parent context.  Its
         # canonical copy is owned by the application and replaces any caller-
         # supplied synthetic message removed above.
         if self._dag_result_relay_message is not None:
-            insert_at = system_index + 1
-            while insert_at < len(rendered):
-                item = rendered[insert_at]
-                if not isinstance(item, Message) or item.synthetic_reason not in {
-                    SyntheticReason.PROJECT_INSTRUCTIONS,
-                    SyntheticReason.AVAILABLE_SKILLS,
-                    SyntheticReason.PROJECT_MEMORY_INDEX,
-                    SyntheticReason.PARENT_RELAY,
-                }:
-                    break
-                insert_at += 1
-            rendered.insert(insert_at, self._dag_result_relay_message)
+            prefix_context.append(self._dag_result_relay_message)
 
-        # Working Set is high-frequency task state, so keep it after the
-        # append-only conversation instead of inserting it into the stable
-        # project prefix. It remains synthetic and never enters durable items.
-        if working_set_message is not None:
-            rendered.append(working_set_message)
-
-        return tuple(rendered)
+        return (
+            *rendered[: system_index + 1],
+            *prefix_context,
+            *rendered[system_index + 1 :],
+        )
 
     def _refresh_instructions(self) -> InstructionDiscoveryResult | None:
-        """Call the instruction provider to get fresh discovered instructions.
-
-        This is called before each model step so that instruction file changes
-        within the same session are picked up on the next turn.
-
-        调用指令 Provider 获取最新发现的指令. 每个模型步骤都会重新执行.
-        """
+        """Refresh observable discovery state before each request."""
         if self._instruction_provider is None:
             self._last_instruction_result = None
             return None
@@ -483,13 +572,7 @@ class ContextBuilder:
         return self._last_instruction_result
 
     def _refresh_skills(self) -> SkillDiscoveryResult | None:
-        """Call the skill provider to get fresh discovered skills.
-
-        This is called before each model step so that skill file changes
-        within the same session are picked up on the next turn.
-
-        调用技能 Provider 获取最新发现的技能. 每个模型步骤都会重新执行.
-        """
+        """Refresh observable discovery state before each request."""
         if self._skill_provider is None:
             self._last_skill_result = None
             return None

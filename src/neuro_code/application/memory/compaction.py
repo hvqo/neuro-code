@@ -21,6 +21,10 @@ from datetime import datetime
 from enum import StrEnum
 
 from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
+from neuro_code.application.runtime.request_diagnostics import (
+    new_trajectory_id,
+    prompt_trajectory_opted_in,
+)
 from neuro_code.domain.conversation.compaction import (
     MAX_DURABLE_COMPACTION_SUMMARY_BYTES,
     DurableCompactionItem,
@@ -41,6 +45,7 @@ from neuro_code.domain.conversation.messages import (
     SessionItem,
     SyntheticReason,
 )
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.shared.errors import ProviderError
 from neuro_code.shared.redaction import redact_sensitive_text
 
@@ -822,6 +827,7 @@ class ProviderContextSummaryGenerator:
 
     def _temporary_context(self, summary_input: ContextSummaryInput) -> ModelContext:
         request = summary_input.request
+        trajectory_enabled = prompt_trajectory_opted_in()
         return ModelContext(
             (
                 Message(Role.SYSTEM, _SUMMARY_GENERATOR_GUIDANCE),
@@ -830,6 +836,9 @@ class ProviderContextSummaryGenerator:
             source_provider=request.provider_window.provider_name,
             source_model=request.provider_window.model_name,
             source_context_affinity=request.provider_window.context_affinity,
+            request_source=ModelRequestSource.COMPACTION,
+            trajectory_id=new_trajectory_id(enabled=trajectory_enabled),
+            prompt_trajectory_enabled=trajectory_enabled,
         )
 
     def _validate_provider_window(self, request: ContextSummaryRequest) -> None:

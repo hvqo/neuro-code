@@ -26,6 +26,7 @@ from neuro_code.domain.conversation.events import (
     ModelProviderAttemptFailed,
     ModelProviderSelected,
     ModelReasoningDelta,
+    ModelRequestTrajectoryObserved,
     ModelTextDelta,
     ModelToolCall,
     ModelUsage,
@@ -47,6 +48,10 @@ from neuro_code.domain.conversation.messages import (
     SessionItem,
     SyntheticReason,
     ToolCall,
+)
+from neuro_code.domain.conversation.prompt_continuity import (
+    CacheBoundaryReason,
+    ModelRequestSource,
 )
 from neuro_code.domain.conversation.reasoning import ReasoningEffort, reasoning_guidance
 from neuro_code.domain.conversation.request import (
@@ -72,6 +77,7 @@ __all__ = [
     "UPSTREAM_IMPORT_PROVIDER",
     "AgentEvent",
     "AgentEventKind",
+    "CacheBoundaryReason",
     "ContentPart",
     "ContentPartKind",
     "ContextItemKind",
@@ -88,7 +94,9 @@ __all__ = [
     "ModelProviderSelected",
     "ModelReasoningDelta",
     "ModelRequestSnapshot",
+    "ModelRequestSource",
     "ModelRequestTokenEstimate",
+    "ModelRequestTrajectoryObserved",
     "ModelTextDelta",
     "ModelToolCall",
     "ModelUsage",

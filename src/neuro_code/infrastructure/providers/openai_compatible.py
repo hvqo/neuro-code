@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -49,6 +51,9 @@ from neuro_code.infrastructure.providers.image_references import (
     InlineImageReference,
     parse_image_reference,
 )
+from neuro_code.infrastructure.providers.request_trajectory import (
+    DEFAULT_REQUEST_TRAJECTORY_RECORDER,
+)
 from neuro_code.shared.errors import (
     ConfigurationError,
     ProviderError,
@@ -58,6 +63,9 @@ from neuro_code.shared.errors import (
 BACKEND_SUMMARY_FIELD_CHARS = 1000
 CODE_SUMMARY_CHARS = 100
 MAX_NATIVE_CONTEXT_BYTES = 1_048_576
+MAX_DEEPSEEK_TOOL_ARGUMENT_REPLAY_BYTES = 256 * 1024
+MAX_DEEPSEEK_TOOL_ARGUMENT_REPLAY_ITEM_BYTES = 16 * 1024
+MAX_DEEPSEEK_TOOL_ARGUMENT_REPLAY_ITEMS = 128
 
 
 def _encode_bounded_native_context(payload: Mapping[str, object]) -> bytes:
@@ -361,6 +369,12 @@ class OpenAICompatibleProvider:
         self._max_output_tokens = max_output_tokens
         self._transport = transport
         self._http_policy = http_policy or HttpClientPolicy()
+        # DeepSeek returns function arguments as provider-authored JSON text.
+        # Keep only a small, process-local replay window so subsequent Chat
+        # requests can preserve exact spelling without extending durable
+        # conversation history with arbitrary provider payloads.
+        self._deepseek_tool_argument_replay: OrderedDict[str, tuple[str, str, int]] = OrderedDict()
+        self._deepseek_tool_argument_replay_bytes = 0
 
     @property
     def provider_name(self) -> str:
@@ -609,7 +623,12 @@ class OpenAICompatibleProvider:
             blocks.append({"type": "image_url", "image_url": {"url": url}})
         return blocks
 
-    def _message_payload(self, message: Message) -> dict[str, Any]:
+    def _message_payload(
+        self,
+        message: Message,
+        *,
+        replay_deepseek_reasoning: bool = False,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "role": message.role.value,
             "content": (
@@ -627,17 +646,64 @@ class OpenAICompatibleProvider:
                     "type": "function",
                     "function": {
                         "name": call.name,
-                        "arguments": json.dumps(dict(call.arguments), ensure_ascii=False),
+                        "arguments": self._tool_call_arguments_payload(call),
                     },
                 }
                 for call in message.tool_calls
             ]
         if message.reasoning_content is not None and (
             self._preserves_reasoning_content()
+            or (self._uses_deepseek_dsml() and replay_deepseek_reasoning)
             or (self._dialect not in {"kimi", "glm", "minimax"} and bool(message.tool_calls))
         ):
             payload["reasoning_content"] = message.reasoning_content
         return payload
+
+    @staticmethod
+    def _tool_arguments_fingerprint(arguments: Mapping[str, Any]) -> str:
+        canonical = json.dumps(
+            dict(arguments),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _remember_deepseek_tool_arguments(
+        self,
+        call_id: str,
+        arguments: Mapping[str, Any],
+        raw_arguments: str,
+    ) -> None:
+        if self._dialect != "deepseek-v4":
+            return
+        size = len(raw_arguments.encode("utf-8"))
+        if size > MAX_DEEPSEEK_TOOL_ARGUMENT_REPLAY_ITEM_BYTES:
+            return
+        fingerprint = self._tool_arguments_fingerprint(arguments)
+        previous = self._deepseek_tool_argument_replay.pop(call_id, None)
+        if previous is not None:
+            self._deepseek_tool_argument_replay_bytes -= previous[2]
+        self._deepseek_tool_argument_replay[call_id] = (fingerprint, raw_arguments, size)
+        self._deepseek_tool_argument_replay_bytes += size
+        while (
+            len(self._deepseek_tool_argument_replay) > MAX_DEEPSEEK_TOOL_ARGUMENT_REPLAY_ITEMS
+            or self._deepseek_tool_argument_replay_bytes > MAX_DEEPSEEK_TOOL_ARGUMENT_REPLAY_BYTES
+        ):
+            _, evicted = self._deepseek_tool_argument_replay.popitem(last=False)
+            self._deepseek_tool_argument_replay_bytes -= evicted[2]
+
+    def _tool_call_arguments_payload(self, call: ToolCall) -> str:
+        replay = self._deepseek_tool_argument_replay.get(call.id)
+        if (
+            replay is not None
+            and self._dialect == "deepseek-v4"
+            and replay[0] == self._tool_arguments_fingerprint(call.arguments)
+        ):
+            self._deepseek_tool_argument_replay.move_to_end(call.id)
+            return replay[1]
+        return json.dumps(dict(call.arguments), ensure_ascii=False)
 
     def _can_replay_native_context(self, context: ModelContext) -> bool:
         return (
@@ -767,11 +833,22 @@ class OpenAICompatibleProvider:
             return f"[backend code_interpreter] {code_preview}"
         return None
 
-    def _message_payloads(self, context: ModelContext) -> list[dict[str, Any]]:
+    def _message_payloads(
+        self,
+        context: ModelContext,
+        *,
+        replay_deepseek_reasoning: bool = False,
+    ) -> list[dict[str, Any]]:
         xai_import_affinity = self._has_xai_import_affinity(context)
         minimax_native_affinity = self._can_replay_native_context(context)
         if not xai_import_affinity and not minimax_native_affinity:
-            return [self._message_payload(message) for message in context.messages]
+            return [
+                self._message_payload(
+                    message,
+                    replay_deepseek_reasoning=replay_deepseek_reasoning,
+                )
+                for message in context.messages
+            ]
 
         payloads: list[dict[str, Any]] = []
         pending_reasoning: list[str] = []
@@ -792,7 +869,10 @@ class OpenAICompatibleProvider:
                         payloads.append({"role": Role.ASSISTANT.value, "content": summary})
                 continue
 
-            payload = self._message_payload(item)
+            payload = self._message_payload(
+                item,
+                replay_deepseek_reasoning=replay_deepseek_reasoning,
+            )
             if item.role is Role.ASSISTANT:
                 if pending_reasoning:
                     existing = payload.get("reasoning_content")
@@ -821,7 +901,14 @@ class OpenAICompatibleProvider:
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "model": self._model,
-            "messages": self._message_payloads(context),
+            "messages": self._message_payloads(
+                context,
+                replay_deepseek_reasoning=(
+                    self._uses_deepseek_dsml()
+                    and tool_policy is ModelToolPolicy.ALLOWED
+                    and bool(tools)
+                ),
+            ),
             "max_tokens": self._max_output_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
@@ -877,6 +964,14 @@ class OpenAICompatibleProvider:
             ) from error
 
         body = self._request_body(context, tools, tool_policy=tool_policy)
+        request_trajectory = DEFAULT_REQUEST_TRAJECTORY_RECORDER.observe(
+            body,
+            context=context,
+            provider=self._provider_name,
+            model=self._model,
+        )
+        if request_trajectory is not None:
+            yield request_trajectory
 
         headers = {"Authorization": f"Bearer {self._api_key}"}
         buffers: dict[int, _ToolCallBuffer] = {}
@@ -997,11 +1092,20 @@ class OpenAICompatibleProvider:
                 )
             if not buffer.identifier or not buffer.name:
                 raise ProviderError.protocol("provider emitted an incomplete tool call")
+            self._remember_deepseek_tool_arguments(
+                buffer.identifier,
+                arguments,
+                buffer.arguments or "{}",
+            )
             yield ModelToolCall(ToolCall(buffer.identifier, buffer.name, arguments))
         native_items: tuple[PreservedContextItem, ...] = ()
         if reasoning_details is not None and reasoning_details.details and self._context_affinity:
             native_items = (self._native_reasoning_item(reasoning_details.details),)
-        yield ModelCompleted(stop_reason, context_items=native_items, usage=model_usage)
+        yield ModelCompleted(
+            stop_reason,
+            context_items=native_items,
+            usage=model_usage,
+        )
 
     @staticmethod
     def _accumulate_tool_calls(

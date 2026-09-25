@@ -11,7 +11,9 @@ extraction, and explicit WEB_SEARCH failover.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
@@ -46,6 +48,7 @@ from neuro_code.domain.conversation.events import (
     ModelTextDelta,
 )
 from neuro_code.domain.conversation.messages import Message, Role
+from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.infrastructure.providers import create_provider
 from neuro_code.infrastructure.providers.anthropic import AnthropicProvider
 from neuro_code.infrastructure.providers.gemini_interactions import GeminiInteractionsProvider
@@ -65,6 +68,21 @@ SIDE_CAR_SEARCH_SYSTEM_PROMPT = (
 _MAX_FAILURE_DETAIL = 500
 _MAX_XAI_DOMAIN_FILTERS = 5
 _MARKDOWN_CITATION = re.compile(r"\[\[(?P<number>\d+)\]\]\((?P<url>https?://[^)\s]+)\)")
+
+
+def _sidecar_context(messages: tuple[Message, ...]) -> ModelContext:
+    enabled = os.environ.get("NEURO_PROMPT_TRAJECTORY", "").casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    return ModelContext(
+        messages,
+        request_source=ModelRequestSource.WEB_SEARCH_SIDECAR,
+        trajectory_id=uuid.uuid4().hex if enabled else None,
+        prompt_trajectory_enabled=enabled,
+    )
 
 
 def _bounded_prompt(request: WebSearchRequest) -> str:
@@ -922,7 +940,7 @@ class ResponsesHostedWebSearchBackend:
         capture = _ResponseCapture()
         try:
             provider = self._provider_factory(capture.observe, request)
-            context = ModelContext(
+            context = _sidecar_context(
                 (
                     Message(Role.SYSTEM, SIDE_CAR_SEARCH_SYSTEM_PROMPT),
                     Message(Role.USER, _bounded_prompt(request)),
@@ -1020,7 +1038,7 @@ class AnthropicHostedWebSearchBackend(ResponsesHostedWebSearchBackend):
         capture = _ResponseCapture()
         try:
             provider = self._provider_factory(capture.observe, request)
-            context = ModelContext(
+            context = _sidecar_context(
                 (
                     Message(Role.SYSTEM, SIDE_CAR_SEARCH_SYSTEM_PROMPT),
                     Message(Role.USER, _bounded_prompt(request)),
@@ -1118,7 +1136,7 @@ class GeminiHostedWebSearchBackend(ResponsesHostedWebSearchBackend):
         capture = _ResponseCapture()
         try:
             provider = self._provider_factory(capture.observe, request)
-            context = ModelContext(
+            context = _sidecar_context(
                 (
                     Message(Role.SYSTEM, SIDE_CAR_SEARCH_SYSTEM_PROMPT),
                     Message(Role.USER, _bounded_prompt(request)),

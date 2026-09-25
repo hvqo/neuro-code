@@ -54,6 +54,9 @@ from neuro_code.infrastructure.providers.image_references import (
     InlineImageReference,
     parse_image_reference,
 )
+from neuro_code.infrastructure.providers.request_trajectory import (
+    DEFAULT_REQUEST_TRAJECTORY_RECORDER,
+)
 from neuro_code.shared.errors import (
     ConfigurationError,
     ProviderError,
@@ -737,6 +740,14 @@ class AnthropicProvider:
             ) from error
 
         body = self._request_body(context, tools, tool_policy=tool_policy)
+        request_trajectory = DEFAULT_REQUEST_TRAJECTORY_RECORDER.observe(
+            body,
+            context=context,
+            provider=self._provider_name,
+            model=self._model,
+        )
+        if request_trajectory is not None:
+            yield request_trajectory
         headers = {
             "x-api-key": self._api_key,
             "anthropic-version": "2023-06-01",

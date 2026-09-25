@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from neuro_code.domain.conversation.messages import Message, PreservedContextItem, SessionItem
+from neuro_code.domain.conversation.prompt_continuity import (
+    CacheBoundaryReason,
+    ModelRequestSource,
+)
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 
 UPSTREAM_IMPORT_PROVIDER = "upstream-rust-import"
@@ -22,6 +26,12 @@ class ModelContext:
     source_model: str | None = None
     source_context_affinity: str | None = None
     reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH
+    request_source: ModelRequestSource = ModelRequestSource.AUXILIARY
+    trajectory_id: str | None = None
+    context_generation: int = 0
+    cache_epoch: int = 0
+    cache_boundary_reason: CacheBoundaryReason | None = None
+    prompt_trajectory_enabled: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "items", tuple(self.items))
@@ -35,6 +45,22 @@ class ModelContext:
             raise ValueError("model context source affinity must not be empty")
         if self.source_context_affinity is not None and self.source_provider is None:
             raise ValueError("model context source affinity requires provider/model origin")
+        if not isinstance(self.request_source, ModelRequestSource):
+            raise TypeError("request source must be a ModelRequestSource")
+        if self.trajectory_id is not None and (
+            not isinstance(self.trajectory_id, str) or not self.trajectory_id
+        ):
+            raise ValueError("trajectory id must be a non-empty string or None")
+        for name in ("context_generation", "cache_epoch"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if self.cache_boundary_reason is not None and not isinstance(
+            self.cache_boundary_reason, CacheBoundaryReason
+        ):
+            raise TypeError("cache boundary reason must be a CacheBoundaryReason or None")
+        if not isinstance(self.prompt_trajectory_enabled, bool):
+            raise TypeError("prompt trajectory enabled must be a bool")
 
     @classmethod
     def from_messages(cls, messages: Sequence[Message]) -> ModelContext:

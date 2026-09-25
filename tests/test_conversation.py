@@ -1291,7 +1291,7 @@ class AgentConversationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(task.task_id, second_reminders[0])
                 self.assertNotIn("private completion command", second_reminders[0])
                 self.assertNotIn("private completion output", second_reminders[0])
-                self.assertEqual(third_reminders, [])
+                self.assertEqual(third_reminders, second_reminders)
                 self.assertEqual(await manager.pending_completions(), ())
                 self.assertNotIn(
                     "<background-task-completions>",

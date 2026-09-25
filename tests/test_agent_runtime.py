@@ -3166,7 +3166,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(await store.load_execution_record(session_id), previous)
 
-    async def test_completion_reminder_is_not_reinjected_after_the_manager_acknowledges_it(
+    async def test_completion_reminder_remains_in_projection_after_manager_acknowledges_it(
         self,
     ) -> None:
         manager = FixtureCompletionManager((completion_snapshot("task-once"),))
@@ -3192,7 +3192,8 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         first_context = "\n".join(message.content for message in provider.calls[0].messages)
         second_context = "\n".join(message.content for message in provider.calls[1].messages)
         self.assertIn("<background-task-completions>", first_context)
-        self.assertNotIn("<background-task-completions>", second_context)
+        self.assertIn("<background-task-completions>", second_context)
+        self.assertEqual(second_context.count("<background-task-completions>"), 1)
 
     async def test_completion_during_tool_step_is_reported_at_next_model_boundary(
         self,
