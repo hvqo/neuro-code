@@ -33,6 +33,7 @@ from neuro_code.infrastructure.sandbox.local_process import ProcessTreeLocalProc
 from neuro_code.shared.errors import SandboxError, ToolError
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "mcp_stdio_server.py"
+_RESOLVED_PYTHON_EXECUTABLE = str(Path(sys.executable).resolve())
 
 
 class _RecordingLocalProcessSandbox(LocalProcessSandbox):
@@ -256,7 +257,7 @@ class McpStdioToolCollectionTests(unittest.IsolatedAsyncioTestCase):
                 (
                     McpStdioServerConfig(
                         name="sandboxed-fixture",
-                        command=str(Path(sys.executable).resolve()),
+                        command=_RESOLVED_PYTHON_EXECUTABLE,
                         args=(str(_FIXTURE),),
                         env=(("MCP_FIXTURE_SECRET", "fixture-secret-value"),),
                     ),
