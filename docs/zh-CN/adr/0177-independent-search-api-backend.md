@@ -1,6 +1,6 @@
-# ADR 0176：供应商搜索路由与外部兜底
+# ADR 0177：供应商搜索路由与外部兜底
 
-**简体中文** · [English](../../en/adr/0176-independent-search-api-backend.md)
+**简体中文** · [English](../../en/adr/0177-independent-search-api-backend.md)
 
 - 状态：已接受
 - 日期：2026-09-24

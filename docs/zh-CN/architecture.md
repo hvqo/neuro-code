@@ -1629,7 +1629,7 @@ fallback 成功也是如此。确认属于 route 级别的 unsupported 或 endpo
 已配置兜底、不可用时的类型化原因以及有效 Web Fetch 路径；它不包含 endpoint 或凭据。TUI 设置页和 `/status`
 从当前 binding 读取该状态，因此展示的是 Provider 组合与工具过滤后 Agent 实际可用的路由。搜索适配器返回有界的
 供应商无关证据，将凭据限制在 Provider 边界，并始终把结果视为不可信外部数据。详见
-[ADR 0176](adr/0176-independent-search-api-backend.md)。
+[ADR 0177](adr/0177-independent-search-api-backend.md)。
 
 Supervisor 把重复操作、重复错误和周期循环视为检测信号，而不是立即终态。首次检测会建立一次有界的逐回合恢复
 状态，并注入仅对当前请求可见的 replan 指引。状态只包含类型化原因、行为指纹摘要、周期长度和工具计数边界；

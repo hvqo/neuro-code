@@ -1,6 +1,6 @@
-# ADR 0176: Provider Search routing and external fallback
+# ADR 0177: Provider Search routing and external fallback
 
-[简体中文](../../zh-CN/adr/0176-independent-search-api-backend.md) · **English**
+[简体中文](../../zh-CN/adr/0177-independent-search-api-backend.md) · **English**
 
 - Status: Accepted
 - Date: 2026-09-24

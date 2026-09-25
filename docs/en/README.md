@@ -801,7 +801,7 @@ route in Settings and `/status`. The key
 is separate from the model provider key and is not saved in the project or
 conversation. Saving it in Settings rebuilds the runtime and resumes the
 current session. Brave may require a plan and may charge for API calls. See
-[ADR 0176](adr/0176-independent-search-api-backend.md).
+[ADR 0177](adr/0177-independent-search-api-backend.md).
 
 ### Local safe Web Fetch
 

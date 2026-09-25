@@ -127,7 +127,7 @@ neuro
 网页搜索模式保持为 `auto`。没有可执行的原生或供应商适配器路由时，Neuro 会将 Brave Search API
 作为最后兜底，设置页和 `/status` 会显示这一实际路径。搜索密钥与模型供应商密钥分开，不写入项目或对话。通过设置页保存后，
 运行时会重新加载并恢复当前会话。Brave 可能要求开通套餐，并可能对 API 调用计费。详见
-[ADR 0176](adr/0176-independent-search-api-backend.md)。
+[ADR 0177](adr/0177-independent-search-api-backend.md)。
 
 ## 项目状态
 

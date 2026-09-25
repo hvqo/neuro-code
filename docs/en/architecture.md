@@ -3054,7 +3054,7 @@ composition and tool filtering, so they reflect the routes actually available
 to that Agent. Search adapters return bounded provider-neutral evidence, keep
 credentials at the provider boundary, and treat results as untrusted external
 data. See
-[ADR 0176](adr/0176-independent-search-api-backend.md).
+[ADR 0177](adr/0177-independent-search-api-backend.md).
 
 The supervisor treats repeated actions, repeated errors, and periodic cycles
 as detectors rather than immediate terminal decisions. The first detection
