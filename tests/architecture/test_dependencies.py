@@ -1808,6 +1808,7 @@ def test_canonical_runtime_modules_are_the_only_runtime_implementations() -> Non
         "neuro_code.application.runtime.agent_loop",
         "neuro_code.application.runtime.cache_continuity",
         "neuro_code.application.runtime.context_builder",
+        "neuro_code.application.runtime.execution_efficiency",
         "neuro_code.application.runtime.event_recorder",
         "neuro_code.application.runtime.finalization",
         "neuro_code.application.runtime.final_response",
