@@ -2514,6 +2514,8 @@ Runtime Trace 遵循 `Observe → Record Facts → Reduce → Present`。应用�
 
 所有耗时使用单调时钟。Provider TTFT 从 request 开始计至首个模型响应输出事件；用户可见 TTFT 从 TUI 接受 turn 开始计至首个非空可见文本 delta。Request duration 和 stream duration 分开记录。Tool permission wait 从 `TOOL_REQUESTED` 计至 `TOOL_STARTED`，execution 则从 `TOOL_STARTED` 计至工具终态结果。Context build、verification、replan、finalizer 和 tool batch 只在实际观测边界计时。Trace 不虚构 network/connect 耗时。只有 Provider usage 给出可靠缓存字段时才展示缓存复用率。
 
+Provider Attempt 的起点由实际测得的 attempt duration 回推到其终止事件边界，结束点与失败/完成事件对齐，并作为 MODEL request 的子 span。终态 turn identity 会同步到该 Trace 的每条 record。效率摘要分别展示 Provider、Permission Wait、Tool Execution、Context 和 Runtime/Other；`Runtime/Other` 是扣除这些已测区间并合并重叠区间后的剩余 turn 时间。总缓存复用率采用 `sum(cache_read_tokens) / sum(input_tokens)`，不对每请求比率做未加权平均。
+
 `/trace` 打开可搜索、可分页的 ledger，包含 metadata inspector、效率摘要和基于实测 span 的时间轴。`/trace export` 与 `/trace export jsonl` 复制有界的 metadata-only 投影。采集不会为每个 token 建 event，也不会额外调用模型。它排除 Prompt、隐藏推理、工具参数、工具结果/shell output 正文、凭据及 Provider 原始错误消息。内存上限为 32 个 turn、总计 8,192 条 record、每个 turn 2,048 条；UI 每页渲染 48 行，导出上限为 4 MiB。重启会清除诊断数据。
 
 诊断交付采用 fail-open，不会写入 Session history，也不改变 Provider request。CLI JSONL 会过滤临时 DevTools event，保持既有事件协议。Prompt Cache boundary、permission、workspace、sandbox、verification、compaction 与持久历史仍由现有组件权威负责。OpenTelemetry、持久化 Trace、自动效率优化和 LLM 生成的 Trace 摘要不属于 V1。详见 [ADR 0178](adr/0178-runtime-trace-and-agent-devtools-v1.md)。

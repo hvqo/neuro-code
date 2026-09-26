@@ -269,12 +269,11 @@ class TraceScreen(ModalScreen[None]):
             return
         snapshot = self._current_snapshot()
         summary = snapshot.summary
-        cache_values = [
-            record.cache_reuse_ratio
-            for record in snapshot.records
-            if record.cache_reuse_ratio is not None
-        ]
-        cache_label = f"{sum(cache_values) / len(cache_values):.1%}" if cache_values else "unknown"
+        cache_label = (
+            f"{summary.weighted_cache_reuse:.1%}"
+            if summary.weighted_cache_reuse is not None
+            else "unknown"
+        )
         title.update(
             f"Agent Trace · {self._trace_index + 1}/{len(self._snapshots)} · {snapshot.status.value} · {snapshot.source}"
         )
@@ -300,12 +299,15 @@ class TraceScreen(ModalScreen[None]):
             f"{self._text('Turn', '回合')} {_seconds(summary.duration_ms)} · "
             f"{summary.model_steps} steps · {summary.model_requests} requests · "
             f"{summary.tool_batches} batches / {summary.tool_calls} tools · "
-            f"Cache {cache_label} · Provider {_seconds(summary.provider_time_ms)} · Tool {_seconds(summary.tool_time_ms)} · "
+            f"Weighted cache reuse {cache_label} · Provider {_seconds(summary.provider_time_ms)} · "
             f"TTFT {_milliseconds(summary.average_ttft_ms)} / user {_milliseconds(summary.user_visible_ttft_ms)} · "
             f"Cache miss/request {cache_miss}\n"
+            f"Permission wait {_seconds(summary.permission_wait_ms)} · "
+            f"Tool execution {_seconds(summary.tool_time_ms)} · Context {_seconds(summary.context_time_ms)} · "
+            f"Runtime/Other {_seconds(summary.runtime_other_ms)}\n"
             f"Parallel {parallel_ratio} · retries {summary.retries} · failovers {summary.failovers} · "
             f"replans {summary.replans} · compactions {summary.compactions} · finalizers {summary.finalizer_calls}\n"
-            f"Longest model {longest_model} · tool {longest_tool} · other {_seconds(summary.runtime_other_ms)}"
+            f"Longest model {longest_model} · tool {longest_tool}"
         )
         records = self._filtered
         page_start = (self._selected // TRACE_LEDGER_PAGE_SIZE) * TRACE_LEDGER_PAGE_SIZE

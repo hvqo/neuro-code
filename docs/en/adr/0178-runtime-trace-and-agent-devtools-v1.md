@@ -45,6 +45,17 @@ are measured separately. Tool permission wait is `TOOL_REQUESTED` to
 Context build, verification, finalizer, and replan spans use monotonic time.
 The system does not infer private network/connect timing.
 
+Provider Attempt duration is measured by the model stream processor. Its trace
+start is reconstructed from the measured duration and terminal failure or
+completion boundary, so each attempt is temporally contained by its parent
+MODEL request. The terminal turn identity is synchronized to the TURN record
+and every child record. The efficiency summary separates Provider, Permission
+Wait, Tool Execution, Context, and Runtime/Other; Runtime/Other is the
+remaining turn time after subtracting the union of those measured intervals.
+Aggregate cache reuse is the token-weighted ratio
+`sum(cache_read_tokens) / sum(input_tokens)`, not an unweighted average of
+per-request ratios.
+
 **Retention and rendering are bounded.** The in-memory collector retains at
 most 32 turns, 8,192 records total, and 2,048 records per turn. The ledger
 renders at most 48 rows at a time. Export is metadata-only and capped at 4 MiB;

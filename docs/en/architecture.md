@@ -3721,6 +3721,15 @@ replan, finalizer, and tool-batch timings are measured only at observed
 boundaries. The trace does not invent network/connect timing. Provider cache
 reuse is displayed only when usage reports reliable cache fields.
 
+Provider Attempt starts are reconstructed from the measured attempt duration
+and its terminal failure/completion boundary, then recorded as child spans of
+the MODEL request. The terminal turn identity is synchronized across every
+record in the trace. The efficiency summary reports Provider, Permission Wait,
+Tool Execution, Context, and Runtime/Other separately. Runtime/Other is the
+remaining turn time after subtracting the union of those measured intervals.
+Aggregate cache reuse is `sum(cache_read_tokens) / sum(input_tokens)`; it is
+not an unweighted average of per-request ratios.
+
 `/trace` opens a searchable ledger with pagination, a metadata inspector, an
 efficiency summary, and a timeline built from measured spans. `/trace export`
 and `/trace export jsonl` copy a bounded metadata-only projection. Collection

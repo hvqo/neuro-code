@@ -122,7 +122,10 @@ class TraceSummary:
     parallel_tool_ratio: float | None
     provider_time_ms: float
     tool_time_ms: float
+    permission_wait_ms: float
+    context_time_ms: float
     runtime_other_ms: float | None
+    weighted_cache_reuse: float | None
     average_ttft_ms: float | None
     max_ttft_ms: float | None
     cache_miss_per_request: float | None
@@ -145,7 +148,10 @@ class TraceSummary:
             "parallel_tool_ratio": _round_optional(self.parallel_tool_ratio),
             "provider_time_ms": round(self.provider_time_ms, 3),
             "tool_time_ms": round(self.tool_time_ms, 3),
+            "permission_wait_ms": round(self.permission_wait_ms, 3),
+            "context_time_ms": round(self.context_time_ms, 3),
             "runtime_other_ms": _round_optional(self.runtime_other_ms),
+            "weighted_cache_reuse": _round_optional(self.weighted_cache_reuse),
             "average_ttft_ms": _round_optional(self.average_ttft_ms),
             "max_ttft_ms": _round_optional(self.max_ttft_ms),
             "cache_miss_per_request": _round_optional(self.cache_miss_per_request),
@@ -228,6 +234,26 @@ class _Turn:
 
 def _round_optional(value: float | None) -> float | None:
     return round(value, 3) if value is not None else None
+
+
+def _reconstruct_child_start(
+    parent: TraceRecord,
+    *,
+    ended_monotonic: float,
+    duration_ms: float | None,
+) -> tuple[float, datetime, float | None]:
+    if duration_ms is None:
+        started_monotonic = max(parent.started_monotonic, ended_monotonic)
+        effective_duration_ms = None
+    else:
+        started_monotonic = max(
+            parent.started_monotonic,
+            ended_monotonic - duration_ms / 1000,
+        )
+        effective_duration_ms = max(0.0, (ended_monotonic - started_monotonic) * 1000)
+    parent_started_at = datetime.fromisoformat(parent.started_at)
+    started_at = parent_started_at + timedelta(seconds=started_monotonic - parent.started_monotonic)
+    return started_monotonic, started_at, effective_duration_ms
 
 
 def _safe_label(value: object, *, fallback: str = "unknown") -> str:
@@ -658,6 +684,7 @@ class TraceCollector:
             reported_turn_id = data.get("turn_id")
             if isinstance(reported_turn_id, str) and reported_turn_id:
                 turn.turn_id = _safe_label(reported_turn_id, fallback=turn.turn_id)
+                self._synchronize_turn_identity(turn)
             status = (
                 TraceStatus.SUCCEEDED
                 if event.kind is AgentEventKind.TURN_COMPLETED
@@ -665,9 +692,7 @@ class TraceCollector:
                 if event.kind is AgentEventKind.TURN_ABANDONED
                 else TraceStatus.FAILED
             )
-            self._finish_turn(
-                turn, status, now=now, reported_duration=_float_value(data, "duration_seconds")
-            )
+            self._finish_turn(turn, status, now=now)
 
     def snapshot(self, trace_id: str | None = None) -> TraceSnapshot | None:
         turn = next(
@@ -744,6 +769,9 @@ class TraceCollector:
         request_id = _safe_label(data.get("request_id"))
         span_id = turn.request_spans.get(request_id)
         if span_id is None:
+            request_duration_ms = _duration_ms(data)
+            request_duration_seconds = (request_duration_ms or 0.0) / 1000
+            request_started_monotonic = now - request_duration_seconds
             span_id = self._append(
                 turn,
                 TraceKind.MODEL,
@@ -751,8 +779,11 @@ class TraceCollector:
                 parent_span_id=turn.active_step_id or turn.turn_span_id,
                 request_id=request_id if request_id != "unknown" else None,
                 step=_int_value(data, "step") or turn.active_step_number,
-                now=now,
+                now=request_started_monotonic,
+                started_at=datetime.now(UTC) - timedelta(seconds=request_duration_seconds),
             )
+            if request_id != "unknown":
+                turn.request_spans[request_id] = span_id
         current = self._find(turn, span_id)
         metadata = dict(current.metadata)
         trace_metadata = _safe_metadata(
@@ -797,7 +828,7 @@ class TraceCollector:
             turn,
             span_id,
             status=_status_value(data.get("status")),
-            duration_ms=_duration_ms(data),
+            duration_ms=max(0.0, (now - current.started_monotonic) * 1000),
             ttft_ms=(_float_value(data, "ttft_ms") if "ttft_ms" in data else current.ttft_ms),
             provider=(
                 _safe_label(data.get("provider")) if "provider" in data else current.provider
@@ -820,16 +851,28 @@ class TraceCollector:
                 attempt_model = _safe_label(item.get("model"))
                 attempt_status = _status_value(item.get("status"))
                 attempt_duration = _float_value(item, "duration_ms")
+                attempt_index = _int_value(item, "attempt_index")
                 if any(
                     existing.kind is TraceKind.PROVIDER_ATTEMPT
                     and existing.parent_span_id == span_id
-                    and existing.provider == attempt_provider
-                    and existing.model == attempt_model
-                    and existing.status is attempt_status
-                    and existing.duration_ms == attempt_duration
+                    and (
+                        existing.metadata.get("attempt_index") == attempt_index
+                        if attempt_index is not None
+                        else existing.provider == attempt_provider
+                        and existing.model == attempt_model
+                        and existing.status is attempt_status
+                        and existing.duration_ms == attempt_duration
+                    )
                     for existing in turn.records
                 ):
                     continue
+                attempt_started_monotonic, attempt_started_at, effective_duration_ms = (
+                    _reconstruct_child_start(
+                        current,
+                        ended_monotonic=now,
+                        duration_ms=attempt_duration,
+                    )
+                )
                 self._append(
                     turn,
                     TraceKind.PROVIDER_ATTEMPT,
@@ -839,12 +882,20 @@ class TraceCollector:
                     provider=attempt_provider,
                     model=attempt_model,
                     status=attempt_status,
-                    duration_ms=attempt_duration,
+                    duration_ms=effective_duration_ms,
+                    now=attempt_started_monotonic,
+                    started_at=attempt_started_at,
                     metadata=_safe_metadata(
                         item,
-                        allow={"status", "error_type", "failure_kind", "status_code", "failover"},
+                        allow={
+                            "attempt_index",
+                            "status",
+                            "error_type",
+                            "failure_kind",
+                            "status_code",
+                            "failover",
+                        },
                     ),
-                    now=now,
                 )
 
     def _record_provider_failure(self, turn: _Turn, data: Mapping[str, Any], *, now: float) -> None:
@@ -855,6 +906,25 @@ class TraceCollector:
             or turn.active_step_id
             or turn.turn_span_id
         )
+        duration_ms = _duration_ms(data)
+        parent_record = self._find(turn, parent)
+        attempt_started_monotonic, attempt_started_at, effective_duration_ms = (
+            _reconstruct_child_start(
+                parent_record,
+                ended_monotonic=now,
+                duration_ms=duration_ms,
+            )
+        )
+        attempt_index = sum(
+            1
+            for record in turn.records
+            if record.kind is TraceKind.PROVIDER_ATTEMPT and record.parent_span_id == parent
+        )
+        metadata = _safe_metadata(
+            data,
+            allow={"error_type", "failure_kind", "status_code"},
+        )
+        metadata["attempt_index"] = attempt_index
         self._append(
             turn,
             TraceKind.PROVIDER_ATTEMPT,
@@ -864,9 +934,10 @@ class TraceCollector:
             provider=_safe_label(data.get("provider")),
             model=_safe_label(data.get("model")),
             status=TraceStatus.FAILED,
-            duration_ms=_duration_ms(data),
-            metadata=_safe_metadata(data, allow={"error_type", "failure_kind", "status_code"}),
-            now=now,
+            duration_ms=effective_duration_ms,
+            metadata=metadata,
+            now=attempt_started_monotonic,
+            started_at=attempt_started_at,
         )
 
     def _tool_requested(self, turn: _Turn, data: Mapping[str, Any], *, now: float) -> None:
@@ -1036,9 +1107,9 @@ class TraceCollector:
         status: TraceStatus,
         *,
         now: float,
-        reported_duration: float | None = None,
     ) -> None:
         self._finish_step(turn, now=now)
+        self._synchronize_turn_identity(turn)
         for record in tuple(turn.records):
             if record.kind is TraceKind.MODEL and record.status is TraceStatus.RUNNING:
                 self._update(
@@ -1049,11 +1120,7 @@ class TraceCollector:
                 )
         turn.status = status
         turn.ended_monotonic = now
-        duration_ms = (
-            reported_duration * 1000
-            if reported_duration is not None
-            else max(0.0, (now - turn.started_monotonic) * 1000)
-        )
+        duration_ms = max(0.0, (now - turn.started_monotonic) * 1000)
         self._update(turn, turn.turn_span_id, status=status, duration_ms=duration_ms)
         if turn is self._active:
             self._active = None
@@ -1126,6 +1193,12 @@ class TraceCollector:
     def _find(self, turn: _Turn, span_id: str) -> TraceRecord:
         return next(record for record in turn.records if record.span_id == span_id)
 
+    @staticmethod
+    def _synchronize_turn_identity(turn: _Turn) -> None:
+        for index, record in enumerate(turn.records):
+            if record.turn_id != turn.turn_id:
+                turn.records[index] = replace(record, turn_id=turn.turn_id)
+
     def _update(self, turn: _Turn, span_id: str, **changes: object) -> None:
         for index, record in enumerate(turn.records):
             if record.span_id == span_id:
@@ -1168,6 +1241,7 @@ def _safe_metadata(data: Mapping[str, Any], *, allow: set[str]) -> dict[str, obj
                 _safe_metadata(
                     item,
                     allow={
+                        "attempt_index",
                         "provider",
                         "model",
                         "status",
@@ -1232,6 +1306,11 @@ def _summarize(
     cache_misses = tuple(
         record.cache_miss_tokens for record in models if record.cache_miss_tokens is not None
     )
+    cache_usage = tuple(
+        (record.cache_read_tokens, record.input_tokens)
+        for record in models
+        if record.cache_read_tokens is not None and record.input_tokens is not None
+    )
     parallel_calls = sum(
         1
         for record in tools
@@ -1267,24 +1346,37 @@ def _summarize(
     tool_time = sum(
         numeric_metadata(record, "execution_ms", record.duration_ms or 0) for record in tools
     )
+    permission_wait = sum(numeric_metadata(record, "permission_wait_ms") for record in tools)
     provider_time = sum(record.duration_ms or 0 for record in models)
-    intervals = [
+    context_records = by_kind(TraceKind.CONTEXT)
+    context_time = sum(record.duration_ms or 0 for record in context_records)
+    active_intervals = [
         (record.start_offset_ms, record.start_offset_ms + (record.duration_ms or 0))
         for record in models
         if record.duration_ms is not None
     ]
     for record in tools:
+        permission_wait_ms = numeric_metadata(record, "permission_wait_ms", -1)
+        if permission_wait_ms > 0:
+            active_intervals.append(
+                (record.start_offset_ms, record.start_offset_ms + permission_wait_ms)
+            )
         execution_ms = numeric_metadata(record, "execution_ms", -1)
         if execution_ms >= 0:
             execution_offset_ms = numeric_metadata(
                 record, "execution_offset_ms", record.start_offset_ms
             )
-            intervals.append((execution_offset_ms, execution_offset_ms + execution_ms))
+            active_intervals.append((execution_offset_ms, execution_offset_ms + execution_ms))
+    for record in context_records:
+        if record.duration_ms is not None:
+            active_intervals.append(
+                (record.start_offset_ms, record.start_offset_ms + record.duration_ms)
+            )
     active_ms = 0.0
-    if intervals:
-        intervals.sort()
-        interval_start, interval_end = intervals[0]
-        for start, end in intervals[1:]:
+    if active_intervals:
+        active_intervals.sort()
+        interval_start, interval_end = active_intervals[0]
+        for start, end in active_intervals[1:]:
             if start <= interval_end:
                 interval_end = max(interval_end, end)
             else:
@@ -1302,7 +1394,15 @@ def _summarize(
         parallel_tool_ratio=parallel_calls / len(tools) if tools else None,
         provider_time_ms=provider_time,
         tool_time_ms=tool_time,
+        permission_wait_ms=permission_wait,
+        context_time_ms=context_time,
         runtime_other_ms=runtime_other,
+        weighted_cache_reuse=(
+            sum(cache_read for cache_read, _ in cache_usage)
+            / sum(input_tokens for _, input_tokens in cache_usage)
+            if cache_usage and sum(input_tokens for _, input_tokens in cache_usage) > 0
+            else None
+        ),
         average_ttft_ms=sum(ttfts) / len(ttfts) if ttfts else None,
         max_ttft_ms=max(ttfts) if ttfts else None,
         cache_miss_per_request=sum(cache_misses) / len(cache_misses) if cache_misses else None,
