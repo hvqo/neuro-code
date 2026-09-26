@@ -32,6 +32,25 @@ from neuro_code.interfaces.cli.serialization import serialize_execution_outcome
 from neuro_code.interfaces.cli.settings import _application_settings
 from neuro_code.shared.errors import ConfigurationError
 
+_EPHEMERAL_TRACE_EVENTS = frozenset(
+    {
+        AgentEventKind.RUNTIME_TRACE_MODEL_REQUEST,
+        AgentEventKind.RUNTIME_TRACE_CONTEXT_BUILD,
+        AgentEventKind.RUNTIME_TRACE_CONTEXT_ROLLOVER,
+        AgentEventKind.RUNTIME_TRACE_REPLAN,
+        AgentEventKind.RUNTIME_TRACE_VERIFICATION,
+        AgentEventKind.RUNTIME_TRACE_FINALIZER,
+        AgentEventKind.RUNTIME_TRACE_SUBAGENT,
+    }
+)
+
+
+def _is_cli_json_event(event: AgentEvent) -> bool:
+    return (
+        event.kind is not AgentEventKind.MODEL_REQUEST_SNAPSHOT
+        and event.kind not in _EPHEMERAL_TRACE_EVENTS
+    )
+
 
 async def run_agent(args: argparse.Namespace, services: CliServices) -> int:
     """Run one bounded headless Agent turn and project its result."""
@@ -77,7 +96,7 @@ async def run_agent(args: argparse.Namespace, services: CliServices) -> int:
                 print("Context compacted before continuing.", file=sys.stderr, flush=True)
                 last_context_notice = "compacted"
             elif args.output_format == "jsonl":
-                if event.kind is not AgentEventKind.MODEL_REQUEST_SNAPSHOT:
+                if _is_cli_json_event(event):
                     print(json.dumps(event.to_dict(), ensure_ascii=False), flush=True)
 
         async def ultracode_delegate(
@@ -122,9 +141,7 @@ async def run_agent(args: argparse.Namespace, services: CliServices) -> int:
                         "response": result.response,
                         "steps": result.steps,
                         "events": [
-                            event.to_dict()
-                            for event in result.events
-                            if event.kind is not AgentEventKind.MODEL_REQUEST_SNAPSHOT
+                            event.to_dict() for event in result.events if _is_cli_json_event(event)
                         ],
                         "outcome": serialize_execution_outcome(result.outcome),
                     },

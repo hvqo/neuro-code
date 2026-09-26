@@ -30,6 +30,7 @@ class SlashCompletionTests(unittest.TestCase):
                 "/subagents delete",
             ],
         )
+        self.assertEqual(slash_completions("/trace")[0].value, "/trace export")
 
     def test_provider_choices_and_free_form_parameter_syntax_are_exposed(self) -> None:
         provider = slash_completions(

@@ -31,6 +31,7 @@ from neuro_code.interfaces.tui.screens.settings import (
     SettingsScreen,
     ThemeSettingsScreen,
 )
+from neuro_code.interfaces.tui.screens.trace import TraceScreen
 from neuro_code.interfaces.tui.screens.transcript import TranscriptCopyScreen
 
 __all__ = [
@@ -57,5 +58,6 @@ __all__ = [
     "SettingsScreen",
     "TextValueScreen",
     "ThemeSettingsScreen",
+    "TraceScreen",
     "TranscriptCopyScreen",
 ]

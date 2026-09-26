@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from time import monotonic
 
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
@@ -38,6 +39,7 @@ from neuro_code.interfaces.tui.screens import (
     ReasoningEffortScreen,
     SessionSelectionScreen,
     SettingsScreen,
+    TraceScreen,
     TranscriptCopyScreen,
 )
 from neuro_code.interfaces.tui.text import ui_text
@@ -128,6 +130,25 @@ class CommandControllerMixin(TuiAppControllerMixin):
     async def _dispatch_slash_command(self, raw: str) -> None:
         command, _, arguments = raw[1:].partition(" ")
         command = command.casefold()
+        if command == "trace":
+            tokens = arguments.split()
+            if not tokens:
+                self.push_screen(TraceScreen(self._trace_collector, language=self._language))
+                return
+            if tokens[0].casefold() == "export" and len(tokens) <= 2:
+                jsonl = len(tokens) == 2 and tokens[1].casefold() == "jsonl"
+                if len(tokens) == 2 and not jsonl:
+                    self._write_ui_entry("error", "trace.usage")
+                    return
+                try:
+                    content = self._trace_collector.export_json(jsonl=jsonl)
+                except ValueError:
+                    self._write_ui_entry("error", "trace.export_too_large")
+                    return
+                self.push_screen(TranscriptCopyScreen(content, language=self._language))
+                return
+            self._write_ui_entry("error", "trace.usage")
+            return
         if command == "plan":
             description = arguments.strip()
             await self._apply_interaction_mode(InteractionMode.PLAN)
@@ -489,6 +510,12 @@ class CommandControllerMixin(TuiAppControllerMixin):
         service = self._read_only_subagent_service
         if service is None:
             return
+        subagent_started_at = monotonic()
+        parent_snapshot = self._trace_collector.snapshot()
+        self._trace_collector.begin_turn(
+            source="subagent",
+            parent_trace_id=parent_snapshot.trace_id if parent_snapshot is not None else None,
+        )
         try:
             parent_capability_provider = self._subagent_parent_capability_provider
             if parent_capability_provider is None:
@@ -499,15 +526,36 @@ class CommandControllerMixin(TuiAppControllerMixin):
                 parent_capabilities=parent_capabilities,
             )
         except asyncio.CancelledError:
+            self._trace_collector.add_subagent(
+                duration_ms=max(0.0, (monotonic() - subagent_started_at) * 1000),
+                status="cancelled",
+                task_id=session_id,
+            )
+            self._trace_collector.end_turn("cancelled")
             self._write_ui_entry("status", "subagent.cancelled")
             raise
         except Exception as error:
+            self._trace_collector.add_subagent(
+                duration_ms=max(0.0, (monotonic() - subagent_started_at) * 1000),
+                status="failed",
+                task_id=session_id,
+            )
+            self._trace_collector.end_turn("failed")
             self._write_ui_entry(
                 "error",
                 "subagent.failed",
                 error=self._safe_tool_text(str(error)),
             )
             return
+
+        self._trace_collector.add_subagent(
+            duration_ms=max(0.0, (monotonic() - subagent_started_at) * 1000),
+            status=projection.status.value,
+            steps=projection.steps,
+            task_id=projection.task_id,
+            child_session_id=projection.child_session_id,
+        )
+        self._trace_collector.end_turn(projection.status.value)
 
         status_label = ui_text(
             self._language,

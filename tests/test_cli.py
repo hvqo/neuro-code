@@ -90,6 +90,7 @@ from neuro_code.infrastructure.persistence.output_artifacts import FileToolOutpu
 from neuro_code.infrastructure.persistence.sqlite_session import SqliteSessionStore
 from neuro_code.infrastructure.providers.catalog_cache import PersistentProviderCatalog
 from neuro_code.infrastructure.providers.provider_settings import JsonProviderSettingsStore
+from neuro_code.interfaces.cli.agent import _is_cli_json_event
 from neuro_code.interfaces.cli.agent import run_agent as _run_agent
 from neuro_code.interfaces.cli.app import (
     build_parser,
@@ -1465,6 +1466,17 @@ api_key_env = "FIXTURE_KEY"
         self.assertEqual(
             [record["data"]["text"] for record in text_records], ["finalized fixture response"]
         )
+
+    def test_jsonl_projection_omits_ephemeral_runtime_trace_events(self) -> None:
+        trace_event = AgentEvent.create(
+            1,
+            AgentEventKind.RUNTIME_TRACE_MODEL_REQUEST,
+            {"duration_ms": 12},
+        )
+        visible_event = AgentEvent.create(2, AgentEventKind.TURN_COMPLETED, {})
+
+        self.assertFalse(_is_cli_json_event(trace_event))
+        self.assertTrue(_is_cli_json_event(visible_event))
 
     def test_observe_only_preserves_the_legacy_max_step_provider_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

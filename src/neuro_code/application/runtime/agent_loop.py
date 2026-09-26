@@ -118,7 +118,7 @@ from neuro_code.application.sessions.task_queries import (
 )
 from neuro_code.domain.background_tasks.models import BackgroundTaskSnapshot
 from neuro_code.domain.conversation.compaction import DurableCompactionItem
-from neuro_code.domain.conversation.context import ModelContext
+from neuro_code.domain.conversation.context import ModelContext, estimate_context_tokens
 from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
 from neuro_code.domain.conversation.messages import (
     ContentPart,
@@ -877,7 +877,7 @@ class AgentLoopRunner:
             if notice is not None:
                 context_items.append(notice)
 
-        def update_runtime_supervision_guidance(
+        async def update_runtime_supervision_guidance(
             decision: SupervisorDecision | None,
         ) -> None:
             nonlocal replan_notice_active
@@ -887,6 +887,16 @@ class AgentLoopRunner:
                 if not replan_notice_active:
                     context_items.append(self._context_builder.supervision_runtime_message())
                     replan_notice_active = True
+                    await recorder.emit_diagnostic(
+                        AgentEventKind.RUNTIME_TRACE_REPLAN,
+                        {
+                            "state": "started",
+                            "reason_code": decision.reason_code.value,
+                            "replan_count": decision.replan_count,
+                            "cycle_period": decision.cycle_period,
+                            "progress_since_replan": decision.progress_since_replan,
+                        },
+                    )
                 return
             current = supervisor
             if (
@@ -898,6 +908,10 @@ class AgentLoopRunner:
                     self._context_builder.supervision_runtime_message(resolved=True)
                 )
                 replan_notice_active = False
+                await recorder.emit_diagnostic(
+                    AgentEventKind.RUNTIME_TRACE_REPLAN,
+                    {"state": "resolved", "resolved": True},
+                )
 
         def persistent_context_items() -> tuple[SessionItem, ...]:
             """Exclude all in-memory synthetic context from session writes.
@@ -992,6 +1006,7 @@ class AgentLoopRunner:
             *,
             projected: ModelContext | None = None,
         ) -> ModelContext:
+            context_started_at = monotonic()
             projected = projected if projected is not None else projected_model_context()
             working_set_message = None
             if self._working_set is not None and session_id is not None:
@@ -1006,7 +1021,7 @@ class AgentLoopRunner:
                 (*projected.items, *additional_items),
                 working_set_message=working_set_message,
             )
-            return annotate_request_context(
+            context = annotate_request_context(
                 ModelContext(
                     model_items,
                     projected.source_provider,
@@ -1015,6 +1030,19 @@ class AgentLoopRunner:
                     self._context_builder.reasoning_effort,
                 )
             )
+            if sink is not None:
+                await recorder.emit_diagnostic(
+                    AgentEventKind.RUNTIME_TRACE_CONTEXT_BUILD,
+                    {
+                        "duration_ms": max(0.0, (monotonic() - context_started_at) * 1000),
+                        "item_count": len(context.items),
+                        "estimated_tokens": estimate_context_tokens(context.items),
+                        "context_generation": context.context_generation,
+                        "cache_epoch": context.cache_epoch,
+                        "request_source": context.request_source.value,
+                    },
+                )
+            return context
 
         def fresh_context_seed_items() -> tuple[SessionItem, ...]:
             return tuple(
@@ -1174,6 +1202,10 @@ class AgentLoopRunner:
                 )
                 return True, True, False, context
             start_fresh_context_generation(state.generation)
+            await recorder.emit_diagnostic(
+                AgentEventKind.RUNTIME_TRACE_CONTEXT_ROLLOVER,
+                {"context_generation": context_rollover_generation, "reason": "automatic"},
+            )
             return True, True, True, await build_request_context(additional_items)
 
         def context_preflight_event_data(
@@ -1476,6 +1508,7 @@ class AgentLoopRunner:
             messages.append(assistant_message)
             if persist_turn_context:
                 context_items.append(assistant_message)
+            verification_started_at = monotonic()
             observation = await self._tool_executor.execute(
                 call,
                 messages,
@@ -1504,6 +1537,15 @@ class AgentLoopRunner:
                     else None
                 ),
                 verification_requirements=verification_requirements,
+            )
+            await recorder.emit_diagnostic(
+                AgentEventKind.RUNTIME_TRACE_VERIFICATION,
+                {
+                    "status": "failed"
+                    if observation is not None and observation.is_error
+                    else "succeeded",
+                    "duration_ms": max(0.0, (monotonic() - verification_started_at) * 1000),
+                },
             )
             if observation is not None:
                 verification_tracker.observe(observation)
@@ -1583,9 +1625,21 @@ class AgentLoopRunner:
                     self._finalizer_max_attempts,
                     self._tool_context.redaction_values,
                 )
+                finalizer_started_at = monotonic()
                 finalization = await finalizer.finalize(
                     projected_model_context(),
                     evidence,
+                )
+                await recorder.emit_diagnostic(
+                    AgentEventKind.RUNTIME_TRACE_FINALIZER,
+                    {
+                        "status": finalization.status.value,
+                        "attempts": len(finalization.attempts),
+                        "input_tokens": finalization.total_input_tokens,
+                        "output_tokens": finalization.total_output_tokens,
+                        "duration_ms": max(0.0, (monotonic() - finalizer_started_at) * 1000),
+                        "source": "execution_finalizer",
+                    },
                 )
             return await complete_finalization_result(finalization, decision, step=step)
 
@@ -1608,6 +1662,8 @@ class AgentLoopRunner:
                 },
             )
             evidence = finalization_evidence(None)
+            finalizer_started_at = monotonic()
+            finalizer_error_type: str | None = None
             try:
                 finalizer = self._finalizer_factory(
                     self._provider,
@@ -1628,12 +1684,25 @@ class AgentLoopRunner:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
+                finalizer_error_type = type(error).__name__
                 LOGGER.debug(
                     "verification-gated finalizer failed; using deterministic fallback "
                     "error_type=%s",
                     type(error).__name__,
                 )
                 finalization = deterministic_fallback_result(evidence)
+            await recorder.emit_diagnostic(
+                AgentEventKind.RUNTIME_TRACE_FINALIZER,
+                {
+                    "status": finalization.status.value,
+                    "attempts": len(finalization.attempts),
+                    "input_tokens": finalization.total_input_tokens,
+                    "output_tokens": finalization.total_output_tokens,
+                    "duration_ms": max(0.0, (monotonic() - finalizer_started_at) * 1000),
+                    "source": "gated_finalizer",
+                    "error_type": finalizer_error_type or "",
+                },
+            )
             return await complete_finalization_result(finalization, None, step=step)
 
         async def complete_finalization_result(
@@ -2182,17 +2251,86 @@ class AgentLoopRunner:
                         output_kind=output_kind,
                     )
 
-                step_result = await ModelStepProcessor(session_store=self._session_store).consume(
-                    self._provider.stream(context, tool_definitions),
-                    emit=emit,
-                    step=step,
-                    step_started_at=step_started_at,
-                    session_id=session_id,
-                    can_adopt_provider_origin=can_adopt_provider_origin,
-                    on_imperfect=lambda: setattr(recorder, "pristine_cancel_eligible", False),
-                    on_output_started=record_output_started,
-                    buffer_text=gate_active,
-                )
+                provider_stream = self._provider.stream(context, tool_definitions)
+                provider_request_started_at = monotonic()
+                try:
+                    step_result = await ModelStepProcessor(
+                        session_store=self._session_store
+                    ).consume(
+                        provider_stream,
+                        emit=emit,
+                        step=step,
+                        step_started_at=step_started_at,
+                        session_id=session_id,
+                        can_adopt_provider_origin=can_adopt_provider_origin,
+                        on_imperfect=lambda: setattr(recorder, "pristine_cancel_eligible", False),
+                        request_id=request_id,
+                        request_started_at=provider_request_started_at,
+                        provider_name=self._provider.provider_name,
+                        model_name=self._provider.model_name,
+                        context=context,
+                        context_capacity_tokens=(
+                            request_budget_window.capacity_tokens
+                            if request_budget_window is not None
+                            else None
+                        ),
+                        diagnostic_sink=(recorder.emit_diagnostic if sink is not None else None),
+                        on_output_started=record_output_started,
+                        buffer_text=gate_active,
+                    )
+                except asyncio.CancelledError:
+                    await recorder.emit_diagnostic(
+                        AgentEventKind.RUNTIME_TRACE_MODEL_REQUEST,
+                        {
+                            "request_id": request_id,
+                            "step": step,
+                            "source": context.request_source.value,
+                            "status": "cancelled",
+                            "duration_ms": max(
+                                0.0, (monotonic() - provider_request_started_at) * 1000
+                            ),
+                            "context_generation": context.context_generation,
+                            "cache_epoch": context.cache_epoch,
+                            "cache_boundary_reason": (
+                                context.cache_boundary_reason.value
+                                if context.cache_boundary_reason is not None
+                                else "none"
+                            ),
+                            "capacity_tokens": (
+                                request_budget_window.capacity_tokens
+                                if request_budget_window is not None
+                                else None
+                            ),
+                        },
+                    )
+                    raise
+                except Exception as error:
+                    await recorder.emit_diagnostic(
+                        AgentEventKind.RUNTIME_TRACE_MODEL_REQUEST,
+                        {
+                            "request_id": request_id,
+                            "step": step,
+                            "source": context.request_source.value,
+                            "status": "failed",
+                            "error_type": type(error).__name__,
+                            "duration_ms": max(
+                                0.0, (monotonic() - provider_request_started_at) * 1000
+                            ),
+                            "context_generation": context.context_generation,
+                            "cache_epoch": context.cache_epoch,
+                            "cache_boundary_reason": (
+                                context.cache_boundary_reason.value
+                                if context.cache_boundary_reason is not None
+                                else "none"
+                            ),
+                            "capacity_tokens": (
+                                request_budget_window.capacity_tokens
+                                if request_budget_window is not None
+                                else None
+                            ),
+                        },
+                    )
+                    raise
                 step_text = step_result.text
                 step_reasoning = step_result.reasoning
                 tool_calls = step_result.tool_calls
@@ -2440,7 +2578,7 @@ class AgentLoopRunner:
                         emit,
                         reason="new_context must be issued as the only tool call in this model step.",
                     )
-                    update_runtime_supervision_guidance(after_tool_batch_decision)
+                    await update_runtime_supervision_guidance(after_tool_batch_decision)
                     continue
                 interaction_calls = tuple(
                     call
@@ -2455,7 +2593,7 @@ class AgentLoopRunner:
                         emit,
                         reason="ask_user must be issued as the only tool call in this model step.",
                     )
-                    update_runtime_supervision_guidance(after_tool_batch_decision)
+                    await update_runtime_supervision_guidance(after_tool_batch_decision)
                     continue
 
                 async def execute_scheduled_tool(
@@ -2566,9 +2704,16 @@ class AgentLoopRunner:
                     and not scheduled_observations[0].observation.is_error
                 ):
                     start_fresh_context_generation()
+                    await recorder.emit_diagnostic(
+                        AgentEventKind.RUNTIME_TRACE_CONTEXT_ROLLOVER,
+                        {
+                            "context_generation": context_rollover_generation,
+                            "reason": "explicit_tool",
+                        },
+                    )
                 if pending_terminal_decision is not None:
                     return await complete_finalized_turn(pending_terminal_decision, step=step)
-                update_runtime_supervision_guidance(
+                await update_runtime_supervision_guidance(
                     last_tool_decision or after_tool_batch_decision or after_model_decision
                 )
                 append_runtime_plan_notice()

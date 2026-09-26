@@ -2507,3 +2507,13 @@ Agent 偏好还包括 Enter 行为、输入折行、轮次结束与失败铃声�
 `AgentConversation.open()` 从恢复的 Session 还原项目 scope。项目迁移和显式新建会话时，`ProfileConversationController` 在现有 Turn 锁下切换 scope。项目内的新会话会在首次 Turn 时将项目 ID 一并持久化；项目会话的 Fork 会继承其 Project owner，但 Subagent binding 仍不会获得 Project Memory scope。项目删除会与 Turn 和提取串行，清理该项目的 state 文件，再使用现有 Session 项目删除操作解除会话归属。TUI 只增加项目内新会话操作，并明确展示删除记忆的提示。Main Agent 没有 state root 写工具；记忆写入由应用层提取权限完成。
 
 提取器只保留持久决策及原因、目标/约束或期限、项目特有的用户反馈、外部资源入口和非显然的设计理由。它排除可从当前代码恢复的信息、路径、Git 历史、仓库指令、计划、任务进度和普通调试过程。全局用户记忆、向量/图检索、云同步和完整管理界面均不属于本版本。详见 [ADR 0172](adr/0172-project-memory-v1.md)。
+
+## Runtime Trace 与 Agent DevTools V1
+
+Runtime Trace 遵循 `Observe → Record Facts → Reduce → Present`。应用层拥有的内存型 `TraceCollector` 消费已有 Agent event 和少量临时计时事实，并将其归约为 turn、step、model request/provider attempt、tool batch/call、context、replan、verification、finalizer 和 subagent 记录。Trace 是只读观测投影；它不是 Session history、Project Memory、prompt context、recovery truth 或 Runtime authority。
+
+所有耗时使用单调时钟。Provider TTFT 从 request 开始计至首个模型响应输出事件；用户可见 TTFT 从 TUI 接受 turn 开始计至首个非空可见文本 delta。Request duration 和 stream duration 分开记录。Tool permission wait 从 `TOOL_REQUESTED` 计至 `TOOL_STARTED`，execution 则从 `TOOL_STARTED` 计至工具终态结果。Context build、verification、replan、finalizer 和 tool batch 只在实际观测边界计时。Trace 不虚构 network/connect 耗时。只有 Provider usage 给出可靠缓存字段时才展示缓存复用率。
+
+`/trace` 打开可搜索、可分页的 ledger，包含 metadata inspector、效率摘要和基于实测 span 的时间轴。`/trace export` 与 `/trace export jsonl` 复制有界的 metadata-only 投影。采集不会为每个 token 建 event，也不会额外调用模型。它排除 Prompt、隐藏推理、工具参数、工具结果/shell output 正文、凭据及 Provider 原始错误消息。内存上限为 32 个 turn、总计 8,192 条 record、每个 turn 2,048 条；UI 每页渲染 48 行，导出上限为 4 MiB。重启会清除诊断数据。
+
+诊断交付采用 fail-open，不会写入 Session history，也不改变 Provider request。CLI JSONL 会过滤临时 DevTools event，保持既有事件协议。Prompt Cache boundary、permission、workspace、sandbox、verification、compaction 与持久历史仍由现有组件权威负责。OpenTelemetry、持久化 Trace、自动效率优化和 LLM 生成的 Trace 摘要不属于 V1。详见 [ADR 0178](adr/0178-runtime-trace-and-agent-devtools-v1.md)。
