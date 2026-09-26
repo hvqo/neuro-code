@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
 from time import monotonic
 
 from neuro_code.application.runtime.model_step import ModelStepProcessor
@@ -117,6 +118,7 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
             failover_count=1,
             provider_attempts=(
                 {
+                    "attempt_index": 0,
                     "provider": "deepseek",
                     "model": "deepseek-flash",
                     "status": "failed",
@@ -126,6 +128,7 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
                     "status_code": 503,
                 },
                 {
+                    "attempt_index": 1,
                     "provider": "openai",
                     "model": "gpt-test",
                     "status": "succeeded",
@@ -266,6 +269,36 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
         self.assertEqual(model.metadata["stream_duration_ms"], 350)
         self.assertEqual(model.metadata["append_only"], True)
         self.assertEqual(len(by_kind[TraceKind.PROVIDER_ATTEMPT]), 2)
+        failed_attempt = next(
+            record
+            for record in by_kind[TraceKind.PROVIDER_ATTEMPT]
+            if record.status is TraceStatus.FAILED
+        )
+        successful_attempt = next(
+            record
+            for record in by_kind[TraceKind.PROVIDER_ATTEMPT]
+            if record.status is TraceStatus.SUCCEEDED
+        )
+        model_end = model.start_offset_ms + (model.duration_ms or 0)
+        self.assertEqual(failed_attempt.start_offset_ms, model.start_offset_ms)
+        self.assertAlmostEqual(
+            failed_attempt.start_offset_ms + (failed_attempt.duration_ms or 0),
+            successful_attempt.start_offset_ms,
+        )
+        self.assertLessEqual(
+            successful_attempt.start_offset_ms + (successful_attempt.duration_ms or 0),
+            model_end,
+        )
+        model_started_at = datetime.fromisoformat(model.started_at)
+        failed_started_at = datetime.fromisoformat(failed_attempt.started_at)
+        successful_started_at = datetime.fromisoformat(successful_attempt.started_at)
+        model_ended_at = model_started_at + timedelta(milliseconds=model.duration_ms or 0)
+        self.assertLessEqual(model_started_at, failed_started_at)
+        self.assertLessEqual(failed_started_at + timedelta(milliseconds=50), successful_started_at)
+        self.assertLessEqual(
+            successful_started_at + timedelta(milliseconds=450),
+            model_ended_at,
+        )
         self.assertEqual(snapshot.summary.retries, 1)
         self.assertEqual(snapshot.summary.failovers, 1)
         self.assertAlmostEqual(snapshot.summary.user_visible_ttft_ms or 0, 700)
@@ -274,6 +307,9 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
         self.assertTrue(batch.metadata["parallel"])
         self.assertEqual(call_a.metadata["permission_wait_ms"], 110.0)
         self.assertAlmostEqual(call_a.metadata["execution_ms"], 210.0)
+        self.assertAlmostEqual(snapshot.summary.permission_wait_ms, 220.0)
+        self.assertAlmostEqual(snapshot.summary.tool_time_ms, 430.0)
+        self.assertAlmostEqual(snapshot.summary.context_time_ms, 22.0)
         self.assertEqual(call_a.metadata["projected_bytes"], 500)
         self.assertTrue(call_a.metadata["artifact_available"])
         self.assertEqual(snapshot.summary.compactions, 1)
@@ -297,6 +333,82 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
             self.assertNotIn(sensitive, exported)
         export_data = json.loads(exported)
         self.assertEqual(export_data["traces"][0]["trace_id"], self.trace_id)
+
+    def test_terminal_turn_identity_is_synchronized_to_every_record(self) -> None:
+        collector = TraceCollector(clock=self.clock)
+        trace_id = collector.begin_turn()
+        self.clock.set(100.4)
+        collector.observe(
+            AgentEvent.create(
+                1,
+                AgentEventKind.TURN_COMPLETED,
+                {"turn_id": "durable-turn-id", "duration_seconds": 0.4},
+            )
+        )
+
+        snapshot = collector.snapshot(trace_id)
+        assert snapshot is not None
+        self.assertEqual(snapshot.turn_id, "durable-turn-id")
+        self.assertTrue(snapshot.records)
+        self.assertEqual({record.turn_id for record in snapshot.records}, {snapshot.turn_id})
+
+    def test_weighted_cache_reuse_uses_total_cached_over_total_input_tokens(self) -> None:
+        collector = TraceCollector(clock=self.clock)
+        trace_id = collector.begin_turn(turn_id="weighted-cache")
+
+        collector.observe(
+            AgentEvent.create(
+                1,
+                AgentEventKind.MODEL_REQUEST_SNAPSHOT,
+                {"request_id": "request-1", "provider": "p", "model": "m"},
+            )
+        )
+        self.clock.set(100.1)
+        collector.observe(
+            AgentEvent.create(
+                2,
+                AgentEventKind.RUNTIME_TRACE_MODEL_REQUEST,
+                {
+                    "request_id": "request-1",
+                    "status": "succeeded",
+                    "duration_ms": 100,
+                    "input_tokens": 1_000,
+                    "cache_read_tokens": 100,
+                },
+            )
+        )
+        self.clock.set(100.2)
+        collector.observe(
+            AgentEvent.create(
+                3,
+                AgentEventKind.MODEL_REQUEST_SNAPSHOT,
+                {"request_id": "request-2", "provider": "p", "model": "m"},
+            )
+        )
+        self.clock.set(100.3)
+        collector.observe(
+            AgentEvent.create(
+                4,
+                AgentEventKind.RUNTIME_TRACE_MODEL_REQUEST,
+                {
+                    "request_id": "request-2",
+                    "status": "succeeded",
+                    "duration_ms": 100,
+                    "input_tokens": 100,
+                    "cache_read_tokens": 90,
+                },
+            )
+        )
+
+        snapshot = collector.snapshot(trace_id)
+        assert snapshot is not None
+        self.assertAlmostEqual(snapshot.summary.weighted_cache_reuse or 0, 190 / 1_100)
+        exported = json.loads(collector.export_json(trace_id=trace_id))
+        self.assertAlmostEqual(
+            exported["traces"][0]["summary"]["weighted_cache_reuse"],
+            190 / 1_100,
+            places=3,
+        )
 
     def test_context_rollover_and_subagent_parent_trace_are_explicit(self) -> None:
         parent_id = self.trace_id
@@ -454,7 +566,7 @@ class RuntimeTraceModelStepTests(unittest.IsolatedAsyncioTestCase):
 class RuntimeTraceScreenTests(unittest.IsolatedAsyncioTestCase):
     async def test_virtualized_ledger_filters_and_follows_large_trace(self) -> None:
         from textual.app import App, ComposeResult
-        from textual.widgets import Static
+        from textual.widgets import Label, Static
 
         from neuro_code.interfaces.tui.theme import TEXTUAL_THEME
 
@@ -484,6 +596,16 @@ class RuntimeTraceScreenTests(unittest.IsolatedAsyncioTestCase):
             screen = app.screen
             self.assertIsInstance(screen, TraceScreen)
             self.assertEqual(len(screen._filtered), 1_101)
+            screen._refresh_view()
+            summary_text = str(screen.query_one("#trace-summary", Label).renderable)
+            for category in (
+                "Weighted cache reuse",
+                "Permission wait",
+                "Tool execution",
+                "Context",
+                "Runtime/Other",
+            ):
+                self.assertIn(category, summary_text)
             self.assertLessEqual(
                 len(str(screen.query_one("#trace-ledger").renderable).splitlines()),
                 TRACE_LEDGER_PAGE_SIZE + 2,

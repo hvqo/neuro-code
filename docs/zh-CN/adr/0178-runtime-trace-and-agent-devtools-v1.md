@@ -22,6 +22,8 @@ Session history 能说明对话内容与持久化工具调用，但不是运行�
 
 **计时名称只表示实际观测到的边界。** Provider TTFT 从 Provider request 开始，计至首个响应输出事件（文本、推理或工具输出）。用户可见 TTFT 从 TUI 接受回合开始，计至首个非空可见文本 delta。Request duration 与 stream duration 分别记录。Tool permission wait 为 `TOOL_REQUESTED` 到 `TOOL_STARTED`；execution duration 为 `TOOL_STARTED` 到工具终态事件。Context build、verification、finalizer 和 replan span 使用单调时钟。系统不推断私有 network/connect 耗时。
 
+Provider Attempt 时长由 model stream processor 实测。其 Trace 起点按测得时长从失败或完成事件的终止边界回推，因此每个 attempt 都在其父 MODEL request 时间范围内。终态 turn identity 会同步到 TURN record 和所有子 record。效率摘要分别显示 Provider、Permission Wait、Tool Execution、Context 与 Runtime/Other；Runtime/Other 是扣除并合并这些已测区间后的剩余回合时间。汇总缓存复用率采用 token 加权比例 `sum(cache_read_tokens) / sum(input_tokens)`，不是每请求比率的简单平均。
+
 **保留和渲染均有界。** 内存 collector 最多保留 32 个 turn、总计 8,192 条 record、每个 turn 2,048 条。Ledger 每次最多渲染 48 行。导出仅包含 metadata，大小上限为 4 MiB，支持 JSON 和 JSONL。进程重启会清空 Trace，因为它是诊断数据，不是持久 truth。
 
 **隐私采用白名单。** Trace 可保存安全的 provider/model 标签、身份 ID、状态/错误类别、耗时、token/cache 数量、context generation 和 cache boundary 事实、工具名称、字节数、截断与 artifact 标志，以及有界 provider-attempt 摘要。不会保存 API key、authorization、完整 Prompt、隐藏推理、工具参数、工具结果或 shell output 正文、带 secret 的 URL/query 或供应商原始错误消息。导出使用相同的投影。

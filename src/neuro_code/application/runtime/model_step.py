@@ -168,6 +168,7 @@ class ModelStepProcessor:
                 attempts = (
                     *provider_attempt_failures,
                     {
+                        "attempt_index": len(provider_attempt_failures),
                         "provider": provider,
                         "model": model,
                         "status": "failed",
@@ -238,8 +239,10 @@ class ModelStepProcessor:
             if isinstance(model_event, ModelProviderAttemptFailed):
                 failure_at = monotonic()
                 attempt_duration = max(0.0, failure_at - provider_attempt_started_at)
+                attempt_index = len(provider_attempt_failures)
                 provider_attempt_failures.append(
                     {
+                        "attempt_index": attempt_index,
                         "provider": model_event.provider,
                         "model": model_event.model,
                         "status": "failed",
@@ -368,6 +371,7 @@ class ModelStepProcessor:
                 )
                 provider_attempts = [
                     {
+                        "attempt_index": len(provider_attempt_failures),
                         "provider": provider or "unknown",
                         "model": model or "unknown",
                         "status": "succeeded",
