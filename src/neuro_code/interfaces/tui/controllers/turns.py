@@ -4,6 +4,7 @@ import asyncio
 import os
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -164,6 +165,7 @@ class TurnControllerMixin(TuiAppControllerMixin):
         # 持久化为止,否则回滚会丢失粘贴图片的唯一副本.
         self._submitted_attachment_paths = tuple(self._pending_attachment_paths)
         self._clear_attachments()
+        self._trace_collector.begin_turn(source="user")
         self._turn_worker = self.run_worker(
             self._run_prompt(composed_prompt, content_parts),
             name="agent-turn",
@@ -654,6 +656,12 @@ class TurnControllerMixin(TuiAppControllerMixin):
         return error.failure.status_code == 402
 
     async def _handle_event(self, event: AgentEvent) -> None:
+        self._trace_collector.observe(event)
+        if event.kind not in {AgentEventKind.TEXT_DELTA, AgentEventKind.REASONING_DELTA}:
+            refresh_trace = getattr(self.screen, "refresh_trace", None)
+            if callable(refresh_trace):
+                with suppress(Exception):
+                    refresh_trace()
         data = event.data
         if event.kind is AgentEventKind.USER_INPUT_REQUESTED:
             request_id = data.get("request_id")

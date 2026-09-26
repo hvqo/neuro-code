@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from time import monotonic
@@ -39,6 +40,7 @@ from neuro_code.shared.errors import ConfigurationError
 
 EventSink = Callable[[AgentEvent], Awaitable[None] | None]
 WorkspaceUndoSealer = Callable[[str | None, str | None], Awaitable[None]]
+LOGGER = logging.getLogger(__name__)
 
 
 def _durable_session_items(items: Sequence[SessionItem]) -> tuple[SessionItem, ...]:
@@ -160,6 +162,26 @@ class TurnEventRecorder:
         event = self._create_event(kind, data)
         if self._session_store is not None and self._session_id is not None:
             await self._session_store.append_event(self._session_id, event)
+
+    async def emit_diagnostic(
+        self,
+        kind: AgentEventKind,
+        data: dict[str, object],
+    ) -> None:
+        """Deliver best-effort ephemeral diagnostics to the active interface.
+
+        Unlike normal events this is neither returned nor persisted. Trace
+        failures must never change Agent behavior or durable Session history.
+        """
+
+        if self._sink is None:
+            return
+        try:
+            await self._deliver(self._create_event(kind, data))
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            LOGGER.debug("runtime diagnostic delivery failed error_type=%s", type(error).__name__)
 
     def _create_event(self, kind: AgentEventKind, data: dict[str, object]) -> AgentEvent:
         self._sequence += 1

@@ -3701,3 +3701,39 @@ non-obvious rationale. It excludes recoverable code facts, paths, Git history,
 repository instructions, plans, task progress, and ordinary debugging. Global
 user memory, vector/graph search, cloud sync, and a full management UI remain
 outside this version. See [ADR 0172](adr/0172-project-memory-v1.md).
+
+## Runtime Trace and Agent DevTools V1
+
+Runtime Trace follows `Observe → Record Facts → Reduce → Present`. The
+application-owned, in-memory `TraceCollector` consumes existing Agent events
+and a small set of ephemeral timing facts. It reduces those facts into turn,
+step, model request/provider attempt, tool batch/call, context, replan,
+verification, finalizer, and subagent records. Trace is a read-only
+observability projection: it is not Session history, Project Memory, prompt
+context, recovery truth, or Runtime authority.
+
+Durations use a monotonic clock. Provider TTFT is request start to the first
+model response output event; user-visible TTFT is accepted TUI turn to the
+first non-empty visible text delta. Request and stream durations are separate.
+Tool permission wait spans `TOOL_REQUESTED` to `TOOL_STARTED`, while execution
+spans `TOOL_STARTED` to the terminal result. Context build, verification,
+replan, finalizer, and tool-batch timings are measured only at observed
+boundaries. The trace does not invent network/connect timing. Provider cache
+reuse is displayed only when usage reports reliable cache fields.
+
+`/trace` opens a searchable ledger with pagination, a metadata inspector, an
+efficiency summary, and a timeline built from measured spans. `/trace export`
+and `/trace export jsonl` copy a bounded metadata-only projection. Collection
+does not emit per-token events or make another model call. It excludes prompts,
+hidden reasoning, tool arguments, tool-result/shell-output bodies, secrets,
+and raw provider error messages. The in-memory bounds are 32 turns, 8,192
+records total, and 2,048 records per turn; the UI renders 48 rows per page and
+export is capped at 4 MiB. A restart clears diagnostics.
+
+Diagnostic delivery is fail-open and never persists to Session history or
+changes the provider request. CLI JSONL filters the ephemeral DevTools events
+to preserve its event protocol. Existing Prompt Cache boundaries, permission,
+workspace, sandbox, verification, compaction, and durable history remain
+authoritative. OpenTelemetry, durable trace storage, automated optimization,
+and LLM-generated trace summaries remain outside V1. See
+[ADR 0178](adr/0178-runtime-trace-and-agent-devtools-v1.md).

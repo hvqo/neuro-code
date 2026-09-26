@@ -45,6 +45,7 @@ from neuro_code.application.sessions.turns import SessionTurnService
 from neuro_code.application.tools.service import (
     SessionToolOutputArtifactApplicationService,
 )
+from neuro_code.application.trace.collector import TraceCollector
 from neuro_code.application.workflows.plan_execution import (
     PlanExecutionService,
 )
@@ -686,6 +687,7 @@ class NeuroCodeApp(
         user_interaction: TuiUserInteraction | None = None,
         clipboard_writer: ClipboardWriter | None = None,
         socks_supported: bool = False,
+        trace_collector: TraceCollector | None = None,
     ) -> None:
         if context_window_tokens is not None and context_window_tokens <= 0:
             raise ValueError("context window tokens must be positive")
@@ -694,6 +696,7 @@ class NeuroCodeApp(
             self.register_theme(palette)
         self.theme = ui_theme.textual_name
         self._runner = runner
+        self._trace_collector = trace_collector or TraceCollector()
         self._user_interaction = user_interaction
         self._turn_service = turn_service
         self._approval_controller = approval_controller

@@ -29,6 +29,7 @@ class _Command:
 _COMMANDS = (
     _Command("help"),
     _Command("status"),
+    _Command("trace", "export", ("export",)),
     _Command("compact"),
     _Command("context"),
     _Command("provider", "PROFILE"),

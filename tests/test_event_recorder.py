@@ -80,6 +80,39 @@ class TurnEventRecorderTests(unittest.IsolatedAsyncioTestCase):
             workspace_undo_sealer=workspace_undo_sealer,  # type: ignore[arg-type]
         )
 
+    async def test_diagnostics_are_ephemeral_and_delivery_failure_is_fail_open(self) -> None:
+        class Store:
+            def __init__(self) -> None:
+                self.events: list[AgentEvent] = []
+
+            async def append_event(self, _session_id: str, event: AgentEvent) -> None:
+                self.events.append(event)
+
+        store = Store()
+        delivered: list[AgentEvent] = []
+
+        async def sink(event: AgentEvent) -> None:
+            delivered.append(event)
+
+        recorder = self._recorder(store=store, session_id="trace-session", sink=sink)
+        await recorder.emit_diagnostic(
+            AgentEventKind.RUNTIME_TRACE_MODEL_REQUEST,
+            {"status": "succeeded", "secret": "must not persist"},
+        )
+        self.assertEqual(len(delivered), 1)
+        self.assertEqual(delivered[0].kind, AgentEventKind.RUNTIME_TRACE_MODEL_REQUEST)
+        self.assertEqual(store.events, [])
+        self.assertEqual(recorder._events, [])
+
+        async def failing_sink(_event: AgentEvent) -> None:
+            raise RuntimeError("diagnostic sink unavailable")
+
+        failing_recorder = self._recorder(sink=failing_sink)
+        await failing_recorder.emit_diagnostic(
+            AgentEventKind.RUNTIME_TRACE_CONTEXT_BUILD,
+            {"duration_ms": 10},
+        )
+
     async def test_recovery_markers_are_noops_without_a_persisted_turn(self) -> None:
         recorder = self._recorder()
         await recorder.emit(
