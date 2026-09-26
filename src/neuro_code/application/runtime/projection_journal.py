@@ -19,6 +19,7 @@ _JOURNALED_REASONS = frozenset(
         SyntheticReason.RUNTIME_PLAN,
         SyntheticReason.RUNTIME_BUDGET,
         SyntheticReason.RUNTIME_CHECKPOINT,
+        SyntheticReason.RUNTIME_EFFICIENCY,
         SyntheticReason.RUNTIME_SUPERVISION,
         SyntheticReason.RUNTIME_BACKGROUND_TASK,
         SyntheticReason.RUNTIME_CONTEXT_ROLLOVER,

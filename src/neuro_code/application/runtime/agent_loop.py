@@ -71,6 +71,11 @@ from neuro_code.application.runtime.background_task_reminders import (
 from neuro_code.application.runtime.cache_continuity import CacheContinuityState
 from neuro_code.application.runtime.context_builder import ContextBuilder
 from neuro_code.application.runtime.event_recorder import TurnEventRecorder
+from neuro_code.application.runtime.execution_efficiency import (
+    ExecutionEfficiencyController,
+    ExecutionEfficiencyUpdate,
+    ToolEvidenceFact,
+)
 from neuro_code.application.runtime.final_response import (
     FinalResponseContract,
     ResponseSource,
@@ -100,9 +105,11 @@ from neuro_code.application.runtime.tool_result_guard import (
 from neuro_code.application.runtime.tool_scheduler import (
     ToolBatchExecutionError,
     ToolScheduler,
+    resolved_execution_mode,
 )
 from neuro_code.application.runtime.verification import (
     RequirementEvaluationState,
+    VerificationOutcome,
     VerificationReport,
     VerificationTracker,
     validate_explicit_verification_command,
@@ -155,7 +162,7 @@ from neuro_code.domain.execution import (
 )
 from neuro_code.domain.plans import PlanStepStatus, SessionPlan
 from neuro_code.domain.session_tasks import SessionTask, SessionTaskKind, SessionTaskStatus
-from neuro_code.domain.tools import ToolDefinition
+from neuro_code.domain.tools import ToolDefinition, ToolExecutionMode
 from neuro_code.shared.async_utils import run_blocking
 from neuro_code.shared.errors import ConfigurationError, ProviderError, SessionError
 from neuro_code.shared.redaction import redact_sensitive_arguments, redact_sensitive_text
@@ -745,6 +752,22 @@ class AgentLoopRunner:
         last_runtime_plan_content: str | None = None
         last_budget_pressure: ExecutionBudgetPressure | None = None
         replan_notice_active = False
+        execution_efficiency = ExecutionEfficiencyController()
+
+        async def emit_efficiency_update(
+            update: ExecutionEfficiencyUpdate | None,
+            *,
+            model_step: int,
+        ) -> None:
+            if update is None:
+                return
+            notice = self._context_builder.execution_efficiency_message(update)
+            if notice is not None:
+                context_items.append(notice)
+            await recorder.emit_diagnostic(
+                AgentEventKind.RUNTIME_TRACE_EFFICIENCY,
+                update.to_event_data(step=model_step),
+            )
 
         def disable_supervision(failure: str, error: Exception | None = None) -> None:
             nonlocal supervisor
@@ -1460,7 +1483,7 @@ class AgentLoopRunner:
                     f"{change.status} {path} (+{change.additions}/-{change.deletions})"
                 )
 
-        async def maybe_acquire_explicit_verification() -> None:
+        async def maybe_acquire_explicit_verification(*, model_step: int) -> None:
             """Run the configured verification command once at the final gate.
 
             The command is intentionally represented as an ordinary Bash tool
@@ -1549,6 +1572,16 @@ class AgentLoopRunner:
             )
             if observation is not None:
                 verification_tracker.observe(observation)
+            await emit_efficiency_update(
+                execution_efficiency.verification_completed(
+                    successful=(
+                        observation is not None
+                        and observation.verification is not None
+                        and observation.verification.outcome is VerificationOutcome.SUCCESS
+                    )
+                ),
+                model_step=model_step,
+            )
 
         def finalization_evidence(
             decision: SupervisorDecision | None,
@@ -1592,7 +1625,10 @@ class AgentLoopRunner:
             deterministic_fallback_only = deterministic_fallback_only or (
                 decision.reason_code is SupervisorReasonCode.CONTEXT_WINDOW_BUDGET
             )
-            await maybe_acquire_explicit_verification()
+            try:
+                await maybe_acquire_explicit_verification(model_step=step)
+            finally:
+                await emit_efficiency_update(execution_efficiency.finalize(), model_step=step)
             if (
                 decision.reason_code is SupervisorReasonCode.MODEL_CALL_BUDGET
                 and step >= effective_max_steps
@@ -1652,7 +1688,10 @@ class AgentLoopRunner:
 
             if candidate.is_committed:
                 raise ConfigurationError("gated terminal candidate must remain provisional")
-            await maybe_acquire_explicit_verification()
+            try:
+                await maybe_acquire_explicit_verification(model_step=step)
+            finally:
+                await emit_efficiency_update(execution_efficiency.finalize(), model_step=step)
             await emit(
                 AgentEventKind.FINALIZING_STARTED,
                 {
@@ -1904,6 +1943,11 @@ class AgentLoopRunner:
                 compaction_attempted_this_cycle = compaction_decision_pending_for_next_cycle
                 compaction_decision_pending_for_next_cycle = False
                 await emit(AgentEventKind.MODEL_STEP_STARTED, {"step": step})
+                if step == 1:
+                    await emit_efficiency_update(
+                        execution_efficiency.start(),
+                        model_step=step,
+                    )
                 completion_batch: tuple[BackgroundTaskSnapshot, ...] = ()
                 if background_tasks is not None:
                     pending_completions = await background_tasks.pending_completions()
@@ -2471,6 +2515,10 @@ class AgentLoopRunner:
                 )
 
                 if not tool_calls:
+                    await emit_efficiency_update(
+                        execution_efficiency.finalize(),
+                        model_step=step,
+                    )
                     result_items = (
                         persistent_context_items() if persist_turn_context else turn_context_prefix
                     )
@@ -2697,6 +2745,64 @@ class AgentLoopRunner:
                             pending_terminal_decision,
                             last_tool_decision,
                         )
+                efficiency_facts: list[ToolEvidenceFact] = []
+                if len(scheduled_observations) != len(tool_calls):
+                    execution_efficiency.reset_low_information_streak()
+                else:
+                    for call, scheduled in zip(
+                        tool_calls,
+                        scheduled_observations,
+                        strict=True,
+                    ):
+                        observation = scheduled.observation
+                        if observation is None:
+                            efficiency_facts.clear()
+                            execution_efficiency.reset_low_information_streak()
+                            break
+                        arguments = call.arguments
+                        composite_batch = (
+                            call.name == "read_files"
+                            and isinstance(arguments.get("files"), (list, tuple))
+                            and len(arguments["files"]) > 1
+                        ) or (
+                            call.name == "grep_many"
+                            and isinstance(arguments.get("queries"), (list, tuple))
+                            and len(arguments["queries"]) > 1
+                        )
+                        efficiency_facts.append(
+                            ToolEvidenceFact(
+                                tool_name=observation.tool_name,
+                                action_digest=observation.action_digest,
+                                observation_digest=observation.observation_digest,
+                                is_error=observation.is_error,
+                                progress_kind=observation.progress_kind,
+                                parallel_safe=(
+                                    resolved_execution_mode(self._tools, call)
+                                    is ToolExecutionMode.PARALLEL
+                                ),
+                                composite_batch=composite_batch,
+                                workspace_changed=observation.workspace_changed,
+                                verification_succeeded=(
+                                    observation.verification is not None
+                                    and observation.verification.outcome
+                                    is VerificationOutcome.SUCCESS
+                                ),
+                            )
+                        )
+                efficiency_update = (
+                    execution_efficiency.observe_tool_batch(
+                        efficiency_facts,
+                        plan_complete=(
+                            self._context_builder.plan is not None
+                            and all(
+                                plan_step.status is PlanStepStatus.COMPLETED
+                                for plan_step in self._context_builder.plan.steps
+                            )
+                        ),
+                    )
+                    if len(efficiency_facts) == len(tool_calls)
+                    else None
+                )
                 if (
                     context_rollover_calls
                     and scheduled_observations
@@ -2713,6 +2819,7 @@ class AgentLoopRunner:
                     )
                 if pending_terminal_decision is not None:
                     return await complete_finalized_turn(pending_terminal_decision, step=step)
+                await emit_efficiency_update(efficiency_update, model_step=step)
                 await update_runtime_supervision_guidance(
                     last_tool_decision or after_tool_batch_decision or after_model_decision
                 )

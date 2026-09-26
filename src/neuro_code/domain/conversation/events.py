@@ -24,6 +24,7 @@ class AgentEventKind(StrEnum):
     RUNTIME_TRACE_CONTEXT_BUILD = "runtime_trace_context_build"
     RUNTIME_TRACE_CONTEXT_ROLLOVER = "runtime_trace_context_rollover"
     RUNTIME_TRACE_REPLAN = "runtime_trace_replan"
+    RUNTIME_TRACE_EFFICIENCY = "runtime_trace_efficiency"
     RUNTIME_TRACE_VERIFICATION = "runtime_trace_verification"
     RUNTIME_TRACE_FINALIZER = "runtime_trace_finalizer"
     RUNTIME_TRACE_SUBAGENT = "runtime_trace_subagent"

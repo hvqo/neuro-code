@@ -56,6 +56,7 @@ class SyntheticReason(StrEnum):
     RUNTIME_PLAN = "runtime-plan"
     RUNTIME_BUDGET = "runtime-budget"
     RUNTIME_CHECKPOINT = "runtime-checkpoint"
+    RUNTIME_EFFICIENCY = "runtime-efficiency"
     RUNTIME_SUPERVISION = "runtime-supervision"
     RUNTIME_BACKGROUND_TASK = "runtime-background-task"
     RUNTIME_CONTEXT_ROLLOVER = "runtime-context-rollover"
