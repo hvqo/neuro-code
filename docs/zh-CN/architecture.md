@@ -2519,3 +2519,9 @@ Provider Attempt 的起点由实际测得的 attempt duration 回推到其终止
 `/trace` 打开可搜索、可分页的 ledger，包含 metadata inspector、效率摘要和基于实测 span 的时间轴。`/trace export` 与 `/trace export jsonl` 复制有界的 metadata-only 投影。采集不会为每个 token 建 event，也不会额外调用模型。它排除 Prompt、隐藏推理、工具参数、工具结果/shell output 正文、凭据及 Provider 原始错误消息。内存上限为 32 个 turn、总计 8,192 条 record、每个 turn 2,048 条；UI 每页渲染 48 行，导出上限为 4 MiB。重启会清除诊断数据。
 
 诊断交付采用 fail-open，不会写入 Session history，也不改变 Provider request。CLI JSONL 会过滤临时 DevTools event，保持既有事件协议。Prompt Cache boundary、permission、workspace、sandbox、verification、compaction 与持久历史仍由现有组件权威负责。OpenTelemetry、持久化 Trace、自动效率优化和 LLM 生成的 Trace 摘要不属于 V1。详见 [ADR 0178](adr/0178-runtime-trace-and-agent-devtools-v1.md)。
+
+## Execution Efficiency V1（执行效率 V1）
+
+Execution Efficiency 是现有 Agent loop 上有界、按回合创建的建议层。它观察成功的、以 fingerprint 表示的证据结果和工具能力，不会成为 Planner 或 Runtime authority。连续两轮新的 singleton 仓库读取/搜索，或现有结构化计划的步骤全部完成时，可以追加一次 `EXPLORE → ANALYZE` 提示。重复结果、错误、复合读取、多调用批次、exclusive 调用和非证据边界都会打断该模式。分析后出现新证据时，建议阶段回到 `EXPLORE`，但不会重复发送提示。工作区变更/验证会将阶段转为 `VERIFY`；验证成功及回合终止会推动其转向 `FINALIZE`。模型仍可请求有理由的后续证据。
+
+模型通过在同一个响应中返回独立工具调用来声明批次。现有 `ToolScheduler` 根据可执行工具能力检查是否可安全并行、保持结果顺序，并串行处理 exclusive、有副作用及交互控制调用。Execution Efficiency 自身不会批处理或并行化调用。阶段消息是有界、仅追加的 synthetic user context；不属于持久历史，不修改稳定 System Prefix 或 reasoning effort。Trace 只记录阶段、原因和有界计数。详见 [ADR 0179](adr/0179-execution-efficiency-v1.md)。

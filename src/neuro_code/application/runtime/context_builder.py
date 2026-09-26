@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
+from neuro_code.application.runtime.execution_efficiency import ExecutionEfficiencyUpdate
 from neuro_code.application.runtime.projection_journal import (
     ProviderProjectionJournal,
 )
@@ -59,6 +60,7 @@ _JOURNALLED_RUNTIME_REASONS = frozenset(
         SyntheticReason.RUNTIME_PLAN,
         SyntheticReason.RUNTIME_BUDGET,
         SyntheticReason.RUNTIME_CHECKPOINT,
+        SyntheticReason.RUNTIME_EFFICIENCY,
         SyntheticReason.RUNTIME_SUPERVISION,
         SyntheticReason.RUNTIME_BACKGROUND_TASK,
         SyntheticReason.RUNTIME_CONTEXT_ROLLOVER,
@@ -332,6 +334,25 @@ class ContextBuilder:
             Role.USER,
             content,
             synthetic_reason=SyntheticReason.RUNTIME_SUPERVISION,
+        )
+
+    @staticmethod
+    def execution_efficiency_message(update: ExecutionEfficiencyUpdate) -> Message | None:
+        """Render one bounded phase checkpoint as append-only user context.
+
+        The update is advisory and remains outside durable Session history. It
+        is appended at the current conversation boundary and never changes the
+        stable system prefix.
+        """
+
+        if not isinstance(update, ExecutionEfficiencyUpdate):
+            raise TypeError("update must be an ExecutionEfficiencyUpdate")
+        if update.guidance is None:
+            return None
+        return Message(
+            Role.USER,
+            update.guidance,
+            synthetic_reason=SyntheticReason.RUNTIME_EFFICIENCY,
         )
 
     @property

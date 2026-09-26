@@ -3746,3 +3746,27 @@ workspace, sandbox, verification, compaction, and durable history remain
 authoritative. OpenTelemetry, durable trace storage, automated optimization,
 and LLM-generated trace summaries remain outside V1. See
 [ADR 0178](adr/0178-runtime-trace-and-agent-devtools-v1.md).
+
+## Execution Efficiency V1
+
+Execution Efficiency is a bounded, per-turn advisory layer above the existing
+Agent loop. It observes successful, hashed evidence outcomes and tool
+capabilities; it never becomes a Planner or Runtime authority. Two
+consecutive new singleton repository-read/search rounds, or completion of the
+existing structured plan, may append one
+`EXPLORE → ANALYZE` notice. Duplicate results, errors, composite reads,
+multi-call batches, exclusive calls, and non-evidence boundaries break that
+pattern. New evidence after analysis returns the advisory phase to `EXPLORE`
+without repeating the notice. Workspace mutation/verification moves the phase
+to `VERIFY`; successful verification and terminal completion move it toward
+`FINALIZE`. The model remains free to request justified follow-up evidence.
+
+The model declares batches by returning independent tool calls in one
+response. Existing `ToolScheduler` enforces the tool's executable
+parallel-safe capability, preserves result order, and keeps exclusive,
+side-effecting, and interaction-control calls sequential. The efficiency layer
+does not batch or parallelize calls itself. Phase messages are bounded,
+append-only synthetic user context; they are not durable history and do not
+modify the stable System Prefix or reasoning effort. Trace records only phase,
+reason, and bounded counts. See
+[ADR 0179](adr/0179-execution-efficiency-v1.md).

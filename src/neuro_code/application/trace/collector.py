@@ -39,6 +39,7 @@ class TraceKind(StrEnum):
     TOOL = "tool"
     CONTEXT = "context"
     REPLAN = "replan"
+    EFFICIENCY = "efficiency"
     VERIFICATION = "verification"
     FINALIZER = "finalizer"
     SUBAGENT = "subagent"
@@ -626,6 +627,34 @@ class TraceCollector:
                         "cycle_period",
                         "progress_since_replan",
                         "resolved",
+                    },
+                ),
+                now=now,
+            )
+            return
+        if event.kind is AgentEventKind.RUNTIME_TRACE_EFFICIENCY:
+            phase_value = data.get("phase")
+            phase = (
+                phase_value.upper()
+                if phase_value in {"explore", "analyze", "verify", "finalize"}
+                else "UNKNOWN"
+            )
+            self._append(
+                turn,
+                TraceKind.EFFICIENCY,
+                f"Execution phase: {phase}",
+                parent_span_id=turn.active_step_id or turn.turn_span_id,
+                step=_int_value(data, "step") or turn.active_step_number,
+                status=TraceStatus.SUCCEEDED,
+                metadata=_safe_metadata(
+                    data,
+                    allow={
+                        "phase",
+                        "previous_phase",
+                        "reason_code",
+                        "singleton_streak",
+                        "evidence_count",
+                        "guidance_emitted",
                     },
                 ),
                 now=now,

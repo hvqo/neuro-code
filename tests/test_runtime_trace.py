@@ -444,6 +444,30 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
         self.assertEqual(subagent.status, TraceStatus.SUCCEEDED)
         self.assertEqual(child.summary.model_steps, 0)
 
+    def test_collects_execution_efficiency_phase_without_guidance_content(self) -> None:
+        self.emit(
+            AgentEventKind.RUNTIME_TRACE_EFFICIENCY,
+            step=2,
+            phase="analyze",
+            previous_phase="explore",
+            reason_code="low_information_exploration",
+            singleton_streak=2,
+            evidence_count=2,
+            guidance_emitted=True,
+            guidance="PRIVATE_GUIDANCE_SENTINEL",
+            arguments="PRIVATE_ARGUMENTS_SENTINEL",
+        )
+
+        snapshot = self.collector.snapshot()
+        assert snapshot is not None
+        record = next(item for item in snapshot.records if item.kind is TraceKind.EFFICIENCY)
+        self.assertEqual(record.name, "Execution_phase:_ANALYZE")
+        self.assertEqual(record.step, 2)
+        self.assertEqual(record.metadata["reason_code"], "low_information_exploration")
+        serialized = json.dumps(record.to_dict())
+        self.assertNotIn("PRIVATE_GUIDANCE_SENTINEL", serialized)
+        self.assertNotIn("PRIVATE_ARGUMENTS_SENTINEL", serialized)
+
     def test_cancellation_failure_and_bounded_retention(self) -> None:
         self.collector.end_turn("cancelled")
         cancelled = self.collector.snapshot(self.trace_id)
