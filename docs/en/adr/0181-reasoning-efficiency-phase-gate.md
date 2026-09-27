@@ -18,6 +18,11 @@ both treated as known unresolved work. The missing completion marker was thus
 misread as evidence of insufficiency. Trace phase totals also included
 finalizer requests while the turn-level model-request count did not.
 
+A follow-up real DeepSeek A/B then exposed phase thrashing: `UNKNOWN` was used
+as an EXPLORE-to-ANALYZE trigger, after which analysis tool calls backtracked to
+EXPLORE and each new evidence batch re-entered ANALYZE. This increased model
+requests and provider time.
+
 ## Decision
 
 **Execution phase remains advisory.** It guides the model but does not become a
@@ -42,20 +47,32 @@ is no explicit unresolved requirement, no incomplete active Plan, and required
 verification is satisfied or explicitly blocked. Unknown completion metadata
 does not block that diagnostic transition.
 
+**`UNKNOWN` is neutral for phase selection.** It neither triggers ANALYZE nor
+requires continued exploration, and it does not block normal finalization.
+`EXPLORE → ANALYZE` requires the positive `SUFFICIENT` signal from existing
+runtime facts; evidence counts, low-information patterns, and an unknown state
+cannot substitute for readiness. A planless task whose completion remains
+unknown may stay in EXPLORE and proceed directly to synthesis/finalization when
+the model stops requesting tools and no explicit blocker remains.
+
 **Low-information exploration remains batching-only.** After two new singleton
 evidence rounds, one bounded notice asks for identifiable independent reads to
-be batched and keeps the phase in `EXPLORE`. If an unknown planless task then
-continues with another singleton evidence round, the controller emits one
-bounded `excessive_exploration` notice and advances the advisory phase to
-`ANALYZE`. A successful independent batch can also enter `ANALYZE` when the
-state is unknown, allowing synthesis of available evidence. The analysis
-guidance permits more tools only for a concrete evidence gap.
+be batched and keeps the phase in `EXPLORE`. If unknown state continues with
+more singleton reads, one bounded `excessive_exploration` checkpoint advises
+the model to request tools only for concrete unresolved evidence gaps, or
+otherwise synthesize. It is an EXPLORE checkpoint, not a phase transition. A
+successful independent batch with unknown sufficiency also remains in EXPLORE.
 
-**Analysis backtrack follows real evidence intent.** A model tool request in
-`ANALYZE` records a backtrack and returns evidence work to `EXPLORE`. A new
-successful targeted result can return to `ANALYZE`; duplicate or failed output
-does not masquerade as new evidence. Independent calls remain batched by the
-model and existing scheduler; dependent calls remain sequential.
+**Analysis backtrack has readiness-edge hysteresis.** A model tool request in
+`ANALYZE` records a backtrack and returns evidence work to `EXPLORE`. After
+that backtrack, repeated `SUFFICIENT`, `UNKNOWN`, or ordinary evidence-count
+growth cannot by itself re-enter ANALYZE. If the backtrack occurred while
+sufficiency was already positive, the controller first observes a
+non-sufficient state and then requires a fresh positive `SUFFICIENT` state.
+When the backtrack itself leaves sufficiency unknown or insufficient, a later
+positive state is the required readiness edge. Duplicate or failed output does
+not masquerade as new evidence. Independent calls remain batched by the model
+and existing scheduler; dependent calls remain sequential.
 
 ## Trace contract
 
@@ -69,10 +86,11 @@ and excludes prompts, tool payloads, and hidden reasoning.
 
 ## Validation
 
-Deterministic regressions cover the prior planless exploration loop, normal
-finalization with advisory Next Steps, preservation of explicit blockers,
-bounded excessive-exploration guidance, analysis backtracking, evidence
+Deterministic regressions cover neutral unknown-state routing, planless
+finalization, positive readiness, readiness-edge hysteresis after analysis
+backtracking, normal finalization with advisory Next Steps, preservation of
+explicit blockers, bounded excessive-exploration guidance, evidence
 deduplication, and separated main/finalizer Trace metrics. The repository
 review fixture checks correctness, evidence coverage, model requests, tools,
-batches, output tokens, cache reuse, and simulated Provider time. Its timings
-are test data and are not claims about live Provider performance.
+batches, phase counts, output tokens, cache reuse, and simulated Provider time.
+Its timings are test data and are not claims about live Provider performance.

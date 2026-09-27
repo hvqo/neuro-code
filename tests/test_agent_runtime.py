@@ -2074,12 +2074,10 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             event for event in events if event.kind is AgentEventKind.RUNTIME_TRACE_EFFICIENCY
         )
         self.assertEqual(efficiency[0].data["reason_code"], "turn_started")
-        self.assertEqual(efficiency[1].data["reason_code"], "evidence_state_unknown")
+        self.assertEqual(efficiency[1].data["reason_code"], "turn_finalized")
+        self.assertEqual(efficiency[1].data["phase"], "finalize")
         self.assertEqual(efficiency[1].data["evidence_sufficiency"], "unknown")
-        self.assertEqual(efficiency[1].data["phase"], "analyze")
-        self.assertEqual(efficiency[2].data["reason_code"], "turn_finalized")
-        self.assertEqual(efficiency[2].data["phase"], "finalize")
-        self.assertEqual(efficiency[2].data["evidence_sufficiency"], "unknown")
+        self.assertEqual(len(efficiency), 2)
 
     async def test_replan_guidance_is_temporary_and_clears_after_new_progress(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

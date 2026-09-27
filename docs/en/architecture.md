@@ -3766,14 +3766,18 @@ or, when no Plan exists, a complete Working Set with populated goal/progress
 and empty unresolved-work/next-step sections. Ordinary `NEXT_STEPS` text is
 advisory; an absent or unreadable Working Set yields `UNKNOWN`, not a blocker.
 
-`UNKNOWN` is not `INSUFFICIENT`: a successful independent batch may proceed to
-`ANALYZE` so the model can synthesize available evidence. After the batching
-checkpoint, continued singleton exploration in an unknown state emits one
-bounded `excessive_exploration` synthesis notice and advances the advisory
-phase. Neither phase transition nor notice suppresses tools. A no-tool response
-may enter `FINALIZE` when there is no explicit unresolved requirement, no
-incomplete Plan, and required verification is satisfied or explicitly blocked;
-unknown completion metadata alone does not keep the turn exploring.
+`UNKNOWN` is neutral: it neither triggers `ANALYZE`, requires continued
+exploration, nor blocks finalization. `EXPLORE → ANALYZE` requires a positive
+`SUFFICIENT` signal from existing runtime facts; evidence counts, low-information
+patterns, and unknown state cannot substitute for readiness. A planless task
+may remain in `EXPLORE` and proceed directly to synthesis/finalization once the
+model stops requesting tools and no explicit blocker remains. After two
+singleton rounds, the controller may append one batching checkpoint. If unknown
+state continues with more singleton reads, one bounded `excessive_exploration`
+checkpoint advises the model to continue only for a concrete gap, otherwise
+synthesize; it stays in `EXPLORE`. A no-tool response may enter `FINALIZE` when
+there is no explicit unresolved requirement, no incomplete Plan, and required
+verification is satisfied or explicitly blocked.
 
 The model declares batches by returning independent tool calls in one
 response. Existing `ToolScheduler` enforces the tool's executable
@@ -3782,8 +3786,12 @@ side-effecting, and interaction-control calls sequential. The efficiency layer
 does not batch or parallelize calls itself. EXPLORE guidance asks the model to
 act on known evidence needs before broad synthesis. An ANALYZE tool request
 records a backtrack and returns evidence-only work to EXPLORE with targeted
-batching guidance; workspace mutation or verification retains the VERIFY
-boundary. FINALIZE is recorded only after a no-tool model response, no known
+batching guidance. Re-entry into ANALYZE after a backtrack requires a fresh
+positive readiness edge: if sufficiency was still positive at backtrack, a
+non-sufficient observation must occur before a later positive one can re-enter;
+UNKNOWN and ordinary evidence growth never re-enter by themselves. Workspace
+mutation or verification retains the VERIFY boundary. FINALIZE is recorded
+only after a no-tool model response, no known
 unresolved work, a completed Plan if present, and satisfied or explicitly
 blocked required verification. These gates are diagnostic and do not change
 Supervisor behavior. Guidance is bounded append-only synthetic context; it

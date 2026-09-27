@@ -41,9 +41,9 @@ class ExecutionEfficiencyBenchmarkTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(before.weighted_cache_reuse or 0.0, 0.8)
         self.assertAlmostEqual(after.weighted_cache_reuse or 0.0, 0.8)
         self.assertGreater(before.provider_time_main_ms - after.provider_time_main_ms, 20)
-        self.assertGreaterEqual(before.analysis_backtrack_count, 1)
+        self.assertEqual(before.analysis_backtrack_count, 0)
         self.assertEqual(after.analysis_backtrack_count, 0)
-        self.assertGreaterEqual(before.analyze_tool_call_count, 1)
+        self.assertEqual(before.analyze_tool_call_count, 0)
         self.assertEqual(after.analyze_tool_call_count, 0)
         self.assertEqual(
             sum(item.main_model_requests for item in before.phase_metrics),
@@ -54,7 +54,13 @@ class ExecutionEfficiencyBenchmarkTests(unittest.IsolatedAsyncioTestCase):
             after.main_model_requests,
         )
         phases = {item.phase: item for item in after.phase_metrics}
-        self.assertGreater(phases["analyze"].main_model_requests, 0)
+        self.assertEqual(phases["analyze"].main_model_requests, 0)
+        before_phases = {item.phase: item for item in before.phase_metrics}
+        self.assertEqual(before_phases["analyze"].main_model_requests, 0)
+        self.assertEqual(before_phases["explore"].main_model_requests, before.main_model_requests)
+        self.assertEqual(phases["explore"].main_model_requests, after.main_model_requests)
+        self.assertEqual(before_phases["analyze"].main_output_tokens, 0)
+        self.assertEqual(phases["analyze"].main_output_tokens, 0)
         self.assertEqual(after.finalizer_provider_requests, 0)
 
         baseline_model_records = tuple(
@@ -90,7 +96,7 @@ class ExecutionEfficiencyBenchmarkTests(unittest.IsolatedAsyncioTestCase):
                 for record in baseline_model_records
             )
         )
-        self.assertTrue(
+        self.assertFalse(
             any(
                 record.metadata.get("execution_phase") == "analyze"
                 for record in optimized_model_records

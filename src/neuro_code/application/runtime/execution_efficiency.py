@@ -32,7 +32,7 @@ _ANALYZE_GUIDANCE = (
     "independent reads/searches while keeping dependent steps sequential."
 )
 _EXCESSIVE_EXPLORATION_GUIDANCE = (
-    "Runtime execution phase: ANALYZE. Continue using tools only for a concrete unresolved "
+    "Runtime execution phase: EXPLORE. Request another tool only for a concrete unresolved "
     "evidence gap; otherwise synthesize the evidence already collected."
 )
 _ANALYSIS_BACKTRACK_GUIDANCE = (
@@ -65,7 +65,6 @@ class EvidenceSufficiency(StrEnum):
 class EfficiencyReason(StrEnum):
     TURN_STARTED = "turn_started"
     EVIDENCE_SUFFICIENT = "evidence_sufficient"
-    EVIDENCE_STATE_UNKNOWN = "evidence_state_unknown"
     LOW_INFORMATION_EXPLORATION = "low_information_exploration"
     EXCESSIVE_EXPLORATION = "excessive_exploration"
     ANALYSIS_BACKTRACK = "analysis_backtrack"
@@ -171,7 +170,8 @@ class ExecutionEfficiencyController:
 
     __slots__ = (
         "_analysis_backtrack_count",
-        "_analysis_backtrack_pending",
+        "_analysis_backtrack_neutral_seen",
+        "_analysis_backtrack_requires_readiness_edge",
         "_evidence_fingerprints",
         "_evidence_sufficiency",
         "_excessive_exploration_guidance_sent",
@@ -189,7 +189,8 @@ class ExecutionEfficiencyController:
         self._singleton_streak = 0
         self._low_information_guidance_sent = False
         self._analysis_backtrack_count = 0
-        self._analysis_backtrack_pending = False
+        self._analysis_backtrack_requires_readiness_edge = False
+        self._analysis_backtrack_neutral_seen = False
         self._explore_backtracks_before_finalize = 0
         self._finalized = False
         self._evidence_fingerprints: set[tuple[str, str]] = set()
@@ -273,9 +274,10 @@ class ExecutionEfficiencyController:
                 unresolved_work=unresolved_work,
                 verification_pending=verification_pending,
             )
+            self._observe_analysis_reentry_state()
             if model_requested_tools and self._phase is ExecutionPhase.ANALYZE:
                 self._record_analysis_backtrack()
-                self._analysis_backtrack_pending = True
+                self._begin_analysis_backtrack_hysteresis()
                 return self._transition(
                     ExecutionPhase.EXPLORE,
                     EfficiencyReason.ANALYSIS_BACKTRACK,
@@ -318,7 +320,7 @@ class ExecutionEfficiencyController:
 
         if self._phase is ExecutionPhase.ANALYZE:
             self._singleton_streak = 0
-            self._analysis_backtrack_pending = True
+            self._begin_analysis_backtrack_hysteresis()
             return self._transition(
                 ExecutionPhase.EXPLORE,
                 EfficiencyReason.ANALYSIS_BACKTRACK,
@@ -333,42 +335,30 @@ class ExecutionEfficiencyController:
                 _VERIFICATION_BACKTRACK_GUIDANCE,
             )
 
+        self._observe_analysis_reentry_state()
+
         candidate = (
             len(normalized) == 1 and self._is_simple_singleton(normalized[0]) and new_evidence
         )
         self._singleton_streak = self._singleton_streak + 1 if candidate else 0
 
-        if self._phase is ExecutionPhase.EXPLORE and new_evidence:
-            if self._evidence_sufficiency is EvidenceSufficiency.SUFFICIENT:
-                self._analysis_backtrack_pending = False
-                self._singleton_streak = 0
-                return self._transition(
-                    ExecutionPhase.ANALYZE,
-                    EfficiencyReason.EVIDENCE_SUFFICIENT,
-                    _ANALYZE_GUIDANCE,
-                )
-            if (
-                self._analysis_backtrack_pending
-                and self._evidence_sufficiency is EvidenceSufficiency.UNKNOWN
-            ):
-                self._analysis_backtrack_pending = False
-                self._singleton_streak = 0
-                return self._transition(
-                    ExecutionPhase.ANALYZE,
-                    EfficiencyReason.EVIDENCE_STATE_UNKNOWN,
-                    _ANALYZE_GUIDANCE,
-                )
-            if (
-                self._evidence_sufficiency is EvidenceSufficiency.UNKNOWN
-                and not candidate
-                and (len(normalized) > 1 or any(fact.composite_batch for fact in normalized))
-            ):
-                self._singleton_streak = 0
-                return self._transition(
-                    ExecutionPhase.ANALYZE,
-                    EfficiencyReason.EVIDENCE_STATE_UNKNOWN,
-                    _ANALYZE_GUIDANCE,
-                )
+        if (
+            self._phase is ExecutionPhase.EXPLORE
+            and new_evidence
+            and self._evidence_sufficiency is EvidenceSufficiency.SUFFICIENT
+            and (
+                not self._analysis_backtrack_requires_readiness_edge
+                or self._analysis_backtrack_neutral_seen
+            )
+        ):
+            self._analysis_backtrack_requires_readiness_edge = False
+            self._analysis_backtrack_neutral_seen = False
+            self._singleton_streak = 0
+            return self._transition(
+                ExecutionPhase.ANALYZE,
+                EfficiencyReason.EVIDENCE_SUFFICIENT,
+                _ANALYZE_GUIDANCE,
+            )
 
         if (
             self._phase is ExecutionPhase.EXPLORE
@@ -391,8 +381,7 @@ class ExecutionEfficiencyController:
         ):
             self._excessive_exploration_guidance_sent = True
             self._singleton_streak = 0
-            return self._transition(
-                ExecutionPhase.ANALYZE,
+            return self._checkpoint(
                 EfficiencyReason.EXCESSIVE_EXPLORATION,
                 _EXCESSIVE_EXPLORATION_GUIDANCE,
             )
@@ -549,6 +538,21 @@ class ExecutionEfficiencyController:
             MAX_EFFICIENCY_BACKTRACKS,
             self._analysis_backtrack_count + 1,
         )
+
+    def _begin_analysis_backtrack_hysteresis(self) -> None:
+        """Require a fresh positive readiness edge before re-entering ANALYZE."""
+
+        self._analysis_backtrack_requires_readiness_edge = True
+        self._analysis_backtrack_neutral_seen = (
+            self._evidence_sufficiency is not EvidenceSufficiency.SUFFICIENT
+        )
+
+    def _observe_analysis_reentry_state(self) -> None:
+        if (
+            self._analysis_backtrack_requires_readiness_edge
+            and self._evidence_sufficiency is not EvidenceSufficiency.SUFFICIENT
+        ):
+            self._analysis_backtrack_neutral_seen = True
 
     def _transition(
         self,
