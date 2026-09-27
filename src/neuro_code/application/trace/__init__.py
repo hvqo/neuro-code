@@ -2,9 +2,10 @@
 
 from neuro_code.application.trace.collector import (
     TraceCollector,
+    TracePhaseSummary,
     TraceRecord,
     TraceSnapshot,
     TraceSummary,
 )
 
-__all__ = ["TraceCollector", "TraceRecord", "TraceSnapshot", "TraceSummary"]
+__all__ = ["TraceCollector", "TracePhaseSummary", "TraceRecord", "TraceSnapshot", "TraceSummary"]

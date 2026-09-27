@@ -2522,6 +2522,6 @@ Provider Attempt 的起点由实际测得的 attempt duration 回推到其终止
 
 ## Execution Efficiency V1（执行效率 V1）
 
-Execution Efficiency 是现有 Agent loop 上有界、按回合创建的建议层。它观察成功的、以 fingerprint 表示的证据结果和工具能力，不会成为 Planner 或 Runtime authority。连续两轮新的 singleton 仓库读取/搜索，或现有结构化计划的步骤全部完成时，可以追加一次 `EXPLORE → ANALYZE` 提示。重复结果、错误、复合读取、多调用批次、exclusive 调用和非证据边界都会打断该模式。分析后出现新证据时，建议阶段回到 `EXPLORE`，但不会重复发送提示。工作区变更/验证会将阶段转为 `VERIFY`；验证成功及回合终止会推动其转向 `FINALIZE`。模型仍可请求有理由的后续证据。
+Execution Efficiency 是现有 Agent loop 上有界、按回合创建的建议层。它观察成功的证据 fingerprint，以及现有 Plan、Working Set 和 verification 状态，不会成为 Planner 或 Runtime authority。连续两轮新的 singleton 仓库读取/搜索后，只追加一次批量取证检查点并保持 `EXPLORE`。碎片化信号不代表证据充分。进入 `ANALYZE` 需要至少一条新的成功证据、没有已知未解决工作或待验证事项，并且现有 Plan 已完成。只有不存在 Plan 时，才允许完整的现有 Working Set 证明进度充分：Goal 和 Progress 必须有内容，Unresolved Work 与 Next Steps 必须为空。Working Set 状态未知时 fail closed；无法证明充分就继续留在 `EXPLORE`。
 
-模型通过在同一个响应中返回独立工具调用来声明批次。现有 `ToolScheduler` 根据可执行工具能力检查是否可安全并行、保持结果顺序，并串行处理 exclusive、有副作用及交互控制调用。Execution Efficiency 自身不会批处理或并行化调用。阶段消息是有界、仅追加的 synthetic user context；不属于持久历史，不修改稳定 System Prefix 或 reasoning effort。Trace 只记录阶段、原因和有界计数。详见 [ADR 0179](adr/0179-execution-efficiency-v1.md)。
+模型仍通过在同一个响应中返回独立工具调用来声明批次。现有 `ToolScheduler` 根据可执行工具能力检查是否可安全并行、保持结果顺序，并串行处理 exclusive、有副作用及交互控制调用。Execution Efficiency 自身不会批处理或并行化调用。EXPLORE 指引要求模型先行动获取已知证据，再做广泛综合。ANALYZE 阶段请求工具会记录 backtrack；只需补证据时回到 EXPLORE，并要求列出定向需求、批量读取。工作区变更或验证仍进入 VERIFY。仅当模型不再请求工具、没有已知未解决工作、存在的 Plan 已完成，且必需验证已满足或明确 blocked 时才记录 FINALIZE。这些 Gate 不改变 Supervisor 行为。指引是有界、仅追加的 synthetic context，不进入持久历史，不修改稳定 System Prefix 或用户选择的推理强度。Trace 按请求开始阶段汇总请求数、输出 token、Provider 时间和 backtrack 计数，不记录隐藏推理或工具正文。详见 [ADR 0180](adr/0180-reasoning-efficiency-v1.md)。

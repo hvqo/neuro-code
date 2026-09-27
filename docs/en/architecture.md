@@ -3750,23 +3750,31 @@ and LLM-generated trace summaries remain outside V1. See
 ## Execution Efficiency V1
 
 Execution Efficiency is a bounded, per-turn advisory layer above the existing
-Agent loop. It observes successful, hashed evidence outcomes and tool
-capabilities; it never becomes a Planner or Runtime authority. Two
-consecutive new singleton repository-read/search rounds, or completion of the
-existing structured plan, may append one
-`EXPLORE → ANALYZE` notice. Duplicate results, errors, composite reads,
-multi-call batches, exclusive calls, and non-evidence boundaries break that
-pattern. New evidence after analysis returns the advisory phase to `EXPLORE`
-without repeating the notice. Workspace mutation/verification moves the phase
-to `VERIFY`; successful verification and terminal completion move it toward
-`FINALIZE`. The model remains free to request justified follow-up evidence.
+Agent loop. It observes successful, hashed evidence outcomes and existing Plan,
+Working Set, and verification state; it never becomes a Planner or Runtime
+authority. Two consecutive new singleton repository-read/search rounds append
+one bounded batching checkpoint while the phase remains `EXPLORE`. This
+fragmentation signal is not evidence sufficiency. `ANALYZE` requires at least
+one new successful evidence result, no known unresolved work or pending
+verification, and a completed existing Plan. Only when no Plan exists may a
+complete existing Working Set prove progress: its goal and progress must be
+populated, with no unresolved-work or next-step entries. Unknown Working Set
+state fails closed. If sufficiency cannot be established, the phase remains
+`EXPLORE`.
 
 The model declares batches by returning independent tool calls in one
 response. Existing `ToolScheduler` enforces the tool's executable
 parallel-safe capability, preserves result order, and keeps exclusive,
 side-effecting, and interaction-control calls sequential. The efficiency layer
-does not batch or parallelize calls itself. Phase messages are bounded,
-append-only synthetic user context; they are not durable history and do not
-modify the stable System Prefix or reasoning effort. Trace records only phase,
-reason, and bounded counts. See
-[ADR 0179](adr/0179-execution-efficiency-v1.md).
+does not batch or parallelize calls itself. EXPLORE guidance asks the model to
+act on known evidence needs before broad synthesis. An ANALYZE tool request
+records a backtrack and returns evidence-only work to EXPLORE with targeted
+batching guidance; workspace mutation or verification retains the VERIFY
+boundary. FINALIZE is recorded only after a no-tool model response, no known
+unresolved work, a completed Plan if present, and satisfied or explicitly
+blocked required verification. These gates are diagnostic and do not change
+Supervisor behavior. Guidance is bounded append-only synthetic context; it
+does not alter the stable System Prefix or user-selected reasoning effort.
+Trace reports requests, output tokens, and Provider time by request phase plus
+backtrack counters, without hidden reasoning or payloads. See
+[ADR 0180](adr/0180-reasoning-efficiency-v1.md).

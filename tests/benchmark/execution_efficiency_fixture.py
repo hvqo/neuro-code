@@ -37,7 +37,9 @@ REPOSITORY_REVIEW_FILES = (
     "tests/test_retry.py",
     "docs/retry-contract.md",
 )
-_PROVIDER_DELAY_SECONDS = 0.01
+_PROVIDER_DELAY_SECONDS = 0.002
+_EARLY_DELIBERATION_DELAY_SECONDS = 0.02
+_EARLY_DELIBERATION_OUTPUT_TOKENS = 2_048
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +122,6 @@ class _RepositoryReviewProvider:
         del tool_policy
         self.calls.append(context)
         self.tool_definitions.append(tuple(tools))
-        await asyncio.sleep(_PROVIDER_DELAY_SECONDS)
         seen = {
             path
             for path in REPOSITORY_REVIEW_FILES
@@ -130,6 +131,15 @@ class _RepositoryReviewProvider:
             )
         }
         remaining = tuple(path for path in REPOSITORY_REVIEW_FILES if path not in seen)
+        efficiency_guidance = any(
+            message.synthetic_reason is SyntheticReason.RUNTIME_EFFICIENCY
+            for message in context.messages
+            if hasattr(message, "synthetic_reason")
+        )
+        is_early_deliberation = not self.adaptive and len(seen) >= 2 and bool(remaining)
+        await asyncio.sleep(
+            _EARLY_DELIBERATION_DELAY_SECONDS if is_early_deliberation else _PROVIDER_DELAY_SECONDS
+        )
         if not remaining:
             yield ModelTextDelta(REPOSITORY_REVIEW_FINDING)
             yield ModelCompleted(
@@ -138,11 +148,6 @@ class _RepositoryReviewProvider:
             )
             return
 
-        efficiency_guidance = any(
-            message.synthetic_reason is SyntheticReason.RUNTIME_EFFICIENCY
-            for message in context.messages
-            if hasattr(message, "synthetic_reason")
-        )
         selected = (
             remaining[:1]
             if self.dependent
@@ -156,7 +161,11 @@ class _RepositoryReviewProvider:
             )
         yield ModelCompleted(
             "tool_calls",
-            usage=ModelUsage(input_tokens=1_000, output_tokens=8, cache_read_tokens=800),
+            usage=ModelUsage(
+                input_tokens=1_000,
+                output_tokens=(_EARLY_DELIBERATION_OUTPUT_TOKENS if is_early_deliberation else 8),
+                cache_read_tokens=800,
+            ),
         )
 
 

@@ -28,7 +28,8 @@ class TraceScreen(ModalScreen[None]):
     CSS = """
     TraceScreen { align: center middle; background: $modal-overlay 25%; }
     #trace-dialog { width: 96%; max-width: 150; height: 92%; padding: $space-1 $space-2; background: $surface; border: round $border; }
-    #trace-title, #trace-help, #trace-summary { height: auto; max-height: 3; color: $text-primary; }
+    #trace-title, #trace-help { height: auto; max-height: 3; color: $text-primary; }
+    #trace-summary { height: auto; max-height: 6; color: $text-primary; }
     #trace-filter { height: 3; margin: $space-1 $space-0; }
     #trace-main { height: 1fr; }
     #trace-ledger, #trace-inspector { width: 1fr; height: 1fr; padding: $space-1; border: round $border; overflow: hidden; }
@@ -295,6 +296,11 @@ class TraceScreen(ModalScreen[None]):
             if summary.cache_miss_per_request is not None
             else "—"
         )
+        phase_metrics = " · ".join(
+            f"{item.phase.upper()} {item.model_requests}req/{item.output_tokens}tok/"
+            f"{_seconds(item.provider_time_ms)}"
+            for item in summary.phase_metrics
+        )
         summary_widget.update(
             f"{self._text('Turn', '回合')} {_seconds(summary.duration_ms)} · "
             f"{summary.model_steps} steps · {summary.model_requests} requests · "
@@ -307,7 +313,11 @@ class TraceScreen(ModalScreen[None]):
             f"Runtime/Other {_seconds(summary.runtime_other_ms)}\n"
             f"Parallel {parallel_ratio} · retries {summary.retries} · failovers {summary.failovers} · "
             f"replans {summary.replans} · compactions {summary.compactions} · finalizers {summary.finalizer_calls}\n"
-            f"Longest model {longest_model} · tool {longest_tool}"
+            f"Longest model {longest_model} · tool {longest_tool}\n"
+            f"Phase requests/output/provider: {phase_metrics}\n"
+            f"Analysis backtracks {summary.analysis_backtrack_count} · "
+            f"tools after ANALYZE {summary.analyze_tool_call_count} · "
+            f"EXPLORE backtracks before FINALIZE {summary.explore_backtracks_before_finalize}"
         )
         records = self._filtered
         page_start = (self._selected // TRACE_LEDGER_PAGE_SIZE) * TRACE_LEDGER_PAGE_SIZE

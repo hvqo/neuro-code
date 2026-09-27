@@ -62,6 +62,8 @@ from neuro_code.application.ports.tools import (
 from neuro_code.application.ports.working_set import (
     ReadWorkingSetRequest,
     WorkingSetController,
+    WorkingSetSection,
+    WorkingSetSnapshot,
 )
 from neuro_code.application.ports.workspace_changes import WorkspaceChangeReport
 from neuro_code.application.runtime.background_task_reminders import (
@@ -111,6 +113,7 @@ from neuro_code.application.runtime.verification import (
     RequirementEvaluationState,
     VerificationOutcome,
     VerificationReport,
+    VerificationState,
     VerificationTracker,
     validate_explicit_verification_command,
 )
@@ -150,6 +153,7 @@ from neuro_code.domain.execution import (
     ExecutionCounters,
     ExecutionSegmentCheckpoint,
     ProgressKind,
+    RequirementStrength,
     SupervisorDecision,
     SupervisorDecisionKind,
     SupervisorReasonCode,
@@ -753,6 +757,8 @@ class AgentLoopRunner:
         last_budget_pressure: ExecutionBudgetPressure | None = None
         replan_notice_active = False
         execution_efficiency = ExecutionEfficiencyController()
+        latest_working_set_snapshot: WorkingSetSnapshot | None = None
+        working_set_snapshot_known = self._working_set is None or session_id is None
 
         async def emit_efficiency_update(
             update: ExecutionEfficiencyUpdate | None,
@@ -767,6 +773,84 @@ class AgentLoopRunner:
             await recorder.emit_diagnostic(
                 AgentEventKind.RUNTIME_TRACE_EFFICIENCY,
                 update.to_event_data(step=model_step),
+            )
+
+        def verification_ready_for_finalize(report: VerificationReport) -> bool:
+            if not report.final_output_gate_active or report.state is VerificationState.PASS:
+                return True
+            required = tuple(
+                item
+                for item in report.requirement_evaluations
+                if item.strength is RequirementStrength.REQUIRED
+            )
+            return bool(required) and all(
+                item.state
+                in {RequirementEvaluationState.SATISFIED, RequirementEvaluationState.BLOCKED}
+                for item in required
+            )
+
+        def execution_efficiency_task_state() -> tuple[bool | None, bool, bool, bool, bool]:
+            plan = self._context_builder.plan
+            plan_complete = (
+                None
+                if plan is None
+                else all(step.status is PlanStepStatus.COMPLETED for step in plan.steps)
+            )
+            section_counts = (
+                {
+                    state.section: len(state.entries)
+                    for state in latest_working_set_snapshot.sections
+                }
+                if latest_working_set_snapshot is not None
+                else {}
+            )
+            unresolved_work = bool(
+                section_counts.get(WorkingSetSection.UNRESOLVED_WORK, 0)
+                or section_counts.get(WorkingSetSection.NEXT_STEPS, 0)
+            )
+            if self._working_set is not None and session_id is not None:
+                unresolved_work = unresolved_work or not working_set_snapshot_known
+            working_set_complete = (
+                latest_working_set_snapshot is not None
+                and latest_working_set_snapshot.revision > 0
+                and section_counts.get(WorkingSetSection.GOAL, 0) > 0
+                and section_counts.get(WorkingSetSection.PROGRESS, 0) > 0
+                and not unresolved_work
+            )
+            verification = verification_tracker.report()
+            verification_ready = verification_ready_for_finalize(verification)
+            return (
+                plan_complete,
+                working_set_complete,
+                unresolved_work,
+                verification.final_output_gate_active and not verification_ready,
+                verification_ready,
+            )
+
+        async def refresh_working_set_state() -> None:
+            nonlocal latest_working_set_snapshot, working_set_snapshot_known
+            if self._working_set is None or session_id is None:
+                return
+            try:
+                latest_working_set_snapshot = await self._working_set.read_working_set(
+                    ReadWorkingSetRequest(session_id)
+                )
+                working_set_snapshot_known = True
+            except Exception:
+                # Efficiency phase decisions fail closed on stale/unknown task
+                # state. The completed tool batch remains successful.
+                latest_working_set_snapshot = None
+                working_set_snapshot_known = False
+
+        async def emit_model_trace(
+            kind: AgentEventKind,
+            data: dict[str, object],
+        ) -> None:
+            if sink is None:
+                return
+            await recorder.emit_diagnostic(
+                kind,
+                {**data, "execution_phase": execution_efficiency.phase.value},
             )
 
         def disable_supervision(failure: str, error: Exception | None = None) -> None:
@@ -1029,6 +1113,7 @@ class AgentLoopRunner:
             *,
             projected: ModelContext | None = None,
         ) -> ModelContext:
+            nonlocal latest_working_set_snapshot, working_set_snapshot_known
             context_started_at = monotonic()
             projected = projected if projected is not None else projected_model_context()
             working_set_message = None
@@ -1036,6 +1121,8 @@ class AgentLoopRunner:
                 working_set_snapshot = await self._working_set.read_working_set(
                     ReadWorkingSetRequest(session_id)
                 )
+                latest_working_set_snapshot = working_set_snapshot
+                working_set_snapshot_known = True
                 working_set_message = working_set_snapshot.context_message(
                     self._tool_context.redaction_values
                 )
@@ -1628,7 +1715,22 @@ class AgentLoopRunner:
             try:
                 await maybe_acquire_explicit_verification(model_step=step)
             finally:
-                await emit_efficiency_update(execution_efficiency.finalize(), model_step=step)
+                (
+                    plan_complete,
+                    _,
+                    unresolved_work,
+                    _,
+                    verification_ready,
+                ) = execution_efficiency_task_state()
+                await emit_efficiency_update(
+                    execution_efficiency.finalize(
+                        model_has_no_tool_calls=False,
+                        plan_complete=plan_complete,
+                        unresolved_work=unresolved_work,
+                        verification_ready=verification_ready,
+                    ),
+                    model_step=step,
+                )
             if (
                 decision.reason_code is SupervisorReasonCode.MODEL_CALL_BUDGET
                 and step >= effective_max_steps
@@ -1675,6 +1777,8 @@ class AgentLoopRunner:
                         "output_tokens": finalization.total_output_tokens,
                         "duration_ms": max(0.0, (monotonic() - finalizer_started_at) * 1000),
                         "source": "execution_finalizer",
+                        "provider_request_count": len(finalization.attempts),
+                        "execution_phase": execution_efficiency.phase.value,
                     },
                 )
             return await complete_finalization_result(finalization, decision, step=step)
@@ -1691,7 +1795,22 @@ class AgentLoopRunner:
             try:
                 await maybe_acquire_explicit_verification(model_step=step)
             finally:
-                await emit_efficiency_update(execution_efficiency.finalize(), model_step=step)
+                (
+                    plan_complete,
+                    _,
+                    unresolved_work,
+                    _,
+                    verification_ready,
+                ) = execution_efficiency_task_state()
+                await emit_efficiency_update(
+                    execution_efficiency.finalize(
+                        model_has_no_tool_calls=True,
+                        plan_complete=plan_complete,
+                        unresolved_work=unresolved_work,
+                        verification_ready=verification_ready,
+                    ),
+                    model_step=step,
+                )
             await emit(
                 AgentEventKind.FINALIZING_STARTED,
                 {
@@ -1703,6 +1822,7 @@ class AgentLoopRunner:
             evidence = finalization_evidence(None)
             finalizer_started_at = monotonic()
             finalizer_error_type: str | None = None
+            finalizer_provider_request_count = 0
             try:
                 finalizer = self._finalizer_factory(
                     self._provider,
@@ -1713,6 +1833,8 @@ class AgentLoopRunner:
                     projected_model_context(),
                     evidence,
                 )
+                if isinstance(finalization, FinalizationResult):
+                    finalizer_provider_request_count = len(finalization.attempts)
                 if (
                     not isinstance(finalization, FinalizationResult)
                     or not finalization.response.strip()
@@ -1739,7 +1861,9 @@ class AgentLoopRunner:
                     "output_tokens": finalization.total_output_tokens,
                     "duration_ms": max(0.0, (monotonic() - finalizer_started_at) * 1000),
                     "source": "gated_finalizer",
+                    "provider_request_count": finalizer_provider_request_count,
                     "error_type": finalizer_error_type or "",
+                    "execution_phase": execution_efficiency.phase.value,
                 },
             )
             return await complete_finalization_result(finalization, None, step=step)
@@ -2318,7 +2442,7 @@ class AgentLoopRunner:
                             if request_budget_window is not None
                             else None
                         ),
-                        diagnostic_sink=(recorder.emit_diagnostic if sink is not None else None),
+                        diagnostic_sink=(emit_model_trace if sink is not None else None),
                         on_output_started=record_output_started,
                         buffer_text=gate_active,
                     )
@@ -2328,6 +2452,7 @@ class AgentLoopRunner:
                         {
                             "request_id": request_id,
                             "step": step,
+                            "execution_phase": execution_efficiency.phase.value,
                             "source": context.request_source.value,
                             "status": "cancelled",
                             "duration_ms": max(
@@ -2354,6 +2479,7 @@ class AgentLoopRunner:
                         {
                             "request_id": request_id,
                             "step": step,
+                            "execution_phase": execution_efficiency.phase.value,
                             "source": context.request_source.value,
                             "status": "failed",
                             "error_type": type(error).__name__,
@@ -2515,8 +2641,20 @@ class AgentLoopRunner:
                 )
 
                 if not tool_calls:
+                    (
+                        plan_complete,
+                        _,
+                        unresolved_work,
+                        _,
+                        verification_ready,
+                    ) = execution_efficiency_task_state()
                     await emit_efficiency_update(
-                        execution_efficiency.finalize(),
+                        execution_efficiency.finalize(
+                            model_has_no_tool_calls=True,
+                            plan_complete=plan_complete,
+                            unresolved_work=unresolved_work,
+                            verification_ready=verification_ready,
+                        ),
                         model_step=step,
                     )
                     result_items = (
@@ -2789,19 +2927,22 @@ class AgentLoopRunner:
                                 ),
                             )
                         )
-                efficiency_update = (
-                    execution_efficiency.observe_tool_batch(
-                        efficiency_facts,
-                        plan_complete=(
-                            self._context_builder.plan is not None
-                            and all(
-                                plan_step.status is PlanStepStatus.COMPLETED
-                                for plan_step in self._context_builder.plan.steps
-                            )
-                        ),
-                    )
-                    if len(efficiency_facts) == len(tool_calls)
-                    else None
+                if any(call.name == "session_working_set" for call in tool_calls):
+                    await refresh_working_set_state()
+                (
+                    plan_complete,
+                    working_set_complete,
+                    unresolved_work,
+                    verification_pending,
+                    _,
+                ) = execution_efficiency_task_state()
+                efficiency_update = execution_efficiency.observe_tool_batch(
+                    efficiency_facts if len(efficiency_facts) == len(tool_calls) else (),
+                    plan_complete=plan_complete,
+                    working_set_complete=working_set_complete,
+                    unresolved_work=unresolved_work,
+                    verification_pending=verification_pending,
+                    model_requested_tools=bool(tool_calls),
                 )
                 if (
                     context_rollover_calls

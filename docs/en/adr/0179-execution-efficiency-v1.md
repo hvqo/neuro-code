@@ -6,6 +6,9 @@
 - Date: 2026-09-26
 - Scope: Advisory execution phases and low-information exploration guidance in the main Agent turn
 
+> Historical decision: the low-information `EXPLORE → ANALYZE` transition and
+> plan-only phase gate below are superseded by [ADR 0180](0180-reasoning-efficiency-v1.md).
+
 ## Context
 
 Runtime Trace showed that long repository tasks can spend most active time in
