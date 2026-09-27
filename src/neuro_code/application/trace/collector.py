@@ -117,18 +117,24 @@ _EXECUTION_PHASES = ("explore", "analyze", "verify", "finalize")
 
 @dataclass(frozen=True, slots=True)
 class TracePhaseSummary:
-    """Main and finalizer Provider work attributed to the request phase."""
+    """Main Provider work and finalizer attempts/elapsed time by phase."""
 
     phase: str
-    model_requests: int
-    output_tokens: int
-    provider_time_ms: float
+    main_model_requests: int
+    finalizer_provider_requests: int
+    main_output_tokens: int
+    finalizer_output_tokens: int
+    provider_time_main_ms: float
+    finalizer_elapsed_ms: float
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "model_requests": self.model_requests,
-            "output_tokens": self.output_tokens,
-            "provider_time_ms": round(self.provider_time_ms, 3),
+            "main_model_requests": self.main_model_requests,
+            "finalizer_provider_requests": self.finalizer_provider_requests,
+            "main_output_tokens": self.main_output_tokens,
+            "finalizer_output_tokens": self.finalizer_output_tokens,
+            "provider_time_main_ms": round(self.provider_time_main_ms, 3),
+            "finalizer_elapsed_ms": round(self.finalizer_elapsed_ms, 3),
         }
 
 
@@ -137,11 +143,13 @@ class TraceSummary:
     duration_ms: float | None
     user_visible_ttft_ms: float | None
     model_steps: int
-    model_requests: int
+    main_model_requests: int
+    finalizer_provider_requests: int
     tool_calls: int
     tool_batches: int
     parallel_tool_ratio: float | None
-    provider_time_ms: float
+    provider_time_main_ms: float
+    finalizer_elapsed_ms: float
     tool_time_ms: float
     permission_wait_ms: float
     context_time_ms: float
@@ -167,11 +175,13 @@ class TraceSummary:
             "duration_ms": _round_optional(self.duration_ms),
             "user_visible_ttft_ms": _round_optional(self.user_visible_ttft_ms),
             "model_steps": self.model_steps,
-            "model_requests": self.model_requests,
+            "main_model_requests": self.main_model_requests,
+            "finalizer_provider_requests": self.finalizer_provider_requests,
             "tool_calls": self.tool_calls,
             "tool_batches": self.tool_batches,
             "parallel_tool_ratio": _round_optional(self.parallel_tool_ratio),
-            "provider_time_ms": round(self.provider_time_ms, 3),
+            "provider_time_main_ms": round(self.provider_time_main_ms, 3),
+            "finalizer_elapsed_ms": round(self.finalizer_elapsed_ms, 3),
             "tool_time_ms": round(self.tool_time_ms, 3),
             "permission_wait_ms": round(self.permission_wait_ms, 3),
             "context_time_ms": round(self.context_time_ms, 3),
@@ -685,6 +695,7 @@ class TraceCollector:
                         "guidance_emitted",
                         "analysis_backtrack_count",
                         "explore_backtracks_before_finalize",
+                        "evidence_sufficiency",
                     },
                 ),
                 now=now,
@@ -1408,11 +1419,9 @@ def _summarize(
         1 for record in by_kind(TraceKind.CONTEXT) if record.name == "Full_Compaction"
     )
     phase_metrics: list[TracePhaseSummary] = []
-    finalizers = tuple(
-        record
-        for record in by_kind(TraceKind.FINALIZER)
-        if (_int_value(record.metadata, "provider_request_count") or 0) > 0
-    )
+    # Keep all finalizer spans for elapsed-time accounting. Request counts are
+    # separately derived from their provider_request_count metadata.
+    finalizers = by_kind(TraceKind.FINALIZER)
     for phase in _EXECUTION_PHASES:
         phase_models = tuple(
             record for record in models if record.metadata.get("execution_phase") == phase
@@ -1423,15 +1432,17 @@ def _summarize(
         phase_metrics.append(
             TracePhaseSummary(
                 phase=phase,
-                model_requests=len(phase_models)
-                + sum(
+                main_model_requests=len(phase_models),
+                finalizer_provider_requests=sum(
                     _int_value(record.metadata, "provider_request_count") or 0
                     for record in phase_finalizers
                 ),
-                output_tokens=sum(record.output_tokens or 0 for record in phase_models)
-                + sum(record.output_tokens or 0 for record in phase_finalizers),
-                provider_time_ms=sum(record.duration_ms or 0.0 for record in phase_models)
-                + sum(record.duration_ms or 0.0 for record in phase_finalizers),
+                main_output_tokens=sum(record.output_tokens or 0 for record in phase_models),
+                finalizer_output_tokens=sum(
+                    record.output_tokens or 0 for record in phase_finalizers
+                ),
+                provider_time_main_ms=sum(record.duration_ms or 0.0 for record in phase_models),
+                finalizer_elapsed_ms=sum(record.duration_ms or 0.0 for record in phase_finalizers),
             )
         )
 
@@ -1471,9 +1482,8 @@ def _summarize(
         numeric_metadata(record, "execution_ms", record.duration_ms or 0) for record in tools
     )
     permission_wait = sum(numeric_metadata(record, "permission_wait_ms") for record in tools)
-    provider_time = sum(record.duration_ms or 0 for record in models) + sum(
-        record.duration_ms or 0 for record in finalizers
-    )
+    provider_time_main = sum(record.duration_ms or 0 for record in models)
+    finalizer_elapsed = sum(record.duration_ms or 0 for record in finalizers)
     context_records = by_kind(TraceKind.CONTEXT)
     context_time = sum(record.duration_ms or 0 for record in context_records)
     active_intervals = [
@@ -1519,11 +1529,15 @@ def _summarize(
         duration_ms=duration_ms,
         user_visible_ttft_ms=user_visible_ttft_ms,
         model_steps=len(by_kind(TraceKind.STEP)),
-        model_requests=len(models),
+        main_model_requests=len(models),
+        finalizer_provider_requests=sum(
+            _int_value(record.metadata, "provider_request_count") or 0 for record in finalizers
+        ),
         tool_calls=len(tools),
         tool_batches=len(batches),
         parallel_tool_ratio=parallel_calls / len(tools) if tools else None,
-        provider_time_ms=provider_time,
+        provider_time_main_ms=provider_time_main,
+        finalizer_elapsed_ms=finalizer_elapsed,
         tool_time_ms=tool_time,
         permission_wait_ms=permission_wait,
         context_time_ms=context_time,

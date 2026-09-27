@@ -5,6 +5,7 @@ import unittest
 
 from neuro_code.application.runtime.execution_efficiency import (
     EfficiencyReason,
+    EvidenceSufficiency,
     ExecutionEfficiencyController,
     ExecutionPhase,
     ToolEvidenceFact,
@@ -64,14 +65,9 @@ class ExecutionEfficiencyControllerTests(unittest.TestCase):
         self.assertEqual(update.previous_phase, ExecutionPhase.EXPLORE)
         self.assertEqual(update.reason, EfficiencyReason.LOW_INFORMATION_EXPLORATION)
         self.assertEqual(update.evidence_count, 2)
-        self.assertIn("request the independent tool calls together", update.guidance or "")
-        self.assertIn("Do not begin broad synthesis", update.guidance or "")
-        self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
-        follow_up = controller.observe_tool_batch((_fact("read_file", action="c"),))
-        self.assertIsNone(follow_up)
-        self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
-        self.assertEqual(controller.evidence_count, 3)
-        self.assertIsNone(controller.observe_tool_batch((_fact("read_file", action="d"),)))
+        self.assertIn(
+            "Request independent file reads, searches, or checks together", update.guidance or ""
+        )
         self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
 
     def test_evidence_and_completed_plan_are_required_to_enter_analysis(self) -> None:
@@ -101,8 +97,10 @@ class ExecutionEfficiencyControllerTests(unittest.TestCase):
         self.assertEqual(follow_up.analysis_backtrack_count, 1)
         self.assertEqual(follow_up.explore_backtracks_before_finalize, 1)
         self.assertEqual(controller.evidence_count, 2)
-        self.assertIsNone(controller.observe_tool_batch((_fact("read_file", action="next"),)))
-        self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
+        resumed = controller.observe_tool_batch((_fact("read_file", action="next"),))
+        assert resumed is not None
+        self.assertEqual(resumed.phase, ExecutionPhase.ANALYZE)
+        self.assertEqual(resumed.reason, EfficiencyReason.EVIDENCE_STATE_UNKNOWN)
 
     def test_insufficient_evidence_or_open_task_state_stays_in_explore(self) -> None:
         controller = ExecutionEfficiencyController()
@@ -130,6 +128,10 @@ class ExecutionEfficiencyControllerTests(unittest.TestCase):
             )
         )
         self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
+        self.assertIs(
+            controller.evidence_sufficiency,
+            EvidenceSufficiency.KNOWN_INSUFFICIENT,
+        )
 
     def test_complete_working_set_can_establish_progress_when_no_plan_exists(self) -> None:
         controller = ExecutionEfficiencyController()
@@ -144,14 +146,66 @@ class ExecutionEfficiencyControllerTests(unittest.TestCase):
 
     def test_low_information_guidance_does_not_override_missing_task_progress(self) -> None:
         controller = ExecutionEfficiencyController()
-        controller.observe_tool_batch((_fact("read_file", action="one"),))
-        guidance = controller.observe_tool_batch((_fact("read_file", action="two"),))
+        controller.observe_tool_batch((_fact("read_file", action="one"),), plan_complete=False)
+        guidance = controller.observe_tool_batch(
+            (_fact("read_file", action="two"),), plan_complete=False
+        )
         assert guidance is not None
         self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
         for index in range(3, 7):
-            update = controller.observe_tool_batch((_fact("read_file", action=str(index)),))
+            update = controller.observe_tool_batch(
+                (_fact("read_file", action=str(index)),), plan_complete=False
+            )
             self.assertIsNone(update)
             self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
+
+    def test_unknown_sufficiency_can_finalize_when_no_runtime_blocker_is_known(self) -> None:
+        controller = ExecutionEfficiencyController()
+
+        update = controller.finalize(
+            model_has_no_tool_calls=True,
+            plan_complete=None,
+            unresolved_work=False,
+            verification_ready=True,
+        )
+
+        assert update is not None
+        self.assertEqual(update.phase, ExecutionPhase.FINALIZE)
+        self.assertEqual(update.evidence_sufficiency, EvidenceSufficiency.UNKNOWN)
+
+    def test_planless_unknown_task_state_can_leave_explore_after_bounded_guidance(self) -> None:
+        controller = ExecutionEfficiencyController()
+        planless_state = {
+            "plan_complete": None,
+            "working_set_complete": False,
+            "unresolved_work": False,
+            "verification_pending": False,
+        }
+
+        self.assertIsNone(
+            controller.observe_tool_batch(
+                (_fact("read_file", action="module-a"),), **planless_state
+            )
+        )
+        batching = controller.observe_tool_batch(
+            (_fact("read_file", action="module-b"),), **planless_state
+        )
+        assert batching is not None
+        self.assertEqual(batching.reason, EfficiencyReason.LOW_INFORMATION_EXPLORATION)
+        self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
+        self.assertEqual(controller.evidence_sufficiency, EvidenceSufficiency.UNKNOWN)
+
+        # A planless task with new evidence and no known blocker has UNKNOWN
+        # sufficiency. The advisory controller must let the model synthesize
+        # instead of keeping the turn in EXPLORE indefinitely.
+        analysis = controller.observe_tool_batch(
+            (_fact("read_file", action="module-c"),), **planless_state
+        )
+        assert analysis is not None
+        self.assertEqual(analysis.phase, ExecutionPhase.ANALYZE)
+        self.assertEqual(analysis.reason, EfficiencyReason.EXCESSIVE_EXPLORATION)
+        self.assertEqual(analysis.evidence_sufficiency, EvidenceSufficiency.UNKNOWN)
+        self.assertIn("concrete unresolved evidence gap", analysis.guidance or "")
 
     def test_duplicate_or_unclassified_evidence_does_not_fake_low_information_progress(
         self,
@@ -172,36 +226,50 @@ class ExecutionEfficiencyControllerTests(unittest.TestCase):
         self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
 
     def test_composite_reads_and_multi_call_batches_are_not_singleton_rounds(self) -> None:
-        controller = ExecutionEfficiencyController()
+        composite_controller = ExecutionEfficiencyController()
+        composite = composite_controller.observe_tool_batch(
+            (_fact("read_files", action="multi-files", composite=True),)
+        )
+        assert composite is not None
+        self.assertEqual(composite.phase, ExecutionPhase.ANALYZE)
+        self.assertEqual(composite.singleton_streak, 0)
 
-        self.assertIsNone(
-            controller.observe_tool_batch(
-                (_fact("read_files", action="multi-files", composite=True),)
+        batch_controller = ExecutionEfficiencyController()
+        batch = batch_controller.observe_tool_batch(
+            (
+                _fact("read_file", action="one"),
+                _fact("grep_many", action="two"),
             )
         )
-        self.assertIsNone(
-            controller.observe_tool_batch(
-                (
-                    _fact("read_file", action="one"),
-                    _fact("grep_many", action="two"),
-                )
-            )
-        )
-        self.assertIsNone(controller.observe_tool_batch((_fact("list_tree", action="three"),)))
-        self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
+        assert batch is not None
+        self.assertEqual(batch.phase, ExecutionPhase.ANALYZE)
+        self.assertEqual(batch.singleton_streak, 0)
 
     def test_errors_exclusive_tools_and_non_evidence_break_the_streak(self) -> None:
         controller = ExecutionEfficiencyController()
-        controller.observe_tool_batch((_fact("read_file", action="one"),))
-        controller.observe_tool_batch((_fact("read_file", action="error", error=True),))
-        self.assertIsNone(controller.observe_tool_batch((_fact("read_file", action="two"),)))
-        self.assertIsNone(
-            controller.observe_tool_batch((_fact("read_file", action="exclusive", parallel=False),))
+        controller.observe_tool_batch((_fact("read_file", action="one"),), plan_complete=False)
+        controller.observe_tool_batch(
+            (_fact("read_file", action="error", error=True),), plan_complete=False
         )
         self.assertIsNone(
-            controller.observe_tool_batch((_fact("update_plan", progress=ProgressKind.PLAN),))
+            controller.observe_tool_batch((_fact("read_file", action="two"),), plan_complete=False)
         )
-        self.assertIsNone(controller.observe_tool_batch((_fact("read_file", action="three"),)))
+        self.assertIsNone(
+            controller.observe_tool_batch(
+                (_fact("read_file", action="exclusive", parallel=False),),
+                plan_complete=False,
+            )
+        )
+        self.assertIsNone(
+            controller.observe_tool_batch(
+                (_fact("update_plan", progress=ProgressKind.PLAN),), plan_complete=False
+            )
+        )
+        self.assertIsNone(
+            controller.observe_tool_batch(
+                (_fact("read_file", action="three"),), plan_complete=False
+            )
+        )
         self.assertEqual(controller.phase, ExecutionPhase.EXPLORE)
 
     def test_workspace_verification_and_finalization_are_advisory_phase_boundaries(self) -> None:
@@ -391,12 +459,14 @@ class ExecutionEfficiencyControllerTests(unittest.TestCase):
             _fact("read_file", action=f"action-{index}", observation=f"output-{index}")
             for index in range(64)
         )
-        self.assertIsNone(controller.observe_tool_batch(facts))
+        update = controller.observe_tool_batch(facts)
+        assert update is not None
+        self.assertEqual(update.phase, ExecutionPhase.ANALYZE)
         self.assertEqual(controller.evidence_count, 64)
 
-        self.assertIsNone(
-            controller.observe_tool_batch((_fact("read_file", action="beyond-bound"),))
-        )
+        backtrack = controller.observe_tool_batch((_fact("read_file", action="beyond-bound"),))
+        assert backtrack is not None
+        self.assertEqual(backtrack.reason, EfficiencyReason.ANALYSIS_BACKTRACK)
         self.assertEqual(controller.evidence_count, 64)
 
     def test_unbounded_observation_batch_is_rejected(self) -> None:

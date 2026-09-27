@@ -297,15 +297,20 @@ class TraceScreen(ModalScreen[None]):
             else "—"
         )
         phase_metrics = " · ".join(
-            f"{item.phase.upper()} {item.model_requests}req/{item.output_tokens}tok/"
-            f"{_seconds(item.provider_time_ms)}"
+            f"{item.phase.upper()} main {item.main_model_requests}req/"
+            f"{item.main_output_tokens}tok/{_seconds(item.provider_time_main_ms)} "
+            f"finalizer {item.finalizer_provider_requests}req/"
+            f"{item.finalizer_output_tokens}tok/{_seconds(item.finalizer_elapsed_ms)} elapsed"
             for item in summary.phase_metrics
         )
         summary_widget.update(
             f"{self._text('Turn', '回合')} {_seconds(summary.duration_ms)} · "
-            f"{summary.model_steps} steps · {summary.model_requests} requests · "
+            f"{summary.model_steps} steps · {summary.main_model_requests} main requests · "
+            f"{summary.finalizer_provider_requests} finalizer provider requests · "
             f"{summary.tool_batches} batches / {summary.tool_calls} tools · "
-            f"Weighted cache reuse {cache_label} · Provider {_seconds(summary.provider_time_ms)} · "
+            f"Weighted cache reuse {cache_label}\n"
+            f"Main Provider {_seconds(summary.provider_time_main_ms)} · "
+            f"Finalizer elapsed {_seconds(summary.finalizer_elapsed_ms)} · "
             f"TTFT {_milliseconds(summary.average_ttft_ms)} / user {_milliseconds(summary.user_visible_ttft_ms)} · "
             f"Cache miss/request {cache_miss}\n"
             f"Permission wait {_seconds(summary.permission_wait_ms)} · "
@@ -314,7 +319,7 @@ class TraceScreen(ModalScreen[None]):
             f"Parallel {parallel_ratio} · retries {summary.retries} · failovers {summary.failovers} · "
             f"replans {summary.replans} · compactions {summary.compactions} · finalizers {summary.finalizer_calls}\n"
             f"Longest model {longest_model} · tool {longest_tool}\n"
-            f"Phase requests/output/provider: {phase_metrics}\n"
+            f"Phase main/finalizer requests, output and provider time: {phase_metrics}\n"
             f"Analysis backtracks {summary.analysis_backtrack_count} · "
             f"tools after ANALYZE {summary.analyze_tool_call_count} · "
             f"EXPLORE backtracks before FINALIZE {summary.explore_backtracks_before_finalize}"

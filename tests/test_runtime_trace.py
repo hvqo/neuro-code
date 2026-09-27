@@ -456,6 +456,7 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
             analysis_backtrack_count=0,
             explore_backtracks_before_finalize=0,
             guidance_emitted=True,
+            evidence_sufficiency="unknown",
             guidance="PRIVATE_GUIDANCE_SENTINEL",
             arguments="PRIVATE_ARGUMENTS_SENTINEL",
         )
@@ -466,6 +467,7 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
         self.assertEqual(record.name, "Execution_phase:_EXPLORE")
         self.assertEqual(record.step, 2)
         self.assertEqual(record.metadata["reason_code"], "low_information_exploration")
+        self.assertEqual(record.metadata["evidence_sufficiency"], "unknown")
         serialized = json.dumps(record.to_dict())
         self.assertNotIn("PRIVATE_GUIDANCE_SENTINEL", serialized)
         self.assertNotIn("PRIVATE_ARGUMENTS_SENTINEL", serialized)
@@ -533,24 +535,47 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
         assert snapshot is not None
         phases = {item.phase: item for item in snapshot.summary.phase_metrics}
         self.assertEqual(
-            (phases["explore"].model_requests, phases["explore"].output_tokens),
-            (1, 10),
+            (
+                phases["explore"].main_model_requests,
+                phases["explore"].main_output_tokens,
+                phases["explore"].finalizer_provider_requests,
+            ),
+            (1, 10, 0),
         )
-        self.assertAlmostEqual(phases["explore"].provider_time_ms, 100)
+        self.assertAlmostEqual(phases["explore"].provider_time_main_ms, 100)
         self.assertEqual(
-            (phases["analyze"].model_requests, phases["analyze"].output_tokens),
+            (phases["analyze"].main_model_requests, phases["analyze"].main_output_tokens),
             (1, 20),
         )
-        self.assertAlmostEqual(phases["analyze"].provider_time_ms, 200)
+        self.assertAlmostEqual(phases["analyze"].provider_time_main_ms, 200)
         self.assertEqual(
-            (phases["finalize"].model_requests, phases["finalize"].output_tokens),
-            (1, 5),
+            (
+                phases["finalize"].main_model_requests,
+                phases["finalize"].finalizer_provider_requests,
+                phases["finalize"].finalizer_output_tokens,
+            ),
+            (0, 1, 5),
         )
-        self.assertAlmostEqual(phases["finalize"].provider_time_ms, 50)
+        self.assertAlmostEqual(phases["finalize"].finalizer_elapsed_ms, 950)
         self.assertEqual(snapshot.summary.analysis_backtrack_count, 1)
         self.assertEqual(snapshot.summary.analyze_tool_call_count, 1)
         self.assertEqual(snapshot.summary.explore_backtracks_before_finalize, 1)
-        self.assertAlmostEqual(snapshot.summary.provider_time_ms, 350)
+        self.assertEqual(snapshot.summary.main_model_requests, 2)
+        self.assertEqual(snapshot.summary.finalizer_provider_requests, 1)
+        self.assertAlmostEqual(snapshot.summary.provider_time_main_ms, 300)
+        self.assertAlmostEqual(snapshot.summary.finalizer_elapsed_ms, 950)
+        self.assertEqual(
+            sum(item.main_model_requests for item in phases.values()),
+            snapshot.summary.main_model_requests,
+        )
+        self.assertEqual(
+            sum(item.finalizer_provider_requests for item in phases.values()),
+            snapshot.summary.finalizer_provider_requests,
+        )
+        summary_dict = snapshot.summary.to_dict()
+        self.assertEqual(summary_dict["main_model_requests"], 2)
+        self.assertEqual(summary_dict["finalizer_provider_requests"], 1)
+        self.assertNotIn("model_requests", summary_dict)
 
     def test_cancellation_failure_and_bounded_retention(self) -> None:
         self.collector.end_turn("cancelled")
