@@ -448,11 +448,13 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
         self.emit(
             AgentEventKind.RUNTIME_TRACE_EFFICIENCY,
             step=2,
-            phase="analyze",
+            phase="explore",
             previous_phase="explore",
             reason_code="low_information_exploration",
             singleton_streak=2,
             evidence_count=2,
+            analysis_backtrack_count=0,
+            explore_backtracks_before_finalize=0,
             guidance_emitted=True,
             guidance="PRIVATE_GUIDANCE_SENTINEL",
             arguments="PRIVATE_ARGUMENTS_SENTINEL",
@@ -461,12 +463,94 @@ class RuntimeTraceCollectorTests(unittest.TestCase):
         snapshot = self.collector.snapshot()
         assert snapshot is not None
         record = next(item for item in snapshot.records if item.kind is TraceKind.EFFICIENCY)
-        self.assertEqual(record.name, "Execution_phase:_ANALYZE")
+        self.assertEqual(record.name, "Execution_phase:_EXPLORE")
         self.assertEqual(record.step, 2)
         self.assertEqual(record.metadata["reason_code"], "low_information_exploration")
         serialized = json.dumps(record.to_dict())
         self.assertNotIn("PRIVATE_GUIDANCE_SENTINEL", serialized)
         self.assertNotIn("PRIVATE_ARGUMENTS_SENTINEL", serialized)
+
+    def test_summarizes_provider_work_and_tool_backtracks_by_execution_phase(self) -> None:
+        self.emit(AgentEventKind.MODEL_STEP_STARTED, step=1)
+        self.emit(
+            AgentEventKind.RUNTIME_TRACE_MODEL_REQUEST,
+            request_id="explore-1",
+            step=1,
+            provider="deepseek",
+            model="deepseek-flash",
+            status="succeeded",
+            duration_ms=100,
+            input_tokens=100,
+            output_tokens=10,
+            execution_phase="explore",
+        )
+        self.emit(AgentEventKind.MODEL_STEP_STARTED, step=2)
+        self.emit(
+            AgentEventKind.RUNTIME_TRACE_MODEL_REQUEST,
+            request_id="analyze-2",
+            step=2,
+            provider="deepseek",
+            model="deepseek-flash",
+            status="succeeded",
+            duration_ms=200,
+            input_tokens=100,
+            output_tokens=20,
+            execution_phase="analyze",
+        )
+        self.emit(AgentEventKind.TOOL_REQUESTED, id="read-gap", name="read_file")
+        self.emit(AgentEventKind.TOOL_STARTED, id="read-gap", name="read_file")
+        self.emit(AgentEventKind.TOOL_COMPLETED, id="read-gap", name="read_file")
+        self.emit(
+            AgentEventKind.RUNTIME_TRACE_EFFICIENCY,
+            step=2,
+            phase="explore",
+            previous_phase="analyze",
+            reason_code="analysis_backtrack",
+            singleton_streak=0,
+            evidence_count=3,
+            analysis_backtrack_count=1,
+            explore_backtracks_before_finalize=1,
+            guidance_emitted=True,
+        )
+        self.emit(
+            AgentEventKind.RUNTIME_TRACE_FINALIZER,
+            status="succeeded",
+            duration_ms=50,
+            output_tokens=5,
+            provider_request_count=1,
+            execution_phase="finalize",
+        )
+        self.emit(
+            AgentEventKind.RUNTIME_TRACE_FINALIZER,
+            status="failed",
+            duration_ms=900,
+            output_tokens=0,
+            provider_request_count=0,
+            execution_phase="finalize",
+        )
+
+        snapshot = self.collector.snapshot()
+        assert snapshot is not None
+        phases = {item.phase: item for item in snapshot.summary.phase_metrics}
+        self.assertEqual(
+            (phases["explore"].model_requests, phases["explore"].output_tokens),
+            (1, 10),
+        )
+        self.assertAlmostEqual(phases["explore"].provider_time_ms, 100)
+        self.assertEqual(
+            (phases["analyze"].model_requests, phases["analyze"].output_tokens),
+            (1, 20),
+        )
+        self.assertAlmostEqual(phases["analyze"].provider_time_ms, 200)
+        self.assertEqual(
+            (phases["finalize"].model_requests, phases["finalize"].output_tokens),
+            (1, 5),
+        )
+        self.assertAlmostEqual(phases["finalize"].provider_time_ms, 50)
+        self.assertEqual(snapshot.summary.analysis_backtrack_count, 1)
+        self.assertEqual(snapshot.summary.analyze_tool_call_count, 1)
+        self.assertEqual(snapshot.summary.explore_backtracks_before_finalize, 1)
+        self.assertAlmostEqual(snapshot.summary.provider_time_ms, 350)
 
     def test_cancellation_failure_and_bounded_retention(self) -> None:
         self.collector.end_turn("cancelled")

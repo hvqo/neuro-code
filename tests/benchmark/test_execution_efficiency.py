@@ -38,7 +38,23 @@ class ExecutionEfficiencyBenchmarkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((before.tool_batches, after.tool_batches), (5, 3))
         self.assertAlmostEqual(before.weighted_cache_reuse or 0.0, 0.8)
         self.assertAlmostEqual(after.weighted_cache_reuse or 0.0, 0.8)
-        self.assertLess(after.provider_time_ms, before.provider_time_ms)
+        self.assertGreater(before.provider_time_ms - after.provider_time_ms, 20)
+        self.assertEqual(before.analysis_backtrack_count, 0)
+        self.assertEqual(after.analysis_backtrack_count, 0)
+        self.assertEqual(before.analyze_tool_call_count, 0)
+        self.assertEqual(after.analyze_tool_call_count, 0)
+        self.assertEqual(
+            sum(item.model_requests for item in before.phase_metrics),
+            before.model_requests,
+        )
+        self.assertEqual(
+            sum(item.model_requests for item in after.phase_metrics),
+            after.model_requests,
+        )
+        self.assertEqual(
+            (before.phase_metrics[0].model_requests, after.phase_metrics[0].model_requests),
+            (6, 4),
+        )
 
         baseline_model_records = tuple(
             record for record in baseline.snapshot.records if record.kind is TraceKind.MODEL
@@ -46,7 +62,10 @@ class ExecutionEfficiencyBenchmarkTests(unittest.IsolatedAsyncioTestCase):
         optimized_model_records = tuple(
             record for record in optimized.snapshot.records if record.kind is TraceKind.MODEL
         )
-        self.assertEqual(sum(record.output_tokens or 0 for record in baseline_model_records), 60)
+        self.assertEqual(
+            sum(record.output_tokens or 0 for record in baseline_model_records),
+            6_180,
+        )
         self.assertEqual(sum(record.output_tokens or 0 for record in optimized_model_records), 44)
         self.assertAlmostEqual(
             len(REPOSITORY_REVIEW_FILES) / before.tool_batches,
@@ -60,7 +79,14 @@ class ExecutionEfficiencyBenchmarkTests(unittest.IsolatedAsyncioTestCase):
             any(
                 record.kind is TraceKind.EFFICIENCY
                 and record.metadata.get("reason_code") == "low_information_exploration"
+                and record.metadata.get("phase") == "explore"
                 for record in optimized.snapshot.records
+            )
+        )
+        self.assertTrue(
+            all(
+                record.metadata.get("execution_phase") == "explore"
+                for record in (*baseline_model_records, *optimized_model_records)
             )
         )
 

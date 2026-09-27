@@ -6,6 +6,8 @@
 - 日期：2026-09-26
 - 范围：Main Agent 回合中的建议式执行阶段与低信息探索提示
 
+> 历史决策：下文的低信息 `EXPLORE → ANALYZE` 转换及仅依赖 Plan 的阶段 Gate，已由 [ADR 0180](0180-reasoning-efficiency-v1.md) 替代。
+
 ## 背景
 
 Runtime Trace 显示，较长的仓库任务主要耗时在 Provider 请求，工具执行较快。现有调度器已经能并发运行同一模型响应中连续且安全的调用，但无法合并模型在不同响应中逐次发出的单个调用。改变工具调度或增加 Planner 会给依赖关系、Prompt Cache 连续性、权限和现有 Supervisor 边界带来风险。

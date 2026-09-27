@@ -112,6 +112,26 @@ class TraceRecord:
         }
 
 
+_EXECUTION_PHASES = ("explore", "analyze", "verify", "finalize")
+
+
+@dataclass(frozen=True, slots=True)
+class TracePhaseSummary:
+    """Main and finalizer Provider work attributed to the request phase."""
+
+    phase: str
+    model_requests: int
+    output_tokens: int
+    provider_time_ms: float
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "model_requests": self.model_requests,
+            "output_tokens": self.output_tokens,
+            "provider_time_ms": round(self.provider_time_ms, 3),
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class TraceSummary:
     duration_ms: float | None
@@ -135,6 +155,10 @@ class TraceSummary:
     replans: int
     compactions: int
     finalizer_calls: int
+    phase_metrics: tuple[TracePhaseSummary, ...]
+    analysis_backtrack_count: int
+    analyze_tool_call_count: int
+    explore_backtracks_before_finalize: int
     longest_model_requests: tuple[tuple[str, float], ...]
     longest_tools: tuple[tuple[str, float], ...]
 
@@ -161,6 +185,10 @@ class TraceSummary:
             "replans": self.replans,
             "compactions": self.compactions,
             "finalizer_calls": self.finalizer_calls,
+            "phase_metrics": {item.phase: item.to_dict() for item in self.phase_metrics},
+            "analysis_backtrack_count": self.analysis_backtrack_count,
+            "analyze_tool_call_count": self.analyze_tool_call_count,
+            "explore_backtracks_before_finalize": self.explore_backtracks_before_finalize,
             "longest_model_requests": [
                 {"name": name, "duration_ms": round(duration, 3)}
                 for name, duration in self.longest_model_requests
@@ -655,6 +683,8 @@ class TraceCollector:
                         "singleton_streak",
                         "evidence_count",
                         "guidance_emitted",
+                        "analysis_backtrack_count",
+                        "explore_backtracks_before_finalize",
                     },
                 ),
                 now=now,
@@ -674,6 +704,8 @@ class TraceCollector:
             )
             return
         if event.kind is AgentEventKind.RUNTIME_TRACE_FINALIZER:
+            duration_ms = _duration_ms(data)
+            elapsed_seconds = (duration_ms or 0.0) / 1000
             self._append(
                 turn,
                 TraceKind.FINALIZER,
@@ -681,11 +713,22 @@ class TraceCollector:
                 parent_span_id=turn.active_step_id or turn.turn_span_id,
                 step=turn.active_step_number,
                 status=_status_value(data.get("status")),
-                duration_ms=_duration_ms(data),
+                duration_ms=duration_ms,
                 input_tokens=_int_value(data, "input_tokens"),
                 output_tokens=_int_value(data, "output_tokens"),
-                metadata=_safe_metadata(data, allow={"status", "attempts", "error_type", "source"}),
-                now=now,
+                metadata=_safe_metadata(
+                    data,
+                    allow={
+                        "status",
+                        "attempts",
+                        "provider_request_count",
+                        "error_type",
+                        "source",
+                        "execution_phase",
+                    },
+                ),
+                now=now - elapsed_seconds,
+                started_at=datetime.now(UTC) - timedelta(seconds=elapsed_seconds),
             )
             return
         if event.kind is AgentEventKind.RUNTIME_TRACE_SUBAGENT:
@@ -833,6 +876,7 @@ class TraceCollector:
                 "failover_count",
                 "stream_duration_ms",
                 "provider_attempts",
+                "execution_phase",
             },
         )
         estimated_context_tokens = _int_value(data, "estimated_context_tokens")
@@ -1363,6 +1407,57 @@ def _summarize(
     compactions = sum(
         1 for record in by_kind(TraceKind.CONTEXT) if record.name == "Full_Compaction"
     )
+    phase_metrics: list[TracePhaseSummary] = []
+    finalizers = tuple(
+        record
+        for record in by_kind(TraceKind.FINALIZER)
+        if (_int_value(record.metadata, "provider_request_count") or 0) > 0
+    )
+    for phase in _EXECUTION_PHASES:
+        phase_models = tuple(
+            record for record in models if record.metadata.get("execution_phase") == phase
+        )
+        phase_finalizers = tuple(
+            record for record in finalizers if record.metadata.get("execution_phase") == phase
+        )
+        phase_metrics.append(
+            TracePhaseSummary(
+                phase=phase,
+                model_requests=len(phase_models)
+                + sum(
+                    _int_value(record.metadata, "provider_request_count") or 0
+                    for record in phase_finalizers
+                ),
+                output_tokens=sum(record.output_tokens or 0 for record in phase_models)
+                + sum(record.output_tokens or 0 for record in phase_finalizers),
+                provider_time_ms=sum(record.duration_ms or 0.0 for record in phase_models)
+                + sum(record.duration_ms or 0.0 for record in phase_finalizers),
+            )
+        )
+
+    efficiency_records = by_kind(TraceKind.EFFICIENCY)
+
+    def cumulative_efficiency_count(key: str, *reasons: str) -> int:
+        reported = tuple(
+            value
+            for record in efficiency_records
+            if (value := record.metadata.get(key)) is not None
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+            and value >= 0
+        )
+        return (
+            max(reported)
+            if reported
+            else sum(record.metadata.get("reason_code") in reasons for record in efficiency_records)
+        )
+
+    analyze_steps = {
+        record.step
+        for record in models
+        if record.step is not None and record.metadata.get("execution_phase") == "analyze"
+    }
+    analyze_tool_call_count = sum(1 for record in tools if record.step in analyze_steps)
 
     def numeric_metadata(record: TraceRecord, key: str, fallback: float = 0.0) -> float:
         value = record.metadata.get(key)
@@ -1376,7 +1471,9 @@ def _summarize(
         numeric_metadata(record, "execution_ms", record.duration_ms or 0) for record in tools
     )
     permission_wait = sum(numeric_metadata(record, "permission_wait_ms") for record in tools)
-    provider_time = sum(record.duration_ms or 0 for record in models)
+    provider_time = sum(record.duration_ms or 0 for record in models) + sum(
+        record.duration_ms or 0 for record in finalizers
+    )
     context_records = by_kind(TraceKind.CONTEXT)
     context_time = sum(record.duration_ms or 0 for record in context_records)
     active_intervals = [
@@ -1384,6 +1481,11 @@ def _summarize(
         for record in models
         if record.duration_ms is not None
     ]
+    active_intervals.extend(
+        (record.start_offset_ms, record.start_offset_ms + (record.duration_ms or 0))
+        for record in finalizers
+        if record.duration_ms is not None
+    )
     for record in tools:
         permission_wait_ms = numeric_metadata(record, "permission_wait_ms", -1)
         if permission_wait_ms > 0:
@@ -1440,6 +1542,16 @@ def _summarize(
         replans=len(by_kind(TraceKind.REPLAN)),
         compactions=compactions,
         finalizer_calls=len(by_kind(TraceKind.FINALIZER)),
+        phase_metrics=tuple(phase_metrics),
+        analysis_backtrack_count=cumulative_efficiency_count(
+            "analysis_backtrack_count", "analysis_backtrack"
+        ),
+        analyze_tool_call_count=analyze_tool_call_count,
+        explore_backtracks_before_finalize=cumulative_efficiency_count(
+            "explore_backtracks_before_finalize",
+            "analysis_backtrack",
+            "verification_backtrack",
+        ),
         longest_model_requests=tuple(
             (record.name, record.duration_ms or 0.0)
             for record in sorted(models, key=lambda item: item.duration_ms or 0, reverse=True)[:5]
@@ -1459,6 +1571,7 @@ __all__ = [
     "TRACE_LEDGER_PAGE_SIZE",
     "TraceCollector",
     "TraceKind",
+    "TracePhaseSummary",
     "TraceRecord",
     "TraceSnapshot",
     "TraceStatus",
