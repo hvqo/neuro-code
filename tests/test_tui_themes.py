@@ -221,6 +221,17 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
         )
         async with app.run_test(size=(54, 24)) as pilot:
 
+            async def wait_for_theme_applied(selected: UiTheme) -> None:
+                for _ in range(40):
+                    if app.theme == selected.textual_name and preferences.saved_themes[-1:] == [
+                        selected
+                    ]:
+                        return
+                    # The modal dismissal callback applies and persists the
+                    # choice asynchronously after the key event is dispatched.
+                    await pilot.pause(0.05)
+                self.fail("selected theme was not applied and persisted")
+
             async def wait_for_theme_screen(
                 selected: UiTheme, *, require_focus: bool = False
             ) -> None:
@@ -258,7 +269,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             await wait_for_theme_screen(UiTheme.PORCELAIN)
             app.screen.query_one("#settings-theme-system", Button).focus()
             await pilot.press("enter")
-            await pilot.pause()
+            await wait_for_theme_applied(UiTheme.SYSTEM)
             self.assertEqual(app.theme, UiTheme.SYSTEM.textual_name)
             self.assertEqual(preferences.saved_themes, [UiTheme.SYSTEM])
             await pilot.click("#settings-category-theme")
