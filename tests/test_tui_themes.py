@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from pygments.token import Keyword, String
-from textual.widgets import Button
+from textual.widgets import Button, TextArea
 
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
@@ -60,6 +60,19 @@ class ThemePersistenceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
+    def test_detached_prompt_change_event_is_ignored(self) -> None:
+        app = NeuroCodeApp(
+            TuiConversation(),
+            provider_name="fixture",
+            model_name="fixture-model",
+            cwd=Path("/workspace"),
+        )
+
+        # Textual may deliver a queued Changed message after a test/app screen
+        # has been detached. The stale event must not make the TUI handler ask
+        # the detached prompt for its screen.
+        app.on_text_area_changed(TextArea.Changed(PromptInput()))
+
     async def test_settings_switches_both_ways_without_losing_draft_or_messages(self) -> None:
         preferences = UiPreferencesFixture()
         app = NeuroCodeApp(

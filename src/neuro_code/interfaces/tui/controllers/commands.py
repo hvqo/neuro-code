@@ -4,6 +4,7 @@ import asyncio
 from time import monotonic
 
 from textual.containers import VerticalScroll
+from textual.dom import NoScreen
 from textual.screen import ModalScreen
 from textual.widgets import TextArea
 
@@ -103,7 +104,15 @@ class CommandControllerMixin(TuiAppControllerMixin):
         return " · ".join(search_parts), ui_text(self._language, fetch_key)
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        if isinstance(event.text_area, PromptInput) and event.text_area.screen is self.screen:
+        if not isinstance(event.text_area, PromptInput):
+            return
+        try:
+            prompt_screen = event.text_area.screen
+        except NoScreen:
+            # TextArea.Changed can remain queued while the app is closing and
+            # the prompt has already been detached from its screen.
+            return
+        if prompt_screen is self.screen:
             event.text_area.sync_content_height()
             self._refresh_command_hints(event.text_area.value)
 
