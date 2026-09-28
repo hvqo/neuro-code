@@ -2428,6 +2428,7 @@ def test_canonical_runtime_public_types_keep_module_paths_and_metadata() -> None
         "workspace_root",
         "workspace_mutation",
         "runtime_web_capabilities",
+        "effective_agent_binding",
     )
     assert profile.ConversationBinding.__dataclass_params__.frozen
     assert profile.ConversationBinding.__slots__ == (
@@ -2440,6 +2441,7 @@ def test_canonical_runtime_public_types_keep_module_paths_and_metadata() -> None
         "workspace_root",
         "workspace_mutation",
         "runtime_web_capabilities",
+        "effective_agent_binding",
     )
     assert profile.ConversationBinding.__match_args__ == (
         "runner",

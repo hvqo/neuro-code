@@ -64,6 +64,7 @@ if TYPE_CHECKING:
         ProviderFactory,
         WorkspaceChangeObserverFactory,
     )
+    from neuro_code.domain.agents.profile import AgentCapability, AgentProfile, AgentProfileOverride
     from neuro_code.domain.conversation.reasoning import ReasoningEffort
     from neuro_code.domain.parent_context_relay import ParentContextRelay
     from neuro_code.domain.task_dag_result_relay import TaskDagDependencyResultRelay
@@ -113,6 +114,9 @@ class CompositionRootMixin:
             allowed_tool_names: Collection[str] | None = None,
             enable_background_tasks: bool | None = None,
             capabilities: SubagentCapabilitySet | None = None,
+            agent_profile: AgentProfile | None = None,
+            agent_profile_override: AgentProfileOverride | None = None,
+            agent_application_capabilities: Collection[AgentCapability] = (),
             user_interaction: UserInteractionPort | None = None,
             parent_context_relay: ParentContextRelay | None = None,
             dag_result_relay: TaskDagDependencyResultRelay | None = None,

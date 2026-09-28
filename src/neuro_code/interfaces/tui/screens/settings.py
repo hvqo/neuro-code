@@ -718,6 +718,9 @@ class ThemeSettingsScreen(ModalScreen[UiTheme | None]):
         )
 
     def on_mount(self) -> None:
+        self.call_after_refresh(self._focus_selected_theme)
+
+    def _focus_selected_theme(self) -> None:
         self.query_one(f"#settings-theme-{self.selected.value}", Button).focus()
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:

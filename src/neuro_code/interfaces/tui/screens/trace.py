@@ -358,7 +358,20 @@ class TraceScreen(ModalScreen[None]):
         if record.tool_call_id:
             common.append(f"Tool call: {record.tool_call_id}")
         tabs = {
-            "overview": ("provider", "model", "status", "step", "source", "output_kind"),
+            "overview": (
+                "provider",
+                "model",
+                "profile_id",
+                "role",
+                "effective_capabilities",
+                "unavailable_capabilities",
+                "execution_budget",
+                "security_constraints",
+                "status",
+                "step",
+                "source",
+                "output_kind",
+            ),
             "timing": (
                 "duration_ms",
                 "ttft_ms",

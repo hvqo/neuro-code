@@ -15,7 +15,7 @@ from neuro_code.application.permissions.policy import (
     PermissionManager,
     PermissionMode,
 )
-from neuro_code.application.ports.model import ModelCapabilitySet
+from neuro_code.application.ports.model import ModelCapability, ModelCapabilitySet
 from neuro_code.application.ports.tools import ToolContext
 from neuro_code.application.ports.web_fetch import (
     MAX_FETCH_RESULT_CHARS,
@@ -53,7 +53,7 @@ from neuro_code.shared.errors import ConfigurationError
 class _CompositionProvider:
     provider_name = "fixture"
     model_name = "fixture-model"
-    capabilities = ModelCapabilitySet.all_unknown()
+    capabilities = ModelCapabilitySet.from_supported(ModelCapability.FUNCTION_TOOLS)
 
     async def stream(
         self,

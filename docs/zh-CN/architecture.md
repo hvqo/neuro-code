@@ -2527,3 +2527,11 @@ Execution Efficiency 是现有 Agent loop 上有界、按回合创建的建议�
 `UNKNOWN` 保持中性：它不触发 `ANALYZE`、不要求持续探索，也不阻止正常完成。`EXPLORE → ANALYZE` 必须由现有 Runtime 事实给出的正向 `SUFFICIENT` 信号触发；证据数量、低信息模式和未知状态不能替代 readiness。Planless 任务可以继续留在 `EXPLORE`；模型停止请求工具且没有明确阻塞时，可直接综合并正常完成。连续两轮 singleton 后，控制器可以追加一次批量提示。未知状态下若继续出现 singleton 读取，只追加一次有界 `excessive_exploration` 检查点，建议仅在存在具体缺口时继续调用工具，否则综合已有证据；阶段保持 `EXPLORE`。没有工具调用的模型响应，在不存在明确未解决要求、没有未完成 Plan，且必需验证已满足或明确 blocked 时可以进入 `FINALIZE`。
 
 模型仍通过在同一个响应中返回独立工具调用来声明批次。现有 `ToolScheduler` 根据可执行工具能力检查是否可安全并行、保持结果顺序，并串行处理 exclusive、有副作用及交互控制调用。Execution Efficiency 自身不会批处理或并行化调用。EXPLORE 指引要求模型先行动获取已知证据，再做广泛综合。`ANALYZE` 只由正向 `SUFFICIENT` 信号触发；在其请求工具并回退后，必须先观察非充分状态、再观察新的充分状态，才可重新进入 `ANALYZE`。`UNKNOWN` 或普通证据增长不会重新触发阶段。工作区变更或验证仍进入 VERIFY。FINALIZE 仅在模型不再请求工具、没有明确未解决要求、存在的 Plan 已完成，且必需验证已满足或明确 blocked 时记录；未知状态本身不会阻止正常完成。这些 Gate 不改变 Supervisor 行为。指引是有界、仅追加的 synthetic context，不进入持久历史，不修改稳定 System Prefix 或用户选择的推理强度。Trace 按阶段分别报告 `main_model_requests` 与 `finalizer_provider_requests`，并将 Main Provider 耗时与 Finalizer 总耗时放在不同字段中。Finalizer 总耗时包含其 Provider 调用周围的有界编排，不标为 Main Provider 耗时；Main Model 阶段请求数不再混入 Finalizer 请求。同时报告 backtrack 计数，不记录隐藏推理或工具正文。详见 [ADR 0181](adr/0181-reasoning-efficiency-phase-gate.md)。
+
+## Agent Profile 与能力模型 V1
+
+`AgentProfile` 是不可变的智能体意图声明，包含身份、角色、有界指引、模型/推理策略、能力请求、记忆/上下文策略、执行预算、子代理/工作区写入策略及验证意图。它不是权限授予，也不携带可变 Runtime 状态。`Capability Resolution` 将 Profile 请求与具体 Runtime 绑定、Provider/平台支持、显式 Profile 限制、Permission policy、Sandbox/安全上限及真实父级能力上限取交集。缺失能力保留类型化不可用原因；不会根据 Provider 名称推断托管搜索/读取能力。
+
+`EffectiveAgentBinding` 是每次执行不可变的解析结果，由 `AgentRuntime` 消费，明确解析后的 Profile/模型/推理、有效能力及不可用原因、绑定工具、记忆/上下文策略、有界执行预算和安全元数据。生产 composition root 根据真实 conversation binding、Provider 和工具目录创建该对象。Profile-bound tool collection 使用同一目录同时收窄模型可见 schema 与 dispatch；现有 Permission、Workspace、Sandbox 和专用应用服务仍拥有执行时权威。子 Agent binding 还必须与真实父级能力上限求交集。
+
+内建 Profile（`main`、`explorer`、`planner`、`reviewer`、`writable_worker`、`leader`）描述现有 Runtime 角色，不替代 Task DAG、Leader、Ultracode 或可写 Worker 编排。覆盖行为确定且只能收紧能力和执行限制。Profile 指引作为绑定时有界的 synthetic context 投影，不追溯改写稳定 system prefix。上下文或工具契约变化仍须经过现有明确 cache boundary。Trace 只记录安全的 Profile/role/provider/model 标签、有效/不可用能力标识和执行预算元数据，不记录 Prompt、参数、结果或凭据。未来 Dynamic Workflow 可引用相同 Profile ID 与 binding service，同时继续使用现有 Permission 和 Workflow 权威。详见 [ADR 0182](adr/0182-agent-profile-capability-model-v1.md)。

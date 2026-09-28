@@ -2,6 +2,12 @@
 
 定义由基础设施适配器实现的规范应用端口."""
 
+from neuro_code.application.ports.agent_profiles import (
+    AgentCapabilityResolution,
+    AgentCapabilityUnavailableReason,
+    EffectiveAgentBinding,
+    UnavailableAgentCapability,
+)
 from neuro_code.application.ports.agent_swarm import (
     AgentSwarmRunClaim,
     AgentSwarmStore,
@@ -386,6 +392,8 @@ __all__ = [
     "TOOL_OUTPUT_ARTIFACT_PRUNE_GRACE_SECONDS",
     "WINDOWS_SANDBOX_SETUP_SCHEMA_VERSION",
     "AdvanceContextRolloverRequest",
+    "AgentCapabilityResolution",
+    "AgentCapabilityUnavailableReason",
     "AgentSwarmRunClaim",
     "AgentSwarmStore",
     "AgentSwarmStoreError",
@@ -400,6 +408,7 @@ __all__ = [
     "ContextRolloverState",
     "CredentialStyle",
     "DagReplanAttemptClaim",
+    "EffectiveAgentBinding",
     "FilesystemAccessOperation",
     "FilesystemAccessPlan",
     "FilesystemAccessTarget",
@@ -537,6 +546,7 @@ __all__ = [
     "UltracodeResultAdoption",
     "UltracodeStore",
     "UltracodeStoreError",
+    "UnavailableAgentCapability",
     "UnavailableUserInteraction",
     "UpdateWorkingSetRequest",
     "UserInputOption",

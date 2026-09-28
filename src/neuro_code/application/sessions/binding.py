@@ -22,6 +22,7 @@ from neuro_code.application.memory.compaction_runtime import (
     ContextCompactionRuntimeResult,
     ContextCompactionTurnProjection,
 )
+from neuro_code.application.ports.agent_profiles import EffectiveAgentBinding
 from neuro_code.application.ports.background_tasks import BackgroundTaskManager
 from neuro_code.application.ports.model import ModelProvider
 from neuro_code.application.ports.result_adoption import WorkspaceMutationPort
@@ -284,6 +285,7 @@ class ConversationBinding:
         default=None,
         kw_only=True,
     )
+    effective_agent_binding: EffectiveAgentBinding | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if self.runtime_web_capabilities is not None and not isinstance(
@@ -291,6 +293,11 @@ class ConversationBinding:
             RuntimeWebCapabilityInspection,
         ):
             raise TypeError("runtime_web_capabilities must be canonical or None")
+        if self.effective_agent_binding is not None and not isinstance(
+            self.effective_agent_binding,
+            EffectiveAgentBinding,
+        ):
+            raise TypeError("effective_agent_binding must be canonical or None")
 
     async def undo_workspace(self) -> WorkspaceUndoResult:
         """Restore the latest idle-safe workspace checkpoint for this binding."""

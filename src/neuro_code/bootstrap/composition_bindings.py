@@ -17,6 +17,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
+from neuro_code.application.agents.binding import tool_capability
+from neuro_code.application.agents.composition import bind_agent_profile
+from neuro_code.application.agents.profiles import (
+    MAIN_AGENT_PROFILE,
+)
 from neuro_code.application.checkpoints import TurnWorkspaceCheckpointCoordinator
 from neuro_code.application.execution_policy import ExecutionBudgetPolicy, ExecutionBudgetSource
 from neuro_code.application.memory.compaction import (
@@ -34,6 +39,7 @@ from neuro_code.application.memory.project_memory_extraction import (
 from neuro_code.application.memory.project_scope import ProjectMemoryScope
 from neuro_code.application.memory.skill_tracker import SkillTracker
 from neuro_code.application.permissions.policy import (
+    PermissionDecisionSource,
     PermissionEffect,
     PermissionManager,
     PermissionRule,
@@ -103,6 +109,12 @@ from neuro_code.application.web_fetch.service import WebFetchService
 from neuro_code.application.web_search.service import WebSearchService
 from neuro_code.application.workflows.subagent_capabilities import SubagentCapabilitySet
 from neuro_code.bootstrap.composition_contracts import CompositionRootMixin
+from neuro_code.domain.agents.profile import (
+    AgentCapability,
+    AgentProfile,
+    AgentProfileOverride,
+    AgentRole,
+)
 from neuro_code.domain.conversation.messages import Message, Role, SyntheticReason
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.domain.parent_context_relay import (
@@ -178,6 +190,58 @@ def _without_main_inline_web_fetch(config: AppConfig) -> AppConfig:
             ),
         )
     return replace(config, providers=profiles)
+
+
+def _restrict_provider_tools_for_profile(
+    config: AppConfig,
+    profile: AgentProfile,
+    override: AgentProfileOverride | None = None,
+    permissions: PermissionManager | None = None,
+) -> AppConfig:
+    """Remove provider-native tool schemas excluded by declarative profile intent."""
+
+    allowed_capabilities = set(profile.capability_policy)
+    if override is not None:
+        allowed_capabilities.difference_update(override.disabled_capabilities)
+    profiles: dict[str, ProviderProfile] = {}
+    for name, provider in config.providers.items():
+        enabled = tuple(
+            tool_name
+            for tool_name in provider.builtin_tools
+            if tool_capability(tool_name) in allowed_capabilities
+            and not _explicit_provider_tool_deny(permissions, tool_name)
+        )
+        profiles[name] = (
+            provider
+            if enabled == provider.builtin_tools
+            else replace(
+                provider,
+                builtin_tools=enabled,
+            )
+        )
+    return replace(config, providers=profiles)
+
+
+def _explicit_provider_tool_deny(
+    permissions: PermissionManager | None,
+    tool_name: str,
+) -> bool:
+    """Exclude only an unconditional explicit deny; per-request policy stays authoritative."""
+
+    if permissions is None:
+        return False
+    decision = permissions.decide(tool_name, {}, side_effecting=False)
+    return (
+        decision.effect is PermissionEffect.DENY
+        and decision.source is PermissionDecisionSource.EXPLICIT_RULE
+        and any(
+            rule.effect is PermissionEffect.DENY
+            and rule.path_pattern is None
+            and rule.operation is None
+            and rule.matches(tool_name, {})
+            for rule in permissions.rules
+        )
+    )
 
 
 def _profile_has_search_credentials(profile: ProviderProfile) -> bool:
@@ -351,6 +415,9 @@ class CompositionBindingMixin(CompositionRootMixin):
         allowed_tool_names: Collection[str] | None = None,
         enable_background_tasks: bool | None = None,
         capabilities: SubagentCapabilitySet | None = None,
+        agent_profile: AgentProfile | None = None,
+        agent_profile_override: AgentProfileOverride | None = None,
+        agent_application_capabilities: Collection[AgentCapability] = (),
         user_interaction: UserInteractionPort | None = None,
         parent_context_relay: ParentContextRelay | None = None,
         dag_result_relay: TaskDagDependencyResultRelay | None = None,
@@ -363,6 +430,23 @@ class CompositionBindingMixin(CompositionRootMixin):
         if self._closed:
             raise RuntimeError("application composition is closed")
         selected_config = config or self.config
+        # A capability manifest is an upper bound, not a reliable role label:
+        # callers also use it to describe constrained Main bindings. Explicit
+        # subagent factories select Explorer/Worker profiles at their boundary.
+        effective_profile = agent_profile or MAIN_AGENT_PROFILE
+        if not isinstance(effective_profile, AgentProfile):
+            raise ConfigurationError("Agent profile must be canonical")
+        if effective_profile.model_policy.selection.value == "role_route":
+            raise ConfigurationError("role-specific Agent model routes are not available in V1")
+        if effective_profile.role.value == "main":
+            agent_application_capabilities = frozenset(
+                {*agent_application_capabilities, AgentCapability.EXTENSION_INVOKE}
+            )
+        selected_config = _restrict_provider_tools_for_profile(
+            selected_config,
+            effective_profile,
+            agent_profile_override,
+        )
         effective_reasoning_effort = reasoning_effort or self.settings.reasoning_effort
         if parent_context_relay is not None:
             if not isinstance(parent_context_relay, ParentContextRelay):
@@ -489,6 +573,12 @@ class CompositionBindingMixin(CompositionRootMixin):
                 ),
             ),
             interactive=approval_service is not None,
+        )
+        selected_config = _restrict_provider_tools_for_profile(
+            selected_config,
+            effective_profile,
+            agent_profile_override,
+            permissions,
         )
 
         precreated_local_process_sandbox: LocalProcessSandbox | None = None
@@ -1008,6 +1098,30 @@ class CompositionBindingMixin(CompositionRootMixin):
                 selected_config,
                 failover=self.settings.failover,
             )
+            profile_binding = bind_agent_profile(
+                profile=effective_profile,
+                provider=provider,
+                tools=tools,
+                sandbox_profile=selected_config.sandbox_profile,
+                execution_budget=selected_execution_budget,
+                reasoning_effort=effective_reasoning_effort,
+                active_project_memory=(
+                    project_memory_scope is not None and project_memory_scope.project_id is not None
+                ),
+                provider_tool_names=selected_config.provider.builtin_tools,
+                permissions=permissions,
+                verification_available=(
+                    normal_requirements_enabled and self.settings.verification_command is not None
+                ),
+                application_capabilities=agent_application_capabilities,
+                capability_ceiling_tool_names=(
+                    capabilities.allowed_tool_names if capabilities is not None else None
+                ),
+                managed_workspace=(
+                    parent_context_relay is not None or dag_result_relay is not None
+                ),
+                override=agent_profile_override,
+            )
             runtime = AgentRuntime(
                 provider=provider,
                 tools=tools,
@@ -1047,6 +1161,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                     else ExecutionBudgetSource.EXPLICIT_MAX_STEPS
                 ),
                 reasoning_effort=effective_reasoning_effort,
+                effective_agent_binding=profile_binding,
                 execution_control_mode=self.settings.execution_control_mode,
                 final_output_gate_enabled=final_output_gate_enabled,
                 normal_requirements_enabled=normal_requirements_enabled,
@@ -1098,18 +1213,33 @@ class CompositionBindingMixin(CompositionRootMixin):
                 ),
             )
             binding_capabilities = SubagentCapabilitySet.from_runtime(
-                tool_names=tools.names(),
-                provider_tool_names=selected_config.provider.builtin_tools,
-                mcp_tool_names=tuple(tool.definition.name for tool in additional_tools),
+                tool_names=profile_binding.bound_tool_names,
+                provider_tool_names=tuple(
+                    name
+                    for name in selected_config.provider.builtin_tools
+                    if name in profile_binding.bound_provider_tool_names
+                ),
+                mcp_tool_names=tuple(
+                    tool.definition.name
+                    for tool in additional_tools
+                    if tool.definition.name in profile_binding.bound_tool_names
+                ),
                 cwd=selected_config.cwd,
                 additional_workspace_roots=additional_workspace_roots,
                 sandbox_profile=selected_config.sandbox_profile,
                 enable_background_tasks=enable_background_tasks,
                 max_steps=selected_execution_budget.max_model_calls,
             )
-            if capabilities is not None and binding_capabilities != capabilities:
+            if (
+                capabilities is not None
+                and binding_capabilities != capabilities
+                and (
+                    effective_profile.role is not AgentRole.MAIN
+                    or not binding_capabilities.is_subset_of(capabilities)
+                )
+            ):
                 raise ConfigurationError(
-                    "child binding capability metadata does not match its construction"
+                    "child binding capabilities exceed their parent capability metadata"
                 )
 
             async def close_binding_resources() -> None:
@@ -1139,6 +1269,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                 workspace_root=selected_config.cwd,
                 workspace_mutation=runtime.workspace_mutation,
                 runtime_web_capabilities=web_search_inspection,
+                effective_agent_binding=profile_binding,
             )
             self._binding_scopes.add(resource_scope)
             return binding

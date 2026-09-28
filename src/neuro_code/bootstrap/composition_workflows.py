@@ -14,6 +14,7 @@ import os
 from dataclasses import replace
 from typing import cast
 
+from neuro_code.application.agents.profiles import LEADER_AGENT_PROFILE, PLANNER_AGENT_PROFILE
 from neuro_code.application.ports.agent_swarm import AgentSwarmStore
 from neuro_code.application.ports.leader import LeaderStore
 from neuro_code.application.ports.model_planning import ModelPlanningStore
@@ -41,6 +42,7 @@ from neuro_code.application.workflows.task_dag import (
 from neuro_code.application.workflows.task_dag_replan import TaskDagReplanApplicationService
 from neuro_code.application.workflows.ultracode import UltracodeDelegationApplicationService
 from neuro_code.bootstrap.composition_contracts import CompositionRootMixin
+from neuro_code.domain.agents.profile import AgentCapability
 from neuro_code.shared.errors import ConfigurationError
 
 
@@ -135,6 +137,11 @@ class CompositionWorkflowMixin(CompositionRootMixin):
                 resume_id=leader_session_id,
                 max_steps=1,
                 allowed_tool_names=(),
+                agent_profile=LEADER_AGENT_PROFILE,
+                agent_application_capabilities=(
+                    AgentCapability.SUBAGENT_SPAWN,
+                    AgentCapability.TASK_PLAN,
+                ),
                 enable_background_tasks=False,
                 final_output_gate_enabled=False,
                 normal_requirements_enabled=False,
@@ -191,6 +198,8 @@ class CompositionWorkflowMixin(CompositionRootMixin):
                 resume_id=planner_session_id,
                 max_steps=1,
                 allowed_tool_names=(),
+                agent_profile=PLANNER_AGENT_PROFILE,
+                agent_application_capabilities=(AgentCapability.TASK_PLAN,),
                 enable_background_tasks=False,
                 final_output_gate_enabled=False,
                 normal_requirements_enabled=False,
@@ -249,6 +258,8 @@ class CompositionWorkflowMixin(CompositionRootMixin):
                 resume_id=planner_session_id,
                 max_steps=1,
                 allowed_tool_names=(),
+                agent_profile=PLANNER_AGENT_PROFILE,
+                agent_application_capabilities=(AgentCapability.TASK_PLAN,),
                 enable_background_tasks=False,
                 final_output_gate_enabled=False,
                 normal_requirements_enabled=False,
