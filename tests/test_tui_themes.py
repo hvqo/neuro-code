@@ -70,6 +70,28 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             cwd=Path("/workspace"),
         )
         async with app.run_test(size=(110, 40)) as pilot:
+
+            async def wait_for_theme_focus(choice: UiTheme) -> None:
+                for _ in range(100):
+                    screen = app.screen
+                    if isinstance(screen, ThemeSettingsScreen):
+                        target = next(iter(screen.query(f"#settings-theme-{choice.value}")), None)
+                        if target is not None and target.is_mounted and app.focused is target:
+                            return
+                    await pilot.pause(0.05)
+                self.fail(f"theme choice {choice.value} was not mounted and focused")
+
+            async def wait_for_theme_applied(choice: UiTheme) -> None:
+                for _ in range(100):
+                    if (
+                        app.theme == choice.textual_name
+                        and preferences.saved_themes[-1:] == [choice]
+                        and isinstance(app.screen, SettingsScreen)
+                    ):
+                        return
+                    await pilot.pause(0.05)
+                self.fail(f"theme choice {choice.value} was not applied and persisted")
+
             app._write_entry("assistant", '**Result**\n\n```python\nreturn "ok"\n```')
             await pilot.pause()
             prompt = app.query_one("#prompt", PromptInput)
@@ -87,9 +109,14 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(await pilot.click("#settings-category-theme"))
                 await pilot.pause()
                 self.assertIsInstance(app.screen, ThemeSettingsScreen)
-                app.screen.query_one(f"#settings-theme-{choice.value}", Button).focus()
+                initial_choice = app.screen.selected
+                await wait_for_theme_focus(initial_choice)
+                target = app.screen.query_one(f"#settings-theme-{choice.value}", Button)
+                self.assertTrue(target.is_mounted)
+                target.focus()
+                await wait_for_theme_focus(choice)
                 await pilot.press("enter")
-                await pilot.pause()
+                await wait_for_theme_applied(choice)
                 self.assertIsInstance(app.screen, SettingsScreen)
                 self.assertEqual(app.theme, choice.textual_name)
                 self.assertEqual(app.screen.styles.background.a, 0.25)
