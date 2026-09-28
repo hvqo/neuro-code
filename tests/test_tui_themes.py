@@ -232,10 +232,17 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause(0.05)
                 self.fail("selected theme was not applied and persisted")
 
+            async def wait_for_settings_screen() -> None:
+                for _ in range(100):
+                    if isinstance(app.screen, SettingsScreen):
+                        return
+                    await pilot.pause(0.05)
+                self.fail("settings screen was not restored after theme selection")
+
             async def wait_for_theme_screen(
                 selected: UiTheme, *, require_focus: bool = False
             ) -> None:
-                for _ in range(40):
+                for _ in range(100):
                     screen = app.screen
                     if isinstance(screen, ThemeSettingsScreen):
                         target = next(iter(screen.query(f"#settings-theme-{selected.value}")), None)
@@ -270,6 +277,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             app.screen.query_one("#settings-theme-system", Button).focus()
             await pilot.press("enter")
             await wait_for_theme_applied(UiTheme.SYSTEM)
+            await wait_for_settings_screen()
             self.assertEqual(app.theme, UiTheme.SYSTEM.textual_name)
             self.assertEqual(preferences.saved_themes, [UiTheme.SYSTEM])
             await pilot.click("#settings-category-theme")
