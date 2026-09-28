@@ -1200,7 +1200,10 @@ DEFAULT_PROVIDER_SERVICE_CATALOG = ProviderServiceCatalog(
             model_placeholder_key="provider_settings.model.openai",
             protocol_hint_key="provider_settings.protocol.openai",
             publisher_id="openai",
-            capabilities=ModelCapabilitySet.from_supported(ModelCapability.HOSTED_WEB_SEARCH),
+            capabilities=ModelCapabilitySet.from_supported(
+                ModelCapability.FUNCTION_TOOLS,
+                ModelCapability.HOSTED_WEB_SEARCH,
+            ),
         ),
         _descriptor(
             service_id="generic-openai-compatible",
@@ -1217,6 +1220,10 @@ DEFAULT_PROVIDER_SERVICE_CATALOG = ProviderServiceCatalog(
             model_placeholder_key="provider_settings.model.compatible",
             protocol_hint_key="provider_settings.protocol.compatible",
             publisher_id="generic-openai-compatible",
+            # Selecting this preset declares conformance to Neuro Code's
+            # OpenAI-compatible client-tool contract. Unknown custom services
+            # still remain fail-closed unless they select this explicit preset.
+            capabilities=ModelCapabilitySet.from_supported(ModelCapability.FUNCTION_TOOLS),
         ),
         _descriptor(
             service_id="deepseek",
@@ -1233,6 +1240,7 @@ DEFAULT_PROVIDER_SERVICE_CATALOG = ProviderServiceCatalog(
             model_placeholder_key="provider_settings.model.deepseek",
             protocol_hint_key="provider_settings.protocol.deepseek",
             publisher_id="deepseek",
+            capabilities=ModelCapabilitySet.from_supported(ModelCapability.FUNCTION_TOOLS),
         ),
         _descriptor(
             service_id="anthropic",
@@ -1249,6 +1257,7 @@ DEFAULT_PROVIDER_SERVICE_CATALOG = ProviderServiceCatalog(
             model_placeholder_key="provider_settings.model.anthropic",
             protocol_hint_key="provider_settings.protocol.anthropic",
             publisher_id="anthropic",
+            capabilities=ModelCapabilitySet.from_supported(ModelCapability.FUNCTION_TOOLS),
             model_capabilities={
                 model: ModelCapabilitySet.from_supported(
                     ModelCapability.HOSTED_WEB_SEARCH,
@@ -1283,6 +1292,7 @@ DEFAULT_PROVIDER_SERVICE_CATALOG = ProviderServiceCatalog(
             model_placeholder_key="provider_settings.model.gemini",
             protocol_hint_key="provider_settings.protocol.gemini",
             publisher_id="google-ai-studio",
+            capabilities=ModelCapabilitySet.from_supported(ModelCapability.FUNCTION_TOOLS),
             model_capabilities_by_protocol={
                 "gemini-interactions": {
                     model: _gemini_interactions_model_capabilities(model)
@@ -1306,6 +1316,7 @@ DEFAULT_PROVIDER_SERVICE_CATALOG = ProviderServiceCatalog(
             protocol_hint_key="provider_settings.protocol.xai",
             publisher_id="xai",
             capabilities=ModelCapabilitySet.from_supported(
+                ModelCapability.FUNCTION_TOOLS,
                 ModelCapability.HOSTED_WEB_SEARCH,
                 ModelCapability.HOSTED_X_SEARCH,
                 ModelCapability.HOSTED_CODE_INTERPRETER,

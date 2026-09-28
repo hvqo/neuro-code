@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from time import monotonic
@@ -298,8 +298,10 @@ class AgentLoopRunner:
         "_final_output_gate_enabled",
         "_finalizer_factory",
         "_finalizer_max_attempts",
+        "_include_working_set_context",
         "_max_steps",
         "_microcompaction_state",
+        "_profile_trace_metadata",
         "_provider",
         "_provider_context_window",
         "_provider_max_output_tokens",
@@ -339,6 +341,8 @@ class AgentLoopRunner:
         compaction_runtime_gate: ContextCompactionRuntimeGate | None,
         provider_context_window: ProviderContextWindow | None,
         provider_max_output_tokens: int | None = None,
+        profile_trace_metadata: Mapping[str, object] | None = None,
+        include_working_set_context: bool = True,
         final_output_gate_enabled: bool = True,
         workspace_undo_sealer: WorkspaceUndoSealer | None = None,
     ) -> None:
@@ -371,6 +375,8 @@ class AgentLoopRunner:
             raise ValueError("provider_max_output_tokens must be a positive integer or None")
         if not isinstance(final_output_gate_enabled, bool):
             raise TypeError("final_output_gate_enabled must be a bool")
+        if not isinstance(include_working_set_context, bool):
+            raise TypeError("include_working_set_context must be a bool")
         self._execution_budget = execution_budget
         self._max_steps = execution_budget.max_model_calls
         self._segment_policy = ExecutionSegmentPolicy.from_budget(execution_budget)
@@ -380,6 +386,7 @@ class AgentLoopRunner:
         self._supervision_observer = supervision_observer
         self._execution_control_mode = execution_control_mode
         self._final_output_gate_enabled = final_output_gate_enabled
+        self._include_working_set_context = include_working_set_context
         self._finalizer_factory = finalizer_factory
         self._finalizer_max_attempts = finalizer_max_attempts
         self._tool_executor = tool_executor
@@ -388,6 +395,7 @@ class AgentLoopRunner:
         self._provider_context_window = provider_context_window
         self._active_provider_window = provider_context_window
         self._provider_max_output_tokens = provider_max_output_tokens
+        self._profile_trace_metadata = dict(profile_trace_metadata or {})
         self._workspace_undo_sealer = workspace_undo_sealer
         self._microcompaction_state = MicrocompactionRuntimeState()
         self._cache_continuity = CacheContinuityState()
@@ -1124,9 +1132,10 @@ class AgentLoopRunner:
                 )
                 latest_working_set_snapshot = working_set_snapshot
                 working_set_snapshot_known = True
-                working_set_message = working_set_snapshot.context_message(
-                    self._tool_context.redaction_values
-                )
+                if self._include_working_set_context:
+                    working_set_message = working_set_snapshot.context_message(
+                        self._tool_context.redaction_values
+                    )
             model_items = await run_blocking(
                 self._context_builder.build,
                 (*projected.items, *additional_items),
@@ -2390,10 +2399,10 @@ class AgentLoopRunner:
                     step=step,
                     reasoning_effort=context.reasoning_effort,
                 )
-                await emit(
-                    AgentEventKind.MODEL_REQUEST_SNAPSHOT,
-                    request_snapshot.to_event_data(),
-                )
+                request_snapshot_data = request_snapshot.to_event_data()
+                if self._profile_trace_metadata:
+                    request_snapshot_data.update(self._profile_trace_metadata)
+                await emit(AgentEventKind.MODEL_REQUEST_SNAPSHOT, request_snapshot_data)
                 await recorder.record_model_request_started(
                     request_id=request_snapshot.request_id,
                     step=step,

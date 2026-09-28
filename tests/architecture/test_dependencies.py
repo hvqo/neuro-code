@@ -342,8 +342,10 @@ _BOOTSTRAP_COMPOSITION_MIXIN_OWNERS = {
 _BOOTSTRAP_COMPOSITION_PRIVATE_HELPER_OWNERS = {
     "_automatic_search_route": "neuro_code.bootstrap.composition_bindings",
     "_available_search_provider_options": "neuro_code.bootstrap.composition_bindings",
+    "_explicit_provider_tool_deny": "neuro_code.bootstrap.composition_bindings",
     "_main_request_budget_metadata": "neuro_code.bootstrap.composition_bindings",
     "_profile_has_search_credentials": "neuro_code.bootstrap.composition_bindings",
+    "_restrict_provider_tools_for_profile": "neuro_code.bootstrap.composition_bindings",
     "_credentialed_search_route": "neuro_code.bootstrap.composition_bindings",
     "_without_main_inline_web_search": "neuro_code.bootstrap.composition_bindings",
     "_without_main_inline_web_fetch": "neuro_code.bootstrap.composition_bindings",
@@ -1459,6 +1461,7 @@ def test_canonical_ports_are_the_only_port_modules() -> None:
     canonical_modules = {
         "neuro_code.application.ports",
         "neuro_code.application.ports.approval",
+        "neuro_code.application.ports.agent_profiles",
         "neuro_code.application.ports.agent_preferences",
         "neuro_code.application.ports.agent_swarm",
         "neuro_code.application.ports.background_tasks",
@@ -1813,6 +1816,7 @@ def test_canonical_runtime_modules_are_the_only_runtime_implementations() -> Non
         "neuro_code.application.runtime.finalization",
         "neuro_code.application.runtime.final_response",
         "neuro_code.application.runtime.model_step",
+        "neuro_code.application.runtime.profile_tools",
         "neuro_code.application.runtime.process_liveness",
         "neuro_code.application.runtime.projection_journal",
         "neuro_code.application.runtime.request_diagnostics",
@@ -1833,6 +1837,10 @@ def test_canonical_runtime_modules_are_the_only_runtime_implementations() -> Non
 
     expected_classes = {
         "neuro_code.application.runtime.agent": {"AgentRuntime"},
+        "neuro_code.application.runtime.profile_tools": {
+            "ProfileBoundToolCollection",
+            "_CapabilityBlockedTool",
+        },
         "neuro_code.application.runtime.agent_loop": {
             "AgentLoopRunner",
             "AgentRunResult",

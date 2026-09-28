@@ -5,6 +5,10 @@ from collections.abc import Callable, Collection, Sequence
 from datetime import datetime
 from pathlib import Path
 
+from neuro_code.application.agents.binding import (
+    apply_reasoning_policy,
+    intersect_execution_budgets,
+)
 from neuro_code.application.checkpoints.turn_undo import TurnWorkspaceCheckpointCoordinator
 from neuro_code.application.execution_policy import ExecutionBudgetPolicy, ExecutionBudgetSource
 from neuro_code.application.memory.compaction import ProviderContextWindow
@@ -16,6 +20,7 @@ from neuro_code.application.memory.compaction_runtime import (
 )
 from neuro_code.application.memory.project_scope import ProjectMemoryScope
 from neuro_code.application.permissions.policy import PermissionManager, PermissionMode
+from neuro_code.application.ports.agent_profiles import EffectiveAgentBinding
 from neuro_code.application.ports.approval import PermissionApprover
 from neuro_code.application.ports.context_rollover import ContextRolloverController
 from neuro_code.application.ports.model import ModelProvider
@@ -35,6 +40,7 @@ from neuro_code.application.runtime.finalization import (
     AgentFinalizer,
     Finalizer,
 )
+from neuro_code.application.runtime.profile_tools import ProfileBoundToolCollection
 from neuro_code.application.runtime.supervision import (
     AgentExecutionSupervisor,
     ExecutionControlMode,
@@ -44,6 +50,7 @@ from neuro_code.application.runtime.supervision import (
 from neuro_code.application.runtime.tool_pipeline import ToolExecutor
 from neuro_code.application.runtime.verification import validate_explicit_verification_command
 from neuro_code.application.sessions.requirements import NormalTurnRequirementsPolicy
+from neuro_code.domain.agents.profile import AgentCapability
 from neuro_code.domain.conversation.context import ModelContext, estimate_context_tokens
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.messages import (
@@ -136,15 +143,48 @@ class AgentRuntime:
         parent_relay_message: Message | None = None,
         dag_result_relay_message: Message | None = None,
         workspace_undo: TurnWorkspaceCheckpointCoordinator | None = None,
+        effective_agent_binding: EffectiveAgentBinding | None = None,
     ) -> None:
+        if effective_agent_binding is not None and not isinstance(
+            effective_agent_binding,
+            EffectiveAgentBinding,
+        ):
+            raise TypeError("effective_agent_binding must be canonical or None")
+        if effective_agent_binding is not None:
+            actual_tool_names = {definition.name for definition in tools.definitions()}
+            if (
+                effective_agent_binding.provider_name != provider.provider_name
+                or effective_agent_binding.model_name != provider.model_name
+                or not set(effective_agent_binding.bound_tool_names).issubset(actual_tool_names)
+            ):
+                raise ConfigurationError("effective Agent binding does not match runtime inputs")
         if execution_budget is not None and not isinstance(execution_budget, ExecutionBudget):
             raise TypeError("execution_budget must be an ExecutionBudget or None")
         if execution_budget is None:
             execution_budget = ExecutionBudgetPolicy.from_max_steps(
                 24 if max_steps is None else max_steps
             )
-        elif max_steps is not None and max_steps != execution_budget.max_model_calls:
+        elif (
+            max_steps is not None
+            and max_steps != execution_budget.max_model_calls
+            and effective_agent_binding is None
+        ):
             raise ValueError("max_steps must match execution_budget.max_model_calls")
+        if effective_agent_binding is not None:
+            if (
+                execution_budget.max_model_calls
+                < effective_agent_binding.execution_budget.max_model_calls
+            ):
+                raise ConfigurationError("effective Agent binding widened the execution budget")
+            execution_budget = effective_agent_binding.execution_budget
+            reasoning_effort = effective_agent_binding.reasoning_effort
+            if max_steps is not None and max_steps < execution_budget.max_model_calls:
+                raise ConfigurationError("effective Agent binding exceeds the requested max_steps")
+            if effective_agent_binding.profile.system_guidance:
+                system_prompt = (
+                    f"{system_prompt.rstrip()}\n\n"
+                    f"Agent profile guidance:\n{effective_agent_binding.profile.system_guidance}"
+                )
         if not isinstance(execution_budget_source, ExecutionBudgetSource):
             raise TypeError("execution_budget_source must be an ExecutionBudgetSource")
         if not isinstance(execution_control_mode, ExecutionControlMode):
@@ -182,7 +222,17 @@ class AgentRuntime:
         ):
             raise ValueError("provider_max_output_tokens must be a positive integer or None")
         self._provider = provider
-        self._tools = tools
+        self._base_tools = tools
+        self._effective_agent_binding = effective_agent_binding
+        self._tools = (
+            ProfileBoundToolCollection(
+                tools,
+                effective_agent_binding.bound_tool_names,
+                effective_capabilities=effective_agent_binding.effective_capabilities,
+            )
+            if effective_agent_binding is not None
+            else tools
+        )
         self._workspace_change_observer = workspace_change_observer
         self._permissions = permissions
         self._tool_context = tool_context
@@ -233,8 +283,18 @@ class AgentRuntime:
             skill_provider=skill_provider,
             project_memory_provider=(
                 lambda: (
-                    self._project_memory_text(project_memory_index_provider)
-                    if project_memory_index_provider is not None
+                    (
+                        self._project_memory_text(project_memory_index_provider)
+                        if project_memory_index_provider is not None
+                        else None
+                    )
+                    if effective_agent_binding is None
+                    or (
+                        effective_agent_binding.profile.memory_policy.read_project_memory
+                        and effective_agent_binding.profile.context_policy.include_project_memory_snapshot
+                        and AgentCapability.PROJECT_MEMORY_READ
+                        in effective_agent_binding.effective_capabilities
+                    )
                     else None
                 )
             ),
@@ -277,6 +337,15 @@ class AgentRuntime:
             provider_max_output_tokens=provider_max_output_tokens,
             workspace_undo_sealer=(
                 workspace_undo.seal_turn if workspace_undo is not None else None
+            ),
+            profile_trace_metadata=(
+                dict(effective_agent_binding.to_trace_mapping())
+                if effective_agent_binding is not None
+                else None
+            ),
+            include_working_set_context=(
+                effective_agent_binding is None
+                or effective_agent_binding.profile.context_policy.include_working_set
             ),
         )
         self._apply_interaction_mode_permissions()
@@ -342,6 +411,8 @@ class AgentRuntime:
         return self._loop_runner.provider_max_output_tokens
 
     def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
+        if self._effective_agent_binding is not None:
+            effort = apply_reasoning_policy(effort, self._effective_agent_binding.profile)
         self._context_builder.set_reasoning_effort(effort)
 
     @property
@@ -425,6 +496,12 @@ class AgentRuntime:
         if not callable(replace_external):
             raise ConfigurationError("runtime tool collection cannot refresh external tools")
         replace_external(tools, previous_names)
+
+    @property
+    def effective_agent_binding(self) -> EffectiveAgentBinding | None:
+        """Return the immutable profile/capability projection, if composed."""
+
+        return self._effective_agent_binding
 
     def _apply_interaction_mode_permissions(self) -> None:
         permission_mode = {
@@ -520,6 +597,11 @@ class AgentRuntime:
             ExecutionBudget,
         ):
             raise TypeError("execution_budget_override must be an ExecutionBudget or None")
+        if execution_budget_override is not None and self._effective_agent_binding is not None:
+            execution_budget_override = intersect_execution_budgets(
+                execution_budget_override,
+                self._effective_agent_binding.execution_budget,
+            )
         effective_requirements = verification_requirements
         if (
             effective_verification_command is not None

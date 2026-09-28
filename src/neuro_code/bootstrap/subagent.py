@@ -15,6 +15,10 @@ from contextlib import suppress
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from neuro_code.application.agents.profiles import (
+    EXPLORER_AGENT_PROFILE,
+    WRITABLE_WORKER_AGENT_PROFILE,
+)
 from neuro_code.application.runtime.agent import AgentRunResult, EventSink
 from neuro_code.application.sessions.binding import ConversationBinding
 from neuro_code.application.workflows.subagent import (
@@ -180,6 +184,7 @@ class CompositionReadOnlySubagentRuntimeFactory(IsolatedSubagentRuntimeFactory):
                 resume_id=child_session_id,
                 additional_workspace_roots=capabilities.workspace_roots[1:],
                 capabilities=capabilities,
+                agent_profile=EXPLORER_AGENT_PROFILE,
                 normal_requirements_enabled=False,
             )
         except BaseException:
@@ -302,6 +307,7 @@ class CompositionWritableSubagentRuntimeFactory(WritableSubagentRuntimeFactory):
             resume_id=child_session_id,
             additional_workspace_roots=workspace_binding.additional_roots,
             capabilities=capabilities.capabilities,
+            agent_profile=WRITABLE_WORKER_AGENT_PROFILE,
             enable_background_tasks=False,
             final_output_gate_enabled=False,
             normal_requirements_enabled=False,

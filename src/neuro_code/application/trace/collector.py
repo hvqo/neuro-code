@@ -463,6 +463,7 @@ class TraceCollector:
                 metadata={
                     "message_count": _int_value(data, "message_count"),
                     "tool_count": _int_value(data, "tool_count"),
+                    **_agent_binding_metadata(data),
                 },
                 now=now,
             )
@@ -1356,6 +1357,58 @@ def _safe_metadata(data: Mapping[str, Any], *, allow: set[str]) -> dict[str, obj
                     "estimates_saturated",
                 },
             )
+    return result
+
+
+def _agent_binding_metadata(data: Mapping[str, Any]) -> dict[str, object]:
+    """Copy only bounded declarative binding labels into the trace projection."""
+
+    result: dict[str, object] = {}
+    for key in (
+        "profile_id",
+        "role",
+        "binding_reasoning_effort",
+        "model_policy",
+        "binding_fingerprint",
+    ):
+        value = data.get(key)
+        if isinstance(value, str):
+            result[key] = _safe_label(value, fallback="")
+    effective = data.get("effective_capabilities")
+    if isinstance(effective, list | tuple):
+        result["effective_capabilities"] = tuple(
+            _safe_label(value, fallback="") for value in effective[:32] if isinstance(value, str)
+        )
+    unavailable = data.get("unavailable_capabilities")
+    if isinstance(unavailable, list | tuple):
+        result["unavailable_capabilities"] = tuple(
+            {
+                "capability": _safe_label(item.get("capability"), fallback="unknown"),
+                "reason": _safe_label(item.get("reason"), fallback="unknown"),
+            }
+            for item in unavailable[:32]
+            if isinstance(item, Mapping)
+        )
+    budget = data.get("execution_budget")
+    if isinstance(budget, Mapping):
+        result["execution_budget"] = _safe_metadata(
+            budget,
+            allow={
+                "max_model_calls",
+                "max_tool_rounds",
+                "max_tool_calls",
+                "max_calls_per_tool",
+                "max_wall_seconds",
+                "max_input_tokens",
+                "max_output_tokens",
+                "max_total_tokens",
+            },
+        )
+    constraints = data.get("security_constraints")
+    if isinstance(constraints, list | tuple):
+        result["security_constraints"] = tuple(
+            _safe_label(value, fallback="") for value in constraints[:16] if isinstance(value, str)
+        )
     return result
 
 
