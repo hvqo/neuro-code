@@ -220,6 +220,17 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             cwd=Path("/workspace"),
         )
         async with app.run_test(size=(54, 24)) as pilot:
+
+            async def wait_for_theme_screen() -> None:
+                for _ in range(40):
+                    if isinstance(app.screen, ThemeSettingsScreen):
+                        return
+                    # The Windows runner can have a delayed Textual message pump
+                    # under the full suite; yield a bounded interval for the
+                    # queued screen transition instead of spinning on idle.
+                    await pilot.pause(0.05)
+                self.fail("theme settings screen did not open")
+
             prompt = app.query_one("#prompt", PromptInput)
             prompt.value = "中文草稿\nkeep this"
             prompt.cursor_location = (1, 3)
@@ -239,18 +250,14 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(prompt.value, "中文草稿\nkeep this")
             self.assertEqual(prompt.cursor_location, (1, 3))
             await pilot.click("#settings-category-theme")
-            await pilot.pause()
+            await wait_for_theme_screen()
             app.screen.query_one("#settings-theme-system", Button).focus()
             await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(app.theme, UiTheme.SYSTEM.textual_name)
             self.assertEqual(preferences.saved_themes, [UiTheme.SYSTEM])
             await pilot.click("#settings-category-theme")
-            for _ in range(20):
-                await pilot.pause()
-                if isinstance(app.screen, ThemeSettingsScreen):
-                    break
-            self.assertIsInstance(app.screen, ThemeSettingsScreen)
+            await wait_for_theme_screen()
             self.assertEqual(app.focused.id, "settings-theme-system")
 
     async def test_send_button_uses_existing_submission_and_command_pipeline(self) -> None:
