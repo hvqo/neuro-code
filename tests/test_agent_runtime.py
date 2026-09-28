@@ -50,6 +50,15 @@ from neuro_code.application.permissions.policy import (
 from neuro_code.application.ports.background_tasks import BackgroundTaskManager
 from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
 from neuro_code.application.ports.tools import Tool, ToolContext
+from neuro_code.application.ports.working_set import (
+    WORKING_SET_SECTION_ORDER,
+    ReadWorkingSetRequest,
+    UpdateWorkingSetRequest,
+    WorkingSetEntry,
+    WorkingSetSection,
+    WorkingSetSectionState,
+    WorkingSetSnapshot,
+)
 from neuro_code.application.ports.workspace_changes import (
     WorkspaceChangeCheckpoint,
     WorkspaceChangeReport,
@@ -451,6 +460,19 @@ class MetadataFixtureTool:
         del context
         self.calls.append(dict(arguments))
         return self._result
+
+
+class FixedWorkingSetFixture:
+    def __init__(self, snapshot: WorkingSetSnapshot) -> None:
+        self.snapshot = snapshot
+
+    async def read_working_set(self, request: ReadWorkingSetRequest) -> WorkingSetSnapshot:
+        if request.session_id != self.snapshot.session_id:
+            raise AssertionError("working-set fixture received the wrong session")
+        return self.snapshot
+
+    async def update_working_set(self, request: UpdateWorkingSetRequest) -> WorkingSetSnapshot:
+        raise AssertionError(f"unexpected working-set update: {request.session_id}")
 
 
 class MinimalToolCollection:
@@ -1987,6 +2009,75 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(batch_result.content.count("status: success"), len(file_names))
         self.assertIn("module_00.py", batch_result.content)
         self.assertIn("module_11.py", batch_result.content)
+
+    async def test_planless_next_steps_are_unknown_and_do_not_block_finalization(self) -> None:
+        session_id = "planless-review-session"
+        sections = tuple(
+            WorkingSetSectionState(
+                section,
+                (
+                    WorkingSetEntry(
+                        {
+                            WorkingSetSection.GOAL: "Review repository reliability.",
+                            WorkingSetSection.PROGRESS: "Read independent source evidence.",
+                            WorkingSetSection.NEXT_STEPS: "Synthesize findings if no concrete gap remains.",
+                        }[section]
+                    ),
+                )
+                if section
+                in {
+                    WorkingSetSection.GOAL,
+                    WorkingSetSection.PROGRESS,
+                    WorkingSetSection.NEXT_STEPS,
+                }
+                else (),
+            )
+            for section in WORKING_SET_SECTION_ORDER
+        )
+        snapshot = WorkingSetSnapshot(session_id, 1, sections)
+        provider = ScriptedProvider(
+            (
+                (
+                    ModelToolCall(ToolCall("working-set", "session_working_set", {})),
+                    ModelToolCall(ToolCall("source", "read_file", {})),
+                    ModelCompleted("tool_calls"),
+                ),
+                (ModelTextDelta("review synthesized"), ModelCompleted("stop")),
+            )
+        )
+        runtime = AgentRuntime(
+            provider=provider,
+            tools=MinimalToolCollection(
+                (
+                    MetadataFixtureTool("session_working_set", ToolResult("working set loaded")),
+                    MetadataFixtureTool("read_file", ToolResult("reviewed source evidence")),
+                )
+            ),
+            workspace_change_observer=EmptyWorkspaceChangeObserver(),
+            permissions=PermissionManager(),
+            tool_context=ToolContext(Path("/workspace")),
+            working_set=FixedWorkingSetFixture(snapshot),
+            execution_control_mode=ExecutionControlMode.FINALIZE_TERMINAL,
+            final_output_gate_enabled=False,
+            normal_requirements_enabled=False,
+        )
+        events: list[AgentEvent] = []
+
+        result = await runtime.run(
+            "Review this repository and synthesize the findings.",
+            session_id=session_id,
+            sink=events.append,
+        )
+
+        self.assertEqual(result.response, "review synthesized")
+        efficiency = tuple(
+            event for event in events if event.kind is AgentEventKind.RUNTIME_TRACE_EFFICIENCY
+        )
+        self.assertEqual(efficiency[0].data["reason_code"], "turn_started")
+        self.assertEqual(efficiency[1].data["reason_code"], "turn_finalized")
+        self.assertEqual(efficiency[1].data["phase"], "finalize")
+        self.assertEqual(efficiency[1].data["evidence_sufficiency"], "unknown")
+        self.assertEqual(len(efficiency), 2)
 
     async def test_replan_guidance_is_temporary_and_clears_after_new_progress(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

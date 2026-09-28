@@ -3725,8 +3725,11 @@ Provider Attempt starts are reconstructed from the measured attempt duration
 and its terminal failure/completion boundary, then recorded as child spans of
 the MODEL request. The terminal turn identity is synchronized across every
 record in the trace. The efficiency summary reports Provider, Permission Wait,
-Tool Execution, Context, and Runtime/Other separately. Runtime/Other is the
-remaining turn time after subtracting the union of those measured intervals.
+Tool Execution, Context, and Runtime/Other separately. Main Provider time and
+finalizer elapsed time are separate; the latter includes bounded finalizer
+orchestration and is not mislabeled as Provider time. Phase metrics keep main
+and finalizer request/token counts separate. Runtime/Other is the remaining
+turn time after subtracting the union of those measured intervals.
 Aggregate cache reuse is `sum(cache_read_tokens) / sum(input_tokens)`; it is
 not an unweighted average of per-request ratios.
 
@@ -3754,13 +3757,27 @@ Agent loop. It observes successful, hashed evidence outcomes and existing Plan,
 Working Set, and verification state; it never becomes a Planner or Runtime
 authority. Two consecutive new singleton repository-read/search rounds append
 one bounded batching checkpoint while the phase remains `EXPLORE`. This
-fragmentation signal is not evidence sufficiency. `ANALYZE` requires at least
-one new successful evidence result, no known unresolved work or pending
-verification, and a completed existing Plan. Only when no Plan exists may a
-complete existing Working Set prove progress: its goal and progress must be
-populated, with no unresolved-work or next-step entries. Unknown Working Set
-state fails closed. If sufficiency cannot be established, the phase remains
-`EXPLORE`.
+fragmentation signal is not evidence sufficiency. The deterministic
+sufficiency state is `KNOWN_INSUFFICIENT`, `SUFFICIENT`, or `UNKNOWN`.
+`KNOWN_INSUFFICIENT` requires an explicit blocker such as an incomplete active
+Plan, an `UNRESOLVED_WORK` entry, or pending required verification.
+`SUFFICIENT` requires successful evidence progress and either a completed Plan
+or, when no Plan exists, a complete Working Set with populated goal/progress
+and empty unresolved-work/next-step sections. Ordinary `NEXT_STEPS` text is
+advisory; an absent or unreadable Working Set yields `UNKNOWN`, not a blocker.
+
+`UNKNOWN` is neutral: it neither triggers `ANALYZE`, requires continued
+exploration, nor blocks finalization. `EXPLORE → ANALYZE` requires a positive
+`SUFFICIENT` signal from existing runtime facts; evidence counts, low-information
+patterns, and unknown state cannot substitute for readiness. A planless task
+may remain in `EXPLORE` and proceed directly to synthesis/finalization once the
+model stops requesting tools and no explicit blocker remains. After two
+singleton rounds, the controller may append one batching checkpoint. If unknown
+state continues with more singleton reads, one bounded `excessive_exploration`
+checkpoint advises the model to continue only for a concrete gap, otherwise
+synthesize; it stays in `EXPLORE`. A no-tool response may enter `FINALIZE` when
+there is no explicit unresolved requirement, no incomplete Plan, and required
+verification is satisfied or explicitly blocked.
 
 The model declares batches by returning independent tool calls in one
 response. Existing `ToolScheduler` enforces the tool's executable
@@ -3769,12 +3786,19 @@ side-effecting, and interaction-control calls sequential. The efficiency layer
 does not batch or parallelize calls itself. EXPLORE guidance asks the model to
 act on known evidence needs before broad synthesis. An ANALYZE tool request
 records a backtrack and returns evidence-only work to EXPLORE with targeted
-batching guidance; workspace mutation or verification retains the VERIFY
-boundary. FINALIZE is recorded only after a no-tool model response, no known
+batching guidance. Re-entry into ANALYZE after a backtrack requires a fresh
+positive readiness edge: if sufficiency was still positive at backtrack, a
+non-sufficient observation must occur before a later positive one can re-enter;
+UNKNOWN and ordinary evidence growth never re-enter by themselves. Workspace
+mutation or verification retains the VERIFY boundary. FINALIZE is recorded
+only after a no-tool model response, no known
 unresolved work, a completed Plan if present, and satisfied or explicitly
 blocked required verification. These gates are diagnostic and do not change
 Supervisor behavior. Guidance is bounded append-only synthetic context; it
 does not alter the stable System Prefix or user-selected reasoning effort.
-Trace reports requests, output tokens, and Provider time by request phase plus
-backtrack counters, without hidden reasoning or payloads. See
-[ADR 0180](adr/0180-reasoning-efficiency-v1.md).
+Trace reports `main_model_requests` and `finalizer_provider_requests`
+separately, with main Provider time and finalizer elapsed time reported in
+separate fields by phase and for the turn. Finalizer elapsed time includes its
+bounded orchestration around Provider calls and is not labeled as main Provider
+time. Trace also reports backtrack counters without hidden reasoning or
+payloads. See [ADR 0181](adr/0181-reasoning-efficiency-phase-gate.md).

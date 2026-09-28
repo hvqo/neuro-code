@@ -23,6 +23,7 @@ from neuro_code.domain.conversation.events import (
     ModelUsage,
 )
 from neuro_code.domain.conversation.messages import Role, SessionItem, SyntheticReason, ToolCall
+from neuro_code.domain.execution import AgentExecutionStatus
 from neuro_code.domain.tools import ToolDefinition, ToolResult
 
 REPOSITORY_REVIEW_PROMPT = "Review retry behavior for idempotency and missing regression coverage."
@@ -51,6 +52,7 @@ class RepositoryReviewBenchmarkResult:
     request_contexts: tuple[ModelContext, ...]
     durable_items: tuple[SessionItem, ...]
     elapsed_ms: float
+    execution_status: AgentExecutionStatus | None
 
 
 class _ReadFixtureTool(Tool):
@@ -206,6 +208,7 @@ async def run_repository_review_benchmark(
         request_contexts=tuple(provider.calls),
         durable_items=result.items,
         elapsed_ms=elapsed_ms,
+        execution_status=result.outcome.status if result.outcome is not None else None,
     )
 
 

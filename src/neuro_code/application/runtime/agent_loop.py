@@ -804,18 +804,18 @@ class AgentLoopRunner:
                 if latest_working_set_snapshot is not None
                 else {}
             )
-            unresolved_work = bool(
-                section_counts.get(WorkingSetSection.UNRESOLVED_WORK, 0)
-                or section_counts.get(WorkingSetSection.NEXT_STEPS, 0)
-            )
-            if self._working_set is not None and session_id is not None:
-                unresolved_work = unresolved_work or not working_set_snapshot_known
+            # NEXT_STEPS is advisory task context; only the explicit
+            # UNRESOLVED_WORK section is a known evidence blocker. An absent or
+            # unreadable snapshot makes sufficiency unknown, not insufficient.
+            unresolved_work = section_counts.get(WorkingSetSection.UNRESOLVED_WORK, 0) > 0
             working_set_complete = (
                 latest_working_set_snapshot is not None
+                and working_set_snapshot_known
                 and latest_working_set_snapshot.revision > 0
                 and section_counts.get(WorkingSetSection.GOAL, 0) > 0
                 and section_counts.get(WorkingSetSection.PROGRESS, 0) > 0
                 and not unresolved_work
+                and section_counts.get(WorkingSetSection.NEXT_STEPS, 0) == 0
             )
             verification = verification_tracker.report()
             verification_ready = verification_ready_for_finalize(verification)
@@ -837,8 +837,9 @@ class AgentLoopRunner:
                 )
                 working_set_snapshot_known = True
             except Exception:
-                # Efficiency phase decisions fail closed on stale/unknown task
-                # state. The completed tool batch remains successful.
+                # The phase is advisory: a missing snapshot cannot claim task
+                # completion, but it is not evidence that more exploration is
+                # required. Keep the completed tool batch successful.
                 latest_working_set_snapshot = None
                 working_set_snapshot_known = False
 

@@ -22,17 +22,18 @@ _SIMPLE_EVIDENCE_TOOLS = frozenset(
     {"read_file", "read_files", "grep_many", "list_tree", "glob", "git_inspect"}
 )
 _EXPLORE_BATCH_GUIDANCE = (
-    "Runtime execution phase: EXPLORE. Reconcile the remaining evidence needs with the current "
-    "Plan and Working Set. If the needed files, searches, or checks are identifiable, request "
-    "the independent tool calls together now; wait for results before dependent follow-ups. "
-    "Keep gathering evidence while planned or unresolved work remains. Do not begin broad "
-    "synthesis yet."
+    "Runtime execution phase: EXPLORE. Reconcile identifiable evidence needs with the current "
+    "Plan and Working Set. Request independent file reads, searches, or checks together; wait "
+    "for results before dependent follow-ups."
 )
 _ANALYZE_GUIDANCE = (
-    "Runtime execution phase: ANALYZE. Existing task progress and recorded evidence indicate "
-    "that exploration is substantially complete. Synthesize the evidence now. Request more "
-    "tools only for a concrete gap; when needed, state the targeted evidence needs and batch "
+    "Runtime execution phase: ANALYZE. Synthesize the evidence already available. Request more "
+    "tools only for a concrete evidence gap; when needed, state the targeted need and batch "
     "independent reads/searches while keeping dependent steps sequential."
+)
+_EXCESSIVE_EXPLORATION_GUIDANCE = (
+    "Runtime execution phase: EXPLORE. Request another tool only for a concrete unresolved "
+    "evidence gap; otherwise synthesize the evidence already collected."
 )
 _ANALYSIS_BACKTRACK_GUIDANCE = (
     "Runtime execution phase: EXPLORE after analysis requested more evidence. In this next "
@@ -53,10 +54,19 @@ class ExecutionPhase(StrEnum):
     FINALIZE = "finalize"
 
 
+class EvidenceSufficiency(StrEnum):
+    """Deterministic runtime evidence state; UNKNOWN never means blocked."""
+
+    KNOWN_INSUFFICIENT = "known_insufficient"
+    SUFFICIENT = "sufficient"
+    UNKNOWN = "unknown"
+
+
 class EfficiencyReason(StrEnum):
     TURN_STARTED = "turn_started"
     EVIDENCE_SUFFICIENT = "evidence_sufficient"
     LOW_INFORMATION_EXPLORATION = "low_information_exploration"
+    EXCESSIVE_EXPLORATION = "excessive_exploration"
     ANALYSIS_BACKTRACK = "analysis_backtrack"
     VERIFICATION_BACKTRACK = "verification_backtrack"
     WORKSPACE_CHANGED = "workspace_changed"
@@ -116,6 +126,7 @@ class ExecutionEfficiencyUpdate:
     analysis_backtrack_count: int
     explore_backtracks_before_finalize: int
     guidance: str | None
+    evidence_sufficiency: EvidenceSufficiency = EvidenceSufficiency.UNKNOWN
 
     def __post_init__(self) -> None:
         if self.previous_phase is not None and not isinstance(self.previous_phase, ExecutionPhase):
@@ -124,6 +135,8 @@ class ExecutionEfficiencyUpdate:
             self.reason, EfficiencyReason
         ):
             raise TypeError("phase and reason must be canonical efficiency values")
+        if not isinstance(self.evidence_sufficiency, EvidenceSufficiency):
+            raise TypeError("evidence_sufficiency must be canonical")
         if (
             min(
                 self.singleton_streak,
@@ -148,6 +161,7 @@ class ExecutionEfficiencyUpdate:
             "analysis_backtrack_count": self.analysis_backtrack_count,
             "explore_backtracks_before_finalize": self.explore_backtracks_before_finalize,
             "guidance_emitted": self.guidance is not None,
+            "evidence_sufficiency": self.evidence_sufficiency.value,
         }
 
 
@@ -156,7 +170,11 @@ class ExecutionEfficiencyController:
 
     __slots__ = (
         "_analysis_backtrack_count",
+        "_analysis_backtrack_neutral_seen",
+        "_analysis_backtrack_requires_readiness_edge",
         "_evidence_fingerprints",
+        "_evidence_sufficiency",
+        "_excessive_exploration_guidance_sent",
         "_explore_backtracks_before_finalize",
         "_finalized",
         "_low_information_guidance_sent",
@@ -171,9 +189,13 @@ class ExecutionEfficiencyController:
         self._singleton_streak = 0
         self._low_information_guidance_sent = False
         self._analysis_backtrack_count = 0
+        self._analysis_backtrack_requires_readiness_edge = False
+        self._analysis_backtrack_neutral_seen = False
         self._explore_backtracks_before_finalize = 0
         self._finalized = False
         self._evidence_fingerprints: set[tuple[str, str]] = set()
+        self._evidence_sufficiency = EvidenceSufficiency.UNKNOWN
+        self._excessive_exploration_guidance_sent = False
 
     @property
     def phase(self) -> ExecutionPhase:
@@ -190,6 +212,10 @@ class ExecutionEfficiencyController:
     @property
     def explore_backtracks_before_finalize(self) -> int:
         return self._explore_backtracks_before_finalize
+
+    @property
+    def evidence_sufficiency(self) -> EvidenceSufficiency:
+        return self._evidence_sufficiency
 
     def start(self) -> ExecutionEfficiencyUpdate | None:
         """Emit the initial phase fact once without changing model context."""
@@ -220,10 +246,9 @@ class ExecutionEfficiencyController:
     ) -> ExecutionEfficiencyUpdate | None:
         """Observe one completed model-request batch and existing task signals.
 
-        ``None`` means there is no structured Plan. A completed Plan or a
-        complete Working Set can establish task progress, but only when new
-        evidence exists and no known unresolved work or pending verification
-        remains.
+        ``UNKNOWN`` task completion is not treated as an unresolved blocker.
+        Explicit incomplete Plans, unresolved-work entries, and pending
+        verification remain known blockers.
         """
 
         if plan_complete is not None and not isinstance(plan_complete, bool):
@@ -243,8 +268,16 @@ class ExecutionEfficiencyController:
             raise ValueError("tool batch exceeds the efficiency observation bound")
         if not normalized:
             self._singleton_streak = 0
+            self._evidence_sufficiency = self._classify_evidence_sufficiency(
+                plan_complete=plan_complete,
+                working_set_complete=working_set_complete,
+                unresolved_work=unresolved_work,
+                verification_pending=verification_pending,
+            )
+            self._observe_analysis_reentry_state()
             if model_requested_tools and self._phase is ExecutionPhase.ANALYZE:
                 self._record_analysis_backtrack()
+                self._begin_analysis_backtrack_hysteresis()
                 return self._transition(
                     ExecutionPhase.EXPLORE,
                     EfficiencyReason.ANALYSIS_BACKTRACK,
@@ -252,6 +285,12 @@ class ExecutionEfficiencyController:
                 )
             return None
         new_evidence = self._record_evidence(normalized)
+        self._evidence_sufficiency = self._classify_evidence_sufficiency(
+            plan_complete=plan_complete,
+            working_set_complete=working_set_complete,
+            unresolved_work=unresolved_work,
+            verification_pending=verification_pending,
+        )
         if self._phase is ExecutionPhase.FINALIZE:
             return None
 
@@ -281,6 +320,7 @@ class ExecutionEfficiencyController:
 
         if self._phase is ExecutionPhase.ANALYZE:
             self._singleton_streak = 0
+            self._begin_analysis_backtrack_hysteresis()
             return self._transition(
                 ExecutionPhase.EXPLORE,
                 EfficiencyReason.ANALYSIS_BACKTRACK,
@@ -295,12 +335,24 @@ class ExecutionEfficiencyController:
                 _VERIFICATION_BACKTRACK_GUIDANCE,
             )
 
-        if self._phase is ExecutionPhase.EXPLORE and self._evidence_is_sufficient(
-            plan_complete=plan_complete,
-            working_set_complete=working_set_complete,
-            unresolved_work=unresolved_work,
-            verification_pending=verification_pending,
+        self._observe_analysis_reentry_state()
+
+        candidate = (
+            len(normalized) == 1 and self._is_simple_singleton(normalized[0]) and new_evidence
+        )
+        self._singleton_streak = self._singleton_streak + 1 if candidate else 0
+
+        if (
+            self._phase is ExecutionPhase.EXPLORE
+            and new_evidence
+            and self._evidence_sufficiency is EvidenceSufficiency.SUFFICIENT
+            and (
+                not self._analysis_backtrack_requires_readiness_edge
+                or self._analysis_backtrack_neutral_seen
+            )
         ):
+            self._analysis_backtrack_requires_readiness_edge = False
+            self._analysis_backtrack_neutral_seen = False
             self._singleton_streak = 0
             return self._transition(
                 ExecutionPhase.ANALYZE,
@@ -308,10 +360,6 @@ class ExecutionEfficiencyController:
                 _ANALYZE_GUIDANCE,
             )
 
-        candidate = (
-            len(normalized) == 1 and self._is_simple_singleton(normalized[0]) and new_evidence
-        )
-        self._singleton_streak = self._singleton_streak + 1 if candidate else 0
         if (
             self._phase is ExecutionPhase.EXPLORE
             and not self._low_information_guidance_sent
@@ -321,6 +369,21 @@ class ExecutionEfficiencyController:
             return self._checkpoint(
                 EfficiencyReason.LOW_INFORMATION_EXPLORATION,
                 _EXPLORE_BATCH_GUIDANCE,
+            )
+        if (
+            self._phase is ExecutionPhase.EXPLORE
+            and new_evidence
+            and candidate
+            and self._evidence_sufficiency is EvidenceSufficiency.UNKNOWN
+            and self._low_information_guidance_sent
+            and not self._excessive_exploration_guidance_sent
+            and self._singleton_streak > LOW_INFORMATION_SINGLETON_BATCHES
+        ):
+            self._excessive_exploration_guidance_sent = True
+            self._singleton_streak = 0
+            return self._checkpoint(
+                EfficiencyReason.EXCESSIVE_EXPLORATION,
+                _EXCESSIVE_EXPLORATION_GUIDANCE,
             )
         return None
 
@@ -376,6 +439,12 @@ class ExecutionEfficiencyController:
         if plan_complete is not None and not isinstance(plan_complete, bool):
             raise TypeError("plan_complete must be a bool or None")
         self._singleton_streak = 0
+        if plan_complete is False or unresolved_work or not verification_ready:
+            self._evidence_sufficiency = EvidenceSufficiency.KNOWN_INSUFFICIENT
+        elif plan_complete is True:
+            self._evidence_sufficiency = EvidenceSufficiency.SUFFICIENT
+        else:
+            self._evidence_sufficiency = EvidenceSufficiency.UNKNOWN
         if self._phase is ExecutionPhase.FINALIZE:
             return None
         if (
@@ -417,23 +486,21 @@ class ExecutionEfficiencyController:
             and fact.progress_kind is ProgressKind.EVIDENCE
         )
 
-    def _evidence_is_sufficient(
+    def _classify_evidence_sufficiency(
         self,
         *,
         plan_complete: bool | None,
         working_set_complete: bool,
         unresolved_work: bool,
         verification_pending: bool,
-    ) -> bool:
-        task_progress_complete = (
-            plan_complete is True if plan_complete is not None else working_set_complete
-        )
-        return (
-            self.evidence_count > 0
-            and task_progress_complete
-            and not unresolved_work
-            and not verification_pending
-        )
+    ) -> EvidenceSufficiency:
+        if plan_complete is False or unresolved_work or verification_pending:
+            return EvidenceSufficiency.KNOWN_INSUFFICIENT
+        if self.evidence_count > 0 and (
+            plan_complete is True or (plan_complete is None and working_set_complete)
+        ):
+            return EvidenceSufficiency.SUFFICIENT
+        return EvidenceSufficiency.UNKNOWN
 
     @staticmethod
     def _verification_guidance(successful: bool) -> str:
@@ -463,6 +530,7 @@ class ExecutionEfficiencyController:
             analysis_backtrack_count=self._analysis_backtrack_count,
             explore_backtracks_before_finalize=self._explore_backtracks_before_finalize,
             guidance=guidance,
+            evidence_sufficiency=self._evidence_sufficiency,
         )
 
     def _record_analysis_backtrack(self) -> None:
@@ -470,6 +538,21 @@ class ExecutionEfficiencyController:
             MAX_EFFICIENCY_BACKTRACKS,
             self._analysis_backtrack_count + 1,
         )
+
+    def _begin_analysis_backtrack_hysteresis(self) -> None:
+        """Require a fresh positive readiness edge before re-entering ANALYZE."""
+
+        self._analysis_backtrack_requires_readiness_edge = True
+        self._analysis_backtrack_neutral_seen = (
+            self._evidence_sufficiency is not EvidenceSufficiency.SUFFICIENT
+        )
+
+    def _observe_analysis_reentry_state(self) -> None:
+        if (
+            self._analysis_backtrack_requires_readiness_edge
+            and self._evidence_sufficiency is not EvidenceSufficiency.SUFFICIENT
+        ):
+            self._analysis_backtrack_neutral_seen = True
 
     def _transition(
         self,
@@ -499,6 +582,7 @@ class ExecutionEfficiencyController:
             analysis_backtrack_count=self._analysis_backtrack_count,
             explore_backtracks_before_finalize=self._explore_backtracks_before_finalize,
             guidance=guidance,
+            evidence_sufficiency=self._evidence_sufficiency,
         )
 
 
@@ -507,6 +591,7 @@ __all__ = [
     "MAX_EFFICIENCY_BACKTRACKS",
     "MAX_EFFICIENCY_EVIDENCE_FINGERPRINTS",
     "EfficiencyReason",
+    "EvidenceSufficiency",
     "ExecutionEfficiencyController",
     "ExecutionEfficiencyUpdate",
     "ExecutionPhase",

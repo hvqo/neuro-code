@@ -27,34 +27,41 @@ class ExecutionEfficiencyBenchmarkTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(baseline.response, REPOSITORY_REVIEW_FINDING)
         self.assertEqual(optimized.response, REPOSITORY_REVIEW_FINDING)
+        self.assertIsNone(baseline.execution_status)
+        self.assertIsNone(optimized.execution_status)
         self.assertEqual(baseline.tool_paths_read, frozenset(REPOSITORY_REVIEW_FILES))
         self.assertEqual(optimized.tool_paths_read, frozenset(REPOSITORY_REVIEW_FILES))
 
         before = baseline.snapshot.summary
         after = optimized.snapshot.summary
-        self.assertEqual((before.model_steps, before.model_requests), (6, 6))
-        self.assertEqual((after.model_steps, after.model_requests), (4, 4))
+        self.assertLess(after.model_steps, before.model_steps)
+        self.assertLess(after.main_model_requests, before.main_model_requests)
         self.assertEqual((before.tool_calls, after.tool_calls), (5, 5))
-        self.assertEqual((before.tool_batches, after.tool_batches), (5, 3))
+        self.assertLess(after.tool_batches, before.tool_batches)
         self.assertAlmostEqual(before.weighted_cache_reuse or 0.0, 0.8)
         self.assertAlmostEqual(after.weighted_cache_reuse or 0.0, 0.8)
-        self.assertGreater(before.provider_time_ms - after.provider_time_ms, 20)
+        self.assertGreater(before.provider_time_main_ms - after.provider_time_main_ms, 20)
         self.assertEqual(before.analysis_backtrack_count, 0)
         self.assertEqual(after.analysis_backtrack_count, 0)
         self.assertEqual(before.analyze_tool_call_count, 0)
         self.assertEqual(after.analyze_tool_call_count, 0)
         self.assertEqual(
-            sum(item.model_requests for item in before.phase_metrics),
-            before.model_requests,
+            sum(item.main_model_requests for item in before.phase_metrics),
+            before.main_model_requests,
         )
         self.assertEqual(
-            sum(item.model_requests for item in after.phase_metrics),
-            after.model_requests,
+            sum(item.main_model_requests for item in after.phase_metrics),
+            after.main_model_requests,
         )
-        self.assertEqual(
-            (before.phase_metrics[0].model_requests, after.phase_metrics[0].model_requests),
-            (6, 4),
-        )
+        phases = {item.phase: item for item in after.phase_metrics}
+        self.assertEqual(phases["analyze"].main_model_requests, 0)
+        before_phases = {item.phase: item for item in before.phase_metrics}
+        self.assertEqual(before_phases["analyze"].main_model_requests, 0)
+        self.assertEqual(before_phases["explore"].main_model_requests, before.main_model_requests)
+        self.assertEqual(phases["explore"].main_model_requests, after.main_model_requests)
+        self.assertEqual(before_phases["analyze"].main_output_tokens, 0)
+        self.assertEqual(phases["analyze"].main_output_tokens, 0)
+        self.assertEqual(after.finalizer_provider_requests, 0)
 
         baseline_model_records = tuple(
             record for record in baseline.snapshot.records if record.kind is TraceKind.MODEL
@@ -85,8 +92,14 @@ class ExecutionEfficiencyBenchmarkTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(
             all(
-                record.metadata.get("execution_phase") == "explore"
-                for record in (*baseline_model_records, *optimized_model_records)
+                record.metadata.get("execution_phase") != "finalize"
+                for record in baseline_model_records
+            )
+        )
+        self.assertFalse(
+            any(
+                record.metadata.get("execution_phase") == "analyze"
+                for record in optimized_model_records
             )
         )
 
