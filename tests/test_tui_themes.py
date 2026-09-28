@@ -132,7 +132,16 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                 await app.action_open_settings()
                 await pilot.pause()
                 await pilot.click("#settings-category-theme")
-                await pilot.pause()
+                for _ in range(100):
+                    if isinstance(app.screen, ThemeSettingsScreen):
+                        target = next(
+                            iter(app.screen.query(f"#settings-theme-{selected.value}")), None
+                        )
+                        if target is not None and target.is_mounted and app.focused is target:
+                            break
+                    await pilot.pause(0.05)
+                else:
+                    self.fail("selected theme button was not mounted and focused")
                 self.assertIsInstance(app.screen, ThemeSettingsScreen)
                 self.assertEqual(app.focused.id, f"settings-theme-{selected.value}")
                 await pilot.press("escape")
@@ -222,7 +231,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(54, 24)) as pilot:
 
             async def wait_for_theme_applied(selected: UiTheme) -> None:
-                for _ in range(40):
+                for _ in range(100):
                     if app.theme == selected.textual_name and preferences.saved_themes[-1:] == [
                         selected
                     ]:
@@ -246,7 +255,11 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     screen = app.screen
                     if isinstance(screen, ThemeSettingsScreen):
                         target = next(iter(screen.query(f"#settings-theme-{selected.value}")), None)
-                        if target is not None and (not require_focus or app.focused is target):
+                        if (
+                            target is not None
+                            and target.is_mounted
+                            and (not require_focus or app.focused is target)
+                        ):
                             return
                     # The Windows runner can have a delayed Textual message pump
                     # and screen children under the full suite; yield a bounded
@@ -258,7 +271,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             prompt.value = "中文草稿\nkeep this"
             prompt.cursor_location = (1, 3)
             await app._settings_category_selected("theme")
-            await pilot.pause()
+            await wait_for_theme_screen(UiTheme.PORCELAIN, require_focus=True)
             await pilot.press("up")
             await pilot.pause()
             self.assertEqual(app.theme, UiTheme.ONE_DARK.textual_name)
@@ -273,7 +286,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(prompt.value, "中文草稿\nkeep this")
             self.assertEqual(prompt.cursor_location, (1, 3))
             await pilot.click("#settings-category-theme")
-            await wait_for_theme_screen(UiTheme.PORCELAIN)
+            await wait_for_theme_screen(UiTheme.PORCELAIN, require_focus=True)
             app.screen.query_one("#settings-theme-system", Button).focus()
             await pilot.press("enter")
             await wait_for_theme_applied(UiTheme.SYSTEM)
