@@ -134,6 +134,7 @@ class SettingsScreen(ModalScreen[str | None]):
         self.web_capabilities = web_capabilities
         self._initial_category = initial_category
         self._group = "all"
+        self._interactive = asyncio.Event()
 
     GROUPS: ClassVar[dict[str, tuple[str, ...]]] = {
         "appearance": ("language", "theme", "input"),
@@ -415,6 +416,10 @@ class SettingsScreen(ModalScreen[str | None]):
             self.query_one(f"#settings-category-{category}", Button).focus()
         else:
             self.query_one("#settings-search", Input).focus()
+        self.call_after_refresh(self._interactive.set)
+
+    async def wait_until_interactive(self) -> None:
+        await asyncio.wait_for(self._interactive.wait(), timeout=5)
 
     def on_resize(self, event: events.Resize) -> None:
         self.set_class(event.size.width < 88, "compact")
