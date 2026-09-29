@@ -65,13 +65,13 @@ class SettingsScreen(ModalScreen[str | None]):
         padding: 1 2; border: round $border; background: $surface;
     }
     #settings-title { text-style: bold; color: $text-primary; height: 1; }
-    #settings-description, #settings-help { color: $text-muted; height: auto; }
+    #settings-description, #settings-help { color: $text-muted; text-style: $text-muted-intensity; height: auto; }
     #settings-search { width: 100%; margin: 1 0; }
     #settings-body { height: 1fr; }
     #settings-navigation { width: 24; height: 1fr; margin-right: 3; padding-right: 1; border-right: solid $border; }
     #settings-navigation Button {
         width: 100%; min-width: 0; height: 3; border: none;
-        background: $surface; color: $text-muted; content-align: left middle;
+        background: $surface; color: $text-muted; text-style: $text-muted-intensity; content-align: left middle;
     }
     #settings-navigation Button.active, #settings-navigation Button:focus {
         background: $boost; color: $text-primary; text-style: bold;
@@ -82,8 +82,8 @@ class SettingsScreen(ModalScreen[str | None]):
     .settings-entry { height: auto; padding: 1 0; border-top: solid $border; }
     .settings-entry MenuOptionButton { width: 100%; height: 2; content-align: left middle; background: transparent; }
     .settings-entry MenuOptionButton:focus { background: $surface; }
-    .settings-entry-description { color: $text-muted; height: auto; margin: 0 1; }
-    #settings-empty { color: $text-muted; margin: 1; height: auto; }
+    .settings-entry-description { color: $text-muted; text-style: $text-muted-intensity; height: auto; margin: 0 1; }
+    #settings-empty { color: $text-muted; text-style: $text-muted-intensity; margin: 1; height: auto; }
     #settings-help { margin-top: 1; }
     SettingsScreen.compact #settings-dialog { width: 100%; height: 100%; padding: 0 1; }
     SettingsScreen.compact #settings-navigation { display: none; }

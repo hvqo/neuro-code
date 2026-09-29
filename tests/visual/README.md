@@ -13,8 +13,10 @@ The snapshots expose a System theme contrast defect: surface, selection, border,
 muted text, and Composer roles collapse to the same or similar ANSI
 `bright_black`. This is the pre-redesign baseline, not visual-quality approval.
 System snapshots show Textual's deterministic ANSI rendering, not every user's
-terminal palette. V1A should first restore semantic-role contrast and improve
-System theme adaptation. V0 records this issue without changing production visuals.
+terminal palette. V0 recorded this issue without changing production visuals;
+V1A changes the color mapping and explicitly regenerates all 81 baselines.
+System role tests protect against the original color collision but cannot
+promise a WCAG ratio for an unknown terminal palette.
 
 ## Run the regression suite
 
@@ -41,6 +43,19 @@ fixture, theme, and viewport labels. To select a different output path:
 ```bash
 uv run python tests/visual/render_gallery.py --output /tmp/neuro-code-tui-visual-gallery.html
 ```
+
+For side-by-side V0 versus V1A review, read the committed V0 snapshots directly
+from the last V0 `main` commit. This does not create a worktree or modify either
+baseline:
+
+```bash
+uv run python tests/visual/render_gallery.py --before-ref fe191e4b2ddd947d90e588456f7b74fbaa95a7b0 --output /tmp/neuro-code-tui-v1a-compare.html
+```
+
+Open `/tmp/neuro-code-tui-v1a-compare.html` in a browser. Each card contains
+the same fixture, theme, and viewport before and after. For System, compare
+semantic structure in this renderer and also inspect your actual terminal;
+the browser SVG is not a simulation of your terminal's ANSI palette.
 
 ## Update snapshots
 

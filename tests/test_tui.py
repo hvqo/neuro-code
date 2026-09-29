@@ -2519,9 +2519,9 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("code", plain)
             self.assertIn("[red]literal[/red]", plain)
             self.assertNotIn("**bold**", plain)
-            # Headings are accented, strong text stays primary, inline code is
-            # the code accent.
-            self.assertIn(ACCENT_BLUE.lower(), styled["Important"].lower())
+            # Headings and strong text use the neutral reading hierarchy;
+            # inline code keeps its separate syntax accent.
+            self.assertIn(TEXT_PRIMARY.lower(), styled["Important"].lower())
             self.assertIn(TEXT_PRIMARY.lower(), styled["bold"].lower())
             self.assertIn(ACCENT_CODE.lower(), styled["code"].lower())
 

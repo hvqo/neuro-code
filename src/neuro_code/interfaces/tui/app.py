@@ -308,6 +308,7 @@ class NeuroCodeApp(
         width: auto;
         height: 1;
         color: $text-muted;
+        text-style: $text-muted-intensity;
         text-align: right;
     }
 
@@ -357,6 +358,7 @@ class NeuroCodeApp(
     .message-tool {
         margin-bottom: $space-1;
         color: $text-secondary;
+        text-style: $text-secondary-intensity;
     }
 
     .message-tool.tool-interactive:hover,
@@ -373,6 +375,7 @@ class NeuroCodeApp(
 
     .message-status {
         color: $text-secondary;
+        text-style: $text-secondary-intensity;
     }
 
     .message-recoverable {
@@ -424,6 +427,7 @@ class NeuroCodeApp(
         padding: $space-0 $space-1;
         background: $background;
         color: $text-secondary;
+        text-style: $text-secondary-intensity;
         align-vertical: middle;
         margin-top: 1;
     }
@@ -459,6 +463,7 @@ class NeuroCodeApp(
         height: 1;
         text-align: left;
         color: $composer-muted;
+        text-style: $text-muted-intensity;
         overflow: hidden hidden;
     }
 
@@ -492,7 +497,7 @@ class NeuroCodeApp(
 
     #prompt-newline {
         color: $composer-muted;
-        text-style: none;
+        text-style: $text-muted-intensity;
         margin-right: 1;
     }
 
@@ -580,6 +585,7 @@ class NeuroCodeApp(
         padding: $space-0 $space-1;
         background: $background;
         color: $text-secondary;
+        text-style: $text-secondary-intensity;
         overflow: hidden hidden;
     }
 
@@ -606,6 +612,7 @@ class NeuroCodeApp(
 
     #attached-terminal-help {
         color: $text-muted;
+        text-style: $text-muted-intensity;
     }
 
     """

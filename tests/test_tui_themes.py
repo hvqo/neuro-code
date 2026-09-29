@@ -254,9 +254,14 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(theme.background, "ansi_default")
         self.assertEqual(theme.surface, "ansi_bright_black")
-        self.assertEqual(theme.variables["border"], "ansi_bright_black")
+        self.assertEqual(theme.variables["border"], "ansi_default")
+        self.assertEqual(theme.variables["border-subtle"], "ansi_white")
         self.assertEqual(theme.variables["composer-surface"], "ansi_bright_black")
+        self.assertEqual(theme.variables["composer-border"], "ansi_default")
+        self.assertEqual(theme.variables["composer-muted"], "ansi_default")
         self.assertEqual(theme.variables["user-message-surface"], "ansi_bright_black")
+        self.assertEqual(theme.variables["user-message-border"], "ansi_default")
+        self.assertEqual(theme.variables["text-muted-intensity"], "dim")
         self.assertNotEqual(theme.surface, theme.background)
 
     async def test_preview_scroll_and_escape_restore_original_without_saving(self) -> None:

@@ -36,13 +36,15 @@ from neuro_code.shared.ui_theme import UiTheme
 
 BG_0 = "#F6F5F2"
 BG_1 = "#FFFFFF"
-BG_2 = "#ECE8F1"
-BORDER = "#D5D1CB"
+BG_2 = "#F1EFEB"
+BG_3 = "#E5E1DA"
+BORDER_SUBTLE = "#CFC9C1"
+BORDER = "#92887E"
 FG_DIM = "#827C75"
-FG_MUTED = "#746E68"
-FG_SECONDARY = "#635E59"
+FG_MUTED = "#68625C"
+FG_SECONDARY = "#58534E"
 FG_EMPHASIS = "#49443F"
-FG_BODY = "#37332F"
+FG_BODY = "#2E2B28"
 FG_PRIMARY = "#262320"
 
 # Focus stays restrained; text roles use independent, theme-aware accents.
@@ -56,8 +58,10 @@ ERROR = "#A34650"
 BACKGROUND = BG_0
 SURFACE = BG_1
 SURFACE_HOVER = BG_2
-SURFACE_SELECTED = BG_2
-BORDER_DIM = BORDER
+SURFACE_SUBTLE = BG_2
+SURFACE_SELECTED = BG_3
+BORDER_DIM = BORDER_SUBTLE
+BORDER_NORMAL = BORDER
 BORDER_FOCUS = ACCENT
 TEXT_DIM = FG_DIM
 TEXT_PLACEHOLDER = FG_SECONDARY
@@ -87,6 +91,7 @@ MONO_COLORS = (
     BACKGROUND,
     SURFACE,
     SURFACE_HOVER,
+    SURFACE_SUBTLE,
     SURFACE_SELECTED,
     BORDER_DIM,
     BORDER,
@@ -120,11 +125,14 @@ TEXTUAL_THEME = Theme(
     variables={
         "modal-overlay": "#29252E",
         "border": BORDER,
+        "border-normal": BORDER_NORMAL,
+        "border-subtle": BORDER_SUBTLE,
         "border-dim": BORDER_DIM,
         "border-focus": BORDER_FOCUS,
         "bg-0": BG_0,
         "bg-1": BG_1,
         "bg-2": BG_2,
+        "bg-3": BG_3,
         "fg-primary": FG_PRIMARY,
         "fg-secondary": FG_SECONDARY,
         "fg-muted": FG_MUTED,
@@ -136,11 +144,14 @@ TEXTUAL_THEME = Theme(
         "space-6": "6",
         "space-8": "8",
         "surface-hover": SURFACE_HOVER,
+        "surface-subtle": SURFACE_SUBTLE,
         "surface-selected": SURFACE_SELECTED,
         "text-primary": TEXT_PRIMARY,
         "text-body": TEXT_BODY,
         "text-secondary": TEXT_SECONDARY,
         "text-muted": TEXT_MUTED,
+        "text-secondary-intensity": "none",
+        "text-muted-intensity": "none",
         "text-dim": TEXT_DIM,
         "text-placeholder": TEXT_PLACEHOLDER,
         "text-disabled": TEXT_DISABLED,
@@ -160,14 +171,14 @@ TEXTUAL_THEME = Theme(
         "input-cursor-background": TEXT_PRIMARY,
         "input-cursor-foreground": BACKGROUND,
         "input-selection-background": SURFACE_SELECTED,
-        "composer-surface": "#FFFFFF",
-        "composer-border": "#9B9288",
+        "composer-surface": SURFACE,
+        "composer-border": BORDER_NORMAL,
         "composer-focus-border": ACCENT,
-        "composer-muted": FG_SECONDARY,
+        "composer-muted": TEXT_MUTED,
         "composer-selection": ACCENT,
         "composer-selection-text": BG_0,
-        "user-message-surface": "#E9E4DC",
-        "user-message-border": ACCENT,
+        "user-message-surface": SURFACE_SUBTLE,
+        "user-message-border": BORDER_NORMAL,
         "scrollbar": BORDER,
         "scrollbar-active": TEXT_SECONDARY,
         "scrollbar-background": BACKGROUND,
@@ -186,18 +197,18 @@ MARKDOWN_THEME = RichTheme(
         "markdown.block_quote": f"italic {TEXT_SECONDARY}",
         "markdown.list": TEXT_BODY,
         "markdown.item": TEXT_BODY,
-        "markdown.item.bullet": f"bold {ACCENT_WARNING}",
-        "markdown.item.number": f"bold {ACCENT_NUMBER}",
-        "markdown.hr": BORDER,
-        "markdown.h1": f"bold {ACCENT_BLUE}",
-        "markdown.h2": f"bold {ACCENT_BLUE}",
-        "markdown.h3": f"bold {ACCENT_CYAN}",
+        "markdown.item.bullet": f"bold {TEXT_SECONDARY}",
+        "markdown.item.number": f"bold {TEXT_SECONDARY}",
+        "markdown.hr": BORDER_SUBTLE,
+        "markdown.h1": f"bold {TEXT_PRIMARY}",
+        "markdown.h2": f"bold {TEXT_PRIMARY}",
+        "markdown.h3": f"bold {TEXT_EMPHASIS}",
         "markdown.h4": f"bold {TEXT_BODY}",
         "markdown.h5": f"bold {TEXT_EMPHASIS}",
         "markdown.h6": f"bold {TEXT_SECONDARY}",
-        "markdown.link": f"underline {ACCENT_LINK}",
-        "markdown.link_url": f"underline {ACCENT_LINK}",
-        "markdown.table.border": BORDER,
+        "markdown.link": f"underline {ACCENT}",
+        "markdown.link_url": f"underline {ACCENT}",
+        "markdown.table.border": BORDER_SUBTLE,
         "markdown.table.header": f"bold {TEXT_EMPHASIS}",
         "markdown.kbd": f"bold {TEXT_EMPHASIS} on {SURFACE_SELECTED}",
     }
@@ -240,19 +251,31 @@ MONO_SYNTAX_THEME = PygmentsSyntaxTheme(_MonochromePygmentsStyle)
 _DARK_COLORS = {
     BG_0: "#171717",
     BG_1: "#202020",
-    BG_2: "#2D2C2A",
-    BORDER: "#41403D",
+    BG_2: "#292824",
+    BG_3: "#353330",
+    BORDER_SUBTLE: "#4B4946",
+    BORDER: "#77736D",
     FG_DIM: "#96938D",
-    FG_MUTED: "#ABA79F",
-    FG_SECONDARY: "#C2BEB6",
-    FG_EMPHASIS: "#D9D5CD",
-    FG_BODY: "#E8E5DF",
-    FG_PRIMARY: "#F5F3EE",
+    FG_MUTED: "#A39E95",
+    FG_SECONDARY: "#C8C3B9",
+    FG_EMPHASIS: "#DDD8D0",
+    FG_BODY: "#ECE9E3",
+    FG_PRIMARY: "#F3F0EA",
     ACCENT: "#CBB898",
     SUCCESS: "#ADC0A4",
     WARNING: "#D1B37F",
     ERROR: "#D9A29C",
 }
+
+
+def _blend_hex(start: str, end: str) -> str:
+    """Create a quiet intermediate role for existing RGB theme variants."""
+
+    channels = (
+        (int(start[index : index + 2], 16) + int(end[index : index + 2], 16)) // 2
+        for index in (1, 3, 5)
+    )
+    return "#" + "".join(f"{channel:02X}" for channel in channels)
 
 
 def _palette(
@@ -274,6 +297,8 @@ def _palette(
                 BG_0,
                 BG_1,
                 BG_2,
+                BG_3,
+                BORDER_SUBTLE,
                 BORDER,
                 FG_DIM,
                 FG_MUTED,
@@ -289,7 +314,9 @@ def _palette(
             (
                 background,
                 surface,
+                _blend_hex(surface, selected),
                 selected,
+                _blend_hex(surface, border),
                 border,
                 muted,
                 muted,
@@ -312,22 +339,27 @@ def _palette(
 _PALETTES = {
     UiTheme.PORCELAIN: {},
     UiTheme.GRAPHITE: _DARK_COLORS,
-    # System delegates the canvas and text to the terminal's default colors and
-    # lifts every panel, input, and border onto ANSI bright black so surfaces
-    # stay distinguishable from the canvas in both dark and light terminals.
-    UiTheme.SYSTEM: _palette(
-        "default",
-        "bright_black",
-        "bright_black",
-        "bright_black",
-        "bright_black",
-        "default",
-        "default",
-        "blue",
-        "green",
-        "yellow",
-        "red",
-    ),
+    # A single ANSI fill separates meaningful surfaces from the terminal canvas.
+    # Foreground, borders, and muted text never use that fill color; selection
+    # returns to the terminal default and focused rows use reverse video.
+    UiTheme.SYSTEM: {
+        BG_0: "default",
+        BG_1: "bright_black",
+        BG_2: "bright_black",
+        BG_3: "default",
+        BORDER_SUBTLE: "white",
+        BORDER: "default",
+        FG_DIM: "default",
+        FG_MUTED: "default",
+        FG_SECONDARY: "default",
+        FG_EMPHASIS: "default",
+        FG_BODY: "default",
+        FG_PRIMARY: "default",
+        ACCENT: "bright_blue",
+        SUCCESS: "green",
+        WARNING: "yellow",
+        ERROR: "red",
+    },
     UiTheme.TOKYONIGHT: _palette(
         "#1A1B26",
         "#16161E",
@@ -488,7 +520,6 @@ for _choice, _accents in _TEXT_ACCENTS.items():
 # independent of code blocks, menus, and other surfaces.
 # Order: composer fill, user-message fill, unfocused composer edge.
 _CONVERSATION_SURFACES: dict[UiTheme, tuple[str, str, str]] = {
-    UiTheme.GRAPHITE: ("#30302E", "#272724", "#8F8C84"),
     UiTheme.TOKYONIGHT: ("#303449", "#25293B", "#737AA2"),
     UiTheme.EVERFOREST: ("#414E50", "#374447", "#9DA9A0"),
     UiTheme.AYU: ("#242C39", "#1D2430", "#8A9199"),
@@ -505,6 +536,15 @@ _CONVERSATION_SURFACES: dict[UiTheme, tuple[str, str, str]] = {
 def _translate(style: str, colors: Mapping[str, str]) -> str:
     # One pass avoids translating a target that is also a source color.
     return re.sub(r"#[0-9a-fA-F]{6}\b", lambda m: colors.get(m[0].upper(), m[0]), style)
+
+
+def _semantic_rich_style(style: str, colors: Mapping[str, str], choice: UiTheme) -> str:
+    translated = _translate(style, colors)
+    if choice is UiTheme.SYSTEM and any(
+        token in style.upper() for token in (FG_DIM, FG_MUTED, FG_SECONDARY)
+    ):
+        return f"dim {translated}"
+    return translated
 
 
 def _textual_theme(choice: UiTheme) -> Theme:
@@ -524,16 +564,31 @@ def _textual_theme(choice: UiTheme) -> Theme:
     if choice is UiTheme.SYSTEM:
         variables["input-selection-background"] = "ansi_blue"
         variables["button-focus-text-style"] = "bold reverse"
+        variables["text-secondary-intensity"] = "dim"
+        variables["text-muted-intensity"] = "dim"
         variables.update(
             {
                 "composer-surface": "ansi_bright_black",
-                "composer-border": "ansi_bright_black",
-                "composer-focus-border": "ansi_bright_cyan",
-                "composer-muted": "ansi_bright_black",
+                "composer-border": "ansi_default",
+                "composer-focus-border": "ansi_bright_blue",
+                "composer-muted": "ansi_default",
                 "composer-selection": "ansi_blue",
                 "composer-selection-text": "ansi_bright_white",
                 "user-message-surface": "ansi_bright_black",
-                "user-message-border": "ansi_bright_cyan",
+                "user-message-border": "ansi_default",
+            }
+        )
+    elif choice is UiTheme.GRAPHITE:
+        variables.update(
+            {
+                "composer-surface": css(SURFACE_SUBTLE),
+                "composer-border": css(BORDER_NORMAL),
+                "composer-focus-border": css(BORDER_FOCUS),
+                "composer-muted": css(TEXT_MUTED),
+                "composer-selection": css(ACCENT),
+                "composer-selection-text": css(BG_0),
+                "user-message-surface": css(SURFACE_SUBTLE),
+                "user-message-border": css(BORDER_NORMAL),
             }
         )
     else:
@@ -587,7 +642,10 @@ _MARKDOWN_THEMES = {
     choice: MARKDOWN_THEME
     if choice is UiTheme.PORCELAIN
     else RichTheme(
-        {name: _translate(str(style), colors) for name, style in MARKDOWN_THEME.styles.items()}
+        {
+            name: _semantic_rich_style(str(style), colors, choice)
+            for name, style in MARKDOWN_THEME.styles.items()
+        }
     )
     for choice, colors in _PALETTES.items()
 }
@@ -613,7 +671,8 @@ class _ThemeOwner(Protocol):
 
 def theme_style(owner: _ThemeOwner, style: str) -> str:
     """Resolve colors without modifying model text or other app instances."""
-    return _translate(style, _PALETTES[UiTheme.from_textual_name(owner.app.theme)])
+    choice = UiTheme.from_textual_name(owner.app.theme)
+    return _semantic_rich_style(style, _PALETTES[choice], choice)
 
 
 def markdown_theme(owner: _ThemeOwner) -> RichTheme:
@@ -648,13 +707,13 @@ STATUS_LABEL_STYLE = f"bold {TEXT_SECONDARY}"
 STATUS_TEXT_STYLE = TEXT_SECONDARY
 RECOVERABLE_LABEL_STYLE = f"bold {ACCENT_WARNING}"
 RECOVERABLE_TEXT_STYLE = TEXT_EMPHASIS
-TOOL_LABEL_STYLE = f"bold {ACCENT_CYAN}"
-TOOL_TEXT_STYLE = TEXT_BODY
-TOOL_TITLE_STYLE = ACCENT_BLUE
-TOOL_ACTIVE_STYLE = ACCENT_CYAN
+TOOL_LABEL_STYLE = f"bold {TEXT_SECONDARY}"
+TOOL_TEXT_STYLE = TEXT_SECONDARY
+TOOL_TITLE_STYLE = TEXT_SECONDARY
+TOOL_ACTIVE_STYLE = ACCENT
 TOOL_COMPLETE_STYLE = f"bold {ACCENT_SUCCESS}"
 TOOL_META_STYLE = TEXT_SECONDARY
-TOOL_DETAIL_STYLE = TEXT_BODY
+TOOL_DETAIL_STYLE = TEXT_SECONDARY
 TOOL_GUIDE_STYLE = TEXT_MUTED
 ERROR_LABEL_STYLE = f"bold {ACCENT_ERROR}"
 ERROR_TEXT_STYLE = f"bold {ACCENT_ERROR}"
@@ -710,9 +769,12 @@ __all__ = [
     "BG_0",
     "BG_1",
     "BG_2",
+    "BG_3",
     "BORDER",
     "BORDER_DIM",
     "BORDER_FOCUS",
+    "BORDER_NORMAL",
+    "BORDER_SUBTLE",
     "BRAND_TEXT",
     "CONNECTION_STATUS_STYLES",
     "DIFF_ADDITION_STYLE",
@@ -743,6 +805,7 @@ __all__ = [
     "SURFACE",
     "SURFACE_HOVER",
     "SURFACE_SELECTED",
+    "SURFACE_SUBTLE",
     "SYNTAX_OPERATOR",
     "SYSTEM_LABEL_STYLE",
     "SYSTEM_TEXT_STYLE",
