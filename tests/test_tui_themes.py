@@ -262,8 +262,10 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             viewport = app.screen.query_one("#settings-themes")
             self.assertTrue(viewport.region.contains_region(focused.region))
             self.assertEqual(preferences.saved_themes, [])
+            theme_screen = app.screen
             await pilot.press("escape")
             await self.wait_for_settings_screen(app)
+            self.assertFalse(theme_screen.is_attached)
             self.assertEqual(app.theme, UiTheme.PORCELAIN.textual_name)
             self.assertEqual(preferences.saved_themes, [])
             self.assertEqual(prompt.value, "中文草稿\nkeep this")

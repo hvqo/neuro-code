@@ -290,7 +290,10 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
         if selected is None:
             if original is not None:
                 self._apply_ui_theme(original)
-            await self.action_open_settings()
+            # Screen result callbacks run before Textual finishes removing the
+            # dismissed screen. Reopen settings on the next app pump turn so the
+            # old theme screen is gone before the replacement is mounted.
+            self.call_next(self.action_open_settings)
             return
         self._apply_ui_theme(selected)
         if self._ui_preferences is not None:
@@ -300,7 +303,7 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                 self._write_ui_entry(
                     "error", "settings.theme.save_failed", error=f"{type(error).__name__}: {error}"
                 )
-        await self.action_open_settings()
+        self.call_next(self.action_open_settings)
 
     async def _provider_settings_selected(
         self,
