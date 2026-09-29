@@ -418,6 +418,13 @@ class SettingsScreen(ModalScreen[str | None]):
             self.query_one("#settings-search", Input).focus()
         self.call_after_refresh(self._interactive.set)
 
+    def on_screen_suspend(self) -> None:
+        self._interactive.clear()
+
+    def on_screen_resume(self) -> None:
+        self._interactive.clear()
+        self.call_after_refresh(self._interactive.set)
+
     async def wait_until_interactive(self) -> None:
         await asyncio.wait_for(self._interactive.wait(), timeout=5)
 
