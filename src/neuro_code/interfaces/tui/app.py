@@ -123,12 +123,14 @@ from neuro_code.interfaces.tui.state import (
     TranscriptEntry,
     _ActiveToolInspector,
 )
+from neuro_code.interfaces.tui.terminal_palette import TerminalPalette
 from neuro_code.interfaces.tui.text import ui_text
 from neuro_code.interfaces.tui.theme import (
     BRAND_TEXT,
     TEXT_MUTED,
     TEXTUAL_THEMES,
     markdown_theme,
+    textual_theme_for,
     theme_style,
 )
 from neuro_code.interfaces.tui.widgets import (
@@ -204,6 +206,7 @@ class NeuroCodeApp(
 
     Button:hover {
         background: $surface-hover;
+        text-style: $button-focus-text-style;
     }
 
 
@@ -237,6 +240,7 @@ class NeuroCodeApp(
     MenuOptionButton:focus {
         background: $surface-selected;
         border: none;
+        text-style: $button-focus-text-style;
     }
 
     Button:disabled {
@@ -249,7 +253,7 @@ class NeuroCodeApp(
         background: $surface-selected;
         color: $text-primary;
         border: none;
-        text-style: none;
+        text-style: $button-focus-text-style;
     }
 
     Input {
@@ -308,6 +312,7 @@ class NeuroCodeApp(
         width: auto;
         height: 1;
         color: $text-muted;
+        text-style: $text-muted-intensity;
         text-align: right;
     }
 
@@ -357,6 +362,7 @@ class NeuroCodeApp(
     .message-tool {
         margin-bottom: $space-1;
         color: $text-secondary;
+        text-style: $text-secondary-intensity;
     }
 
     .message-tool.tool-interactive:hover,
@@ -373,6 +379,7 @@ class NeuroCodeApp(
 
     .message-status {
         color: $text-secondary;
+        text-style: $text-secondary-intensity;
     }
 
     .message-recoverable {
@@ -424,6 +431,7 @@ class NeuroCodeApp(
         padding: $space-0 $space-1;
         background: $background;
         color: $text-secondary;
+        text-style: $text-secondary-intensity;
         align-vertical: middle;
         margin-top: 1;
     }
@@ -459,6 +467,7 @@ class NeuroCodeApp(
         height: 1;
         text-align: left;
         color: $composer-muted;
+        text-style: $text-muted-intensity;
         overflow: hidden hidden;
     }
 
@@ -492,7 +501,7 @@ class NeuroCodeApp(
 
     #prompt-newline {
         color: $composer-muted;
-        text-style: none;
+        text-style: $text-muted-intensity;
         margin-right: 1;
     }
 
@@ -580,6 +589,7 @@ class NeuroCodeApp(
         padding: $space-0 $space-1;
         background: $background;
         color: $text-secondary;
+        text-style: $text-secondary-intensity;
         overflow: hidden hidden;
     }
 
@@ -606,6 +616,7 @@ class NeuroCodeApp(
 
     #attached-terminal-help {
         color: $text-muted;
+        text-style: $text-muted-intensity;
     }
 
     """
@@ -678,6 +689,7 @@ class NeuroCodeApp(
         model_name: str,
         cwd: Path,
         reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH,
+        terminal_palette: TerminalPalette | None = None,
         interaction_mode: InteractionMode = InteractionMode.NORMAL,
         context_window_tokens: int | None = None,
         background_task_wake_policy: BackgroundTaskWakePolicy | None = None,
@@ -692,8 +704,13 @@ class NeuroCodeApp(
         if context_window_tokens is not None and context_window_tokens <= 0:
             raise ValueError("context window tokens must be positive")
         super().__init__()
-        for palette in TEXTUAL_THEMES.values():
-            self.register_theme(palette)
+        self.terminal_palette = terminal_palette or TerminalPalette()
+        for choice, palette in TEXTUAL_THEMES.items():
+            self.register_theme(
+                textual_theme_for(UiTheme.SYSTEM, self.terminal_palette)
+                if choice is UiTheme.SYSTEM
+                else palette
+            )
         self.theme = ui_theme.textual_name
         self._runner = runner
         self._trace_collector = trace_collector or TraceCollector()
@@ -1005,6 +1022,11 @@ class NeuroCodeApp(
                 event.size.width < 80 or event.size.height < 28,
                 "compact-chrome",
             )
+
+    def watch_theme(self, theme_name: str) -> None:
+        """Keep the System-only border treatment scoped to that palette."""
+
+        self.set_class(UiTheme.from_textual_name(theme_name) is UiTheme.SYSTEM, "system-theme")
 
     def on_mount(self) -> None:
         self.console.push_theme(markdown_theme(self))

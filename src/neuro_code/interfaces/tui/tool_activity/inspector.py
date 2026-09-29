@@ -77,12 +77,13 @@ class ToolInspectorScreen(ModalScreen[None]):
         background: $surface-hover;
         color: $text-primary;
         border: none;
+        text-style: $button-focus-text-style;
     }
 
     #tool-inspector-tabs Button.active {
         background: $surface-selected;
         color: $text-primary;
-        text-style: bold;
+        text-style: $selected-button-text-style;
         border-bottom: solid $accent;
     }
 

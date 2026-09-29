@@ -192,6 +192,7 @@ class BootstrapCliServices:
             from neuro_code.interfaces.tui.interaction import TuiUserInteraction
             from neuro_code.interfaces.tui.screens.provider import ProviderSetupApp
             from neuro_code.interfaces.tui.state import TUI_RELOAD_RUNTIME_CONFIGURATION
+            from neuro_code.interfaces.tui.terminal_palette import probe_terminal_palette
         except ModuleNotFoundError as error:
             if error.name in {"rich", "textual"}:
                 raise ConfigurationError(
@@ -493,6 +494,7 @@ class BootstrapCliServices:
                 ) -> SubagentCapabilitySet:
                     return controller_.capabilities
 
+                terminal_palette = probe_terminal_palette()
                 app = NeuroCodeApp(
                     controller,
                     turn_service=turn_service,
@@ -522,6 +524,7 @@ class BootstrapCliServices:
                     managed_provider_settings=managed_provider_settings,
                     language=language,
                     ui_theme=await ui_preferences.load_theme(),
+                    terminal_palette=terminal_palette,
                     initial_items=controller.items,
                     provider_name=controller.provider_name,
                     model_name=controller.model_name,
