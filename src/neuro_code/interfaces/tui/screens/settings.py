@@ -5,6 +5,7 @@ TUI 用户偏好设置屏幕.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Callable
 from typing import ClassVar
@@ -618,6 +619,10 @@ class ThemeSettingsScreen(ModalScreen[UiTheme | None]):
 
     选择浅色或深色主题,并独立标记当前选项。"""
 
+    # The default "*" selector may focus the enclosing VerticalScroll during
+    # screen resume and race with the controller's selected-button focus.
+    AUTO_FOCUS: ClassVar[str | None] = ""
+
     CSS = """
     ThemeSettingsScreen {
         align: center middle;
@@ -682,6 +687,7 @@ class ThemeSettingsScreen(ModalScreen[UiTheme | None]):
         self.selected = selected
         self.language = language
         self.preview = preview
+        self._selected_theme_focused = asyncio.Event()
 
     def compose(self) -> ComposeResult:
         yield Vertical(
@@ -720,12 +726,17 @@ class ThemeSettingsScreen(ModalScreen[UiTheme | None]):
     def focus_selected_theme(self) -> None:
         self.query_one(f"#settings-theme-{self.selected.value}", Button).focus()
 
+    async def wait_until_selected_theme_focused(self) -> None:
+        await asyncio.wait_for(self._selected_theme_focused.wait(), timeout=5)
+
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        if self.preview is not None:
-            for choice in UiTheme:
-                if event.widget.id == f"settings-theme-{choice.value}":
+        for choice in UiTheme:
+            if event.widget.id == f"settings-theme-{choice.value}":
+                if self.preview is not None:
                     self.preview(choice)
-                    break
+                if choice is self.selected:
+                    self._selected_theme_focused.set()
+                break
 
     def on_key(self, event: events.Key) -> None:
         if event.key in {"up", "down"}:

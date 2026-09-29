@@ -73,8 +73,9 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
         # the detached prompt for its screen.
         app.on_text_area_changed(TextArea.Changed(PromptInput()))
 
-    def assert_theme_choice_focused(self, app: NeuroCodeApp, choice: UiTheme) -> Button:
+    async def assert_theme_choice_focused(self, app: NeuroCodeApp, choice: UiTheme) -> Button:
         self.assertIsInstance(app.screen, ThemeSettingsScreen)
+        await app.screen.wait_until_selected_theme_focused()
         target = app.screen.query_one(f"#settings-theme-{choice.value}", Button)
         self.assertTrue(target.is_mounted)
         self.assertIs(app.focused, target)
@@ -106,12 +107,12 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(await pilot.click("#settings-category-theme"))
                 self.assertIsInstance(app.screen, ThemeSettingsScreen)
                 initial_choice = app.screen.selected
-                self.assert_theme_choice_focused(app, initial_choice)
+                await self.assert_theme_choice_focused(app, initial_choice)
                 target = app.screen.query_one(f"#settings-theme-{choice.value}", Button)
                 self.assertTrue(target.is_mounted)
                 target.focus()
                 await pilot.pause()
-                self.assert_theme_choice_focused(app, choice)
+                await self.assert_theme_choice_focused(app, choice)
                 await pilot.press("enter")
                 await pilot.pause()
                 self.assertIsInstance(app.screen, SettingsScreen)
@@ -155,7 +156,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.theme, selected.textual_name)
                 await app.action_open_settings()
                 await pilot.click("#settings-category-theme")
-                self.assert_theme_choice_focused(app, selected)
+                await self.assert_theme_choice_focused(app, selected)
                 self.assertEqual(app.focused.id, f"settings-theme-{selected.value}")
                 await pilot.press("escape")
                 self.assertIsInstance(app.screen, SettingsScreen)
@@ -247,7 +248,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             await app.action_open_settings()
             self.assertIsInstance(app.screen, SettingsScreen)
             self.assertTrue(await pilot.click("#settings-category-theme"))
-            self.assert_theme_choice_focused(app, UiTheme.PORCELAIN)
+            await self.assert_theme_choice_focused(app, UiTheme.PORCELAIN)
             await pilot.press("up")
             self.assertEqual(app.theme, UiTheme.ONE_DARK.textual_name)
             focused = app.screen.query_one("#settings-theme-one-dark", Button)
@@ -261,7 +262,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(prompt.value, "中文草稿\nkeep this")
             self.assertEqual(prompt.cursor_location, (1, 3))
             self.assertTrue(await pilot.click("#settings-category-theme"))
-            self.assert_theme_choice_focused(app, UiTheme.PORCELAIN)
+            await self.assert_theme_choice_focused(app, UiTheme.PORCELAIN)
             app.screen.query_one("#settings-theme-system", Button).focus()
             await pilot.pause()
             await pilot.press("enter")
@@ -270,7 +271,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.theme, UiTheme.SYSTEM.textual_name)
             self.assertEqual(preferences.saved_themes, [UiTheme.SYSTEM])
             self.assertTrue(await pilot.click("#settings-category-theme"))
-            self.assert_theme_choice_focused(app, UiTheme.SYSTEM)
+            await self.assert_theme_choice_focused(app, UiTheme.SYSTEM)
             self.assertEqual(app.focused.id, "settings-theme-system")
 
     async def test_send_button_uses_existing_submission_and_command_pipeline(self) -> None:
