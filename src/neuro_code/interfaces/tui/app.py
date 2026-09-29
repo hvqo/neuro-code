@@ -204,6 +204,7 @@ class NeuroCodeApp(
 
     Button:hover {
         background: $surface-hover;
+        text-style: $button-focus-text-style;
     }
 
 
@@ -237,6 +238,7 @@ class NeuroCodeApp(
     MenuOptionButton:focus {
         background: $surface-selected;
         border: none;
+        text-style: $button-focus-text-style;
     }
 
     Button:disabled {
@@ -249,7 +251,7 @@ class NeuroCodeApp(
         background: $surface-selected;
         color: $text-primary;
         border: none;
-        text-style: none;
+        text-style: $button-focus-text-style;
     }
 
     Input {

@@ -161,7 +161,10 @@ TEXTUAL_THEME = Theme(
         "block-cursor-foreground": BACKGROUND,
         "block-hover-background": SURFACE_HOVER,
         "button-color-foreground": BACKGROUND,
-        "button-focus-text-style": "bold",
+        # Keep the current neutral focus treatment for graphical themes. System
+        # overrides this with terminal-native reverse video.
+        "button-focus-text-style": "none",
+        "selected-button-text-style": "bold",
         "footer-background": BACKGROUND,
         "footer-description-background": BACKGROUND,
         "footer-description-foreground": TEXT_MUTED,
@@ -192,7 +195,9 @@ MARKDOWN_THEME = RichTheme(
         "markdown.text": TEXT_BODY,
         "markdown.em": f"italic {TEXT_EMPHASIS}",
         "markdown.strong": f"bold {TEXT_PRIMARY}",
-        "markdown.code": f"{ACCENT_CODE} on {SURFACE}",
+        # Inline code is part of a prose line, not a panel or chip. Keep the
+        # accent on the foreground only; fenced code retains its own surface.
+        "markdown.code": ACCENT_CODE,
         "markdown.code_block": f"{TEXT_BODY} on {SURFACE}",
         "markdown.block_quote": f"italic {TEXT_SECONDARY}",
         "markdown.list": TEXT_BODY,
@@ -339,13 +344,13 @@ def _palette(
 _PALETTES = {
     UiTheme.PORCELAIN: {},
     UiTheme.GRAPHITE: _DARK_COLORS,
-    # A single ANSI fill separates meaningful surfaces from the terminal canvas.
-    # Foreground, borders, and muted text never use that fill color; selection
-    # returns to the terminal default and focused rows use reverse video.
+    # System is terminal-native: broad surfaces share the terminal default
+    # background. Borders, dim text, ANSI state accents, and selection semantics
+    # provide hierarchy without assuming any particular ANSI palette luminance.
     UiTheme.SYSTEM: {
         BG_0: "default",
-        BG_1: "bright_black",
-        BG_2: "bright_black",
+        BG_1: "default",
+        BG_2: "default",
         BG_3: "default",
         BORDER_SUBTLE: "white",
         BORDER: "default",
@@ -568,13 +573,14 @@ def _textual_theme(choice: UiTheme) -> Theme:
         variables["text-muted-intensity"] = "dim"
         variables.update(
             {
-                "composer-surface": "ansi_bright_black",
+                "composer-surface": "ansi_default",
                 "composer-border": "ansi_default",
                 "composer-focus-border": "ansi_bright_blue",
                 "composer-muted": "ansi_default",
                 "composer-selection": "ansi_blue",
                 "composer-selection-text": "ansi_bright_white",
-                "user-message-surface": "ansi_bright_black",
+                "selected-button-text-style": "bold reverse",
+                "user-message-surface": "ansi_default",
                 "user-message-border": "ansi_default",
             }
         )

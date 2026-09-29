@@ -2524,6 +2524,8 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(TEXT_PRIMARY.lower(), styled["Important"].lower())
             self.assertIn(TEXT_PRIMARY.lower(), styled["bold"].lower())
             self.assertIn(ACCENT_CODE.lower(), styled["code"].lower())
+            code_segment = next(segment for segment in segments if segment.text.strip() == "code")
+            self.assertIsNone(code_segment.style.bgcolor)
 
     async def test_assistant_search_sources_keep_full_urls_visible(self) -> None:
         app = NeuroCodeApp(

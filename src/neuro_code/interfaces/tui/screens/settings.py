@@ -74,7 +74,7 @@ class SettingsScreen(ModalScreen[str | None]):
         background: $surface; color: $text-muted; text-style: $text-muted-intensity; content-align: left middle;
     }
     #settings-navigation Button.active, #settings-navigation Button:focus {
-        background: $boost; color: $text-primary; text-style: bold;
+        background: $boost; color: $text-primary; text-style: $selected-button-text-style;
     }
     #settings-categories { width: 1fr; height: 1fr; }
     .settings-group { height: auto; margin-bottom: 2; padding: 1 2; background: $boost 35%; }

@@ -15,8 +15,30 @@ muted text, and Composer roles collapse to the same or similar ANSI
 System snapshots show Textual's deterministic ANSI rendering, not every user's
 terminal palette. V0 recorded this issue without changing production visuals;
 V1A changes the color mapping and explicitly regenerates all 81 baselines.
-System role tests protect against the original color collision but cannot
-promise a WCAG ratio for an unknown terminal palette.
+System role tests protect against broad fills that assume an ANSI color has a
+particular brightness, but cannot promise a WCAG ratio for an unknown terminal
+palette.
+
+## Real-terminal manual check
+
+The SVG snapshots are deterministic Textual ANSI output. They cannot reproduce
+the active Konsole profile's ANSI palette, so use the actual terminal for this
+check after selecting `/settings` → Appearance → **System**:
+
+1. Inspect the canvas, Composer, a historical User Message, Settings, Permission
+   approval, Tool Activity, and an Error. Confirm ordinary panels do not become
+   broad gray fills, including when the terminal profile maps bright black to a
+   light gray.
+2. Inspect an assistant message containing inline code such as `AGENTS.md`, a
+   repository path, and a command. Confirm each remains inline text without a
+   filled chip background. Check a fenced code block separately; it may retain
+   its independent code treatment.
+3. Move keyboard focus through Settings and a Permission choice, then select
+   text in the Composer. Confirm focus, selection, borders, and dim hints remain
+   distinguishable against the terminal's own default foreground/background.
+4. If available, repeat with both a dark and a light Konsole color scheme. Take
+   screenshots from the actual terminal; do not treat the browser gallery as a
+   simulation of either palette.
 
 ## Run the regression suite
 

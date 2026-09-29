@@ -239,9 +239,8 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                             self.assertTrue(app.console.get_style("markdown.text").color.is_default)
                             background = syntax_theme(app).get_background_style().bgcolor
                             assert background is not None
-                            # ANSI bright black keeps code blocks off the canvas.
-                            self.assertFalse(background.is_default)
-                            self.assertEqual(background.number, 8)
+                            # System does not assume any ANSI color is a dark fill.
+                            self.assertTrue(background.is_default)
                             self.assertEqual(app.get_theme(app.theme).background, "ansi_default")
                         else:
                             self.assertEqual(
@@ -253,16 +252,18 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
         theme = TEXTUAL_THEMES[UiTheme.SYSTEM]
 
         self.assertEqual(theme.background, "ansi_default")
-        self.assertEqual(theme.surface, "ansi_bright_black")
+        self.assertEqual(theme.surface, "ansi_default")
         self.assertEqual(theme.variables["border"], "ansi_default")
         self.assertEqual(theme.variables["border-subtle"], "ansi_white")
-        self.assertEqual(theme.variables["composer-surface"], "ansi_bright_black")
+        self.assertEqual(theme.variables["composer-surface"], "ansi_default")
         self.assertEqual(theme.variables["composer-border"], "ansi_default")
         self.assertEqual(theme.variables["composer-muted"], "ansi_default")
-        self.assertEqual(theme.variables["user-message-surface"], "ansi_bright_black")
+        self.assertEqual(theme.variables["user-message-surface"], "ansi_default")
         self.assertEqual(theme.variables["user-message-border"], "ansi_default")
         self.assertEqual(theme.variables["text-muted-intensity"], "dim")
-        self.assertNotEqual(theme.surface, theme.background)
+        self.assertEqual(theme.surface, theme.background)
+        self.assertEqual(theme.variables["surface-selected"], "ansi_default")
+        self.assertEqual(theme.variables["button-focus-text-style"], "bold reverse")
 
     async def test_preview_scroll_and_escape_restore_original_without_saving(self) -> None:
         preferences = UiPreferencesFixture()

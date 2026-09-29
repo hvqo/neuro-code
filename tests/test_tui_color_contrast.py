@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from textual.widgets import Button
 
 from neuro_code.interfaces.tui.theme import (
     TEXT_SECONDARY,
@@ -74,29 +75,62 @@ def test_system_uses_terminal_semantics_without_foreground_fill_collision() -> N
 
     assert theme.background == "ansi_default"
     assert theme.foreground == "ansi_default"
-    assert theme.surface != theme.background
-    assert roles["surface-selected"] != theme.surface
+    assert theme.surface == theme.background
+    assert theme.panel == theme.background
+    assert theme.boost == theme.background
     assert roles["composer-surface"] == theme.surface
     assert roles["user-message-surface"] == theme.surface
-    for foreground, background in (
-        (roles["text-primary"], theme.surface),
-        (roles["text-secondary"], theme.surface),
-        (roles["text-muted"], theme.surface),
-        (roles["composer-muted"], roles["composer-surface"]),
-        (roles["composer-border"], roles["composer-surface"]),
-        (roles["user-message-border"], roles["user-message-surface"]),
-        (roles["border"], theme.surface),
-        (roles["border-subtle"], theme.surface),
-    ):
-        assert foreground != background
+    assert roles["surface-selected"] == theme.background
+    broad_surfaces = (
+        theme.background,
+        theme.surface,
+        theme.panel,
+        theme.boost,
+        roles["bg-0"],
+        roles["bg-1"],
+        roles["bg-2"],
+        roles["bg-3"],
+        roles["surface-hover"],
+        roles["surface-subtle"],
+        roles["surface-selected"],
+        roles["composer-surface"],
+        roles["user-message-surface"],
+        roles["footer-background"],
+        roles["scrollbar-background"],
+    )
+    assert set(broad_surfaces) == {"ansi_default"}
+    assert "ansi_bright_black" not in {*roles.values(), *broad_surfaces}
+    # ANSI default foreground and background are separate terminal channels.
+    # Muted prose relies on dim intensity and has no surface fill of its own.
+    assert roles["text-muted"] == "ansi_default"
+    assert roles["text-muted-intensity"] == "dim"
+    assert roles["border"] == "ansi_default"
+    assert roles["border-subtle"] == "ansi_white"
     assert roles["border-focus"] != roles["border"]
     assert roles["text-secondary-intensity"] == "dim"
     assert roles["text-muted-intensity"] == "dim"
+    assert roles["button-focus-text-style"] == "bold reverse"
+    assert roles["selected-button-text-style"] == "bold reverse"
+    assert roles["input-selection-background"] == "ansi_blue"
     owner = SimpleNamespace(app=SimpleNamespace(theme=UiTheme.SYSTEM.textual_name))
     assert theme_style(owner, TEXT_SECONDARY) == "dim default"
     assert markdown_theme(owner).styles["markdown.block_quote"].dim
     # Terminal ANSI values are unknown; an RGB contrast calculation here would
     # pretend to guarantee a luminance relationship that the app cannot know.
+
+
+@pytest.mark.parametrize("choice", [UiTheme.GRAPHITE, UiTheme.PORCELAIN, UiTheme.SYSTEM])
+def test_markdown_inline_code_has_no_surface_background(choice: UiTheme) -> None:
+    owner = SimpleNamespace(app=SimpleNamespace(theme=choice.textual_name))
+    inline_code = markdown_theme(owner).styles["markdown.code"]
+
+    assert inline_code.color is not None
+    assert inline_code.bgcolor is None
+
+    # Code blocks keep their independent background contract in the flagship
+    # themes; removing the inline-code fill must not erase block treatment.
+    if choice in (UiTheme.GRAPHITE, UiTheme.PORCELAIN):
+        assert markdown_theme(owner).styles["markdown.code_block"].bgcolor is not None
 
 
 @pytest.mark.asyncio
@@ -132,3 +166,20 @@ async def test_theme_switch_changes_palette_without_moving_widgets(fixture: str)
             await pilot.pause()
             assert app.get_theme(app.theme).surface != original_surface
             assert regions() == original
+
+
+@pytest.mark.asyncio
+async def test_system_settings_selection_uses_reverse_without_a_filled_surface() -> None:
+    app = make_app(UiTheme.SYSTEM, fixture="settings")
+    async with app.run_test(size=(100, 32)) as pilot:
+        populate_fixture(app, "settings")
+        show_fixture_screen(app, "settings", UiTheme.SYSTEM)
+        await pilot.pause()
+
+        selected = app.screen.query_one("#settings-navigation Button.active", Button)
+        selected.focus()
+        await pilot.pause()
+
+        assert selected.styles.text_style.bold
+        assert selected.styles.text_style.reverse
+        assert selected.styles.background.hex == "ansi_default"

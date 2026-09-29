@@ -26,13 +26,13 @@ Use one compact semantic color contract across Textual and Rich rendering:
 | Meaning | `accent`, `success`, `warning`, `error` |
 
 Existing `BG_*`, `FG_*`, and component variables remain compatibility aliases
-of these roles. They do not create another palette authority. The final theme
-mapping must distinguish the canvas from meaningful surfaces, selected from
-ordinary surfaces, visible boundaries from their fill, and foreground text
-from the background on which it appears. Focus is stronger than an ordinary
-boundary. Assistant prose is the main reading layer; user, tool, status, and
-composer colors maintain a quieter order without changing geometry or font
-weight policy. Syntax colors remain isolated from conversation colors.
+of these roles. They do not create another palette authority. Where a theme uses
+filled surfaces, the final mapping distinguishes the canvas, selection, visible
+boundaries, and foreground text from their backgrounds. System deliberately
+uses fewer fills instead of simulating a dark palette. Focus is stronger than
+an ordinary boundary. Assistant prose is the main reading layer; user, tool,
+status, and composer colors maintain a quieter order without changing geometry
+or font-weight policy. Syntax colors remain isolated from conversation colors.
 
 Graphite and Porcelain are the measured dark/light reference themes. For their
 ordinary text on all relevant surfaces, use WCAG 4.5:1 as a regression guard;
@@ -42,20 +42,21 @@ quieter. These checks reject accidental collapses, not certify visual quality
 or every terminal rendering.
 
 System has a different responsibility: preserve legibility under an unknown
-terminal palette. The terminal default foreground/background provide the
-canvas and main text. One ANSI panel fill distinguishes meaningful surfaces;
-it is never reused as panel foreground, border, or composer hint. Selection
-uses terminal/default and reverse semantics, dim distinguishes lower-priority
-text, and only limited ANSI colors communicate focus or status. An unknown
-palette cannot guarantee three numeric luminance levels or WCAG ratios, so
-System uses semantic-collision tests instead of fabricated RGB measurements.
-Its deterministic Textual ANSI SVG represents the test renderer, not every
-user's terminal palette.
+terminal palette. The terminal default background is used for the canvas,
+composer, user messages, and ordinary panels; it does not assume that
+`ansi_bright_black` is dark. Default foreground, dim text, border glyphs,
+reverse selection, and a few ANSI state accents provide hierarchy. Inline
+Markdown code uses foreground color only; fenced code and diffs retain their
+independent styling. An unknown palette cannot guarantee numeric luminance or
+WCAG ratios, so System uses semantic-role tests instead of fabricated RGB
+measurements. Its deterministic Textual ANSI SVG represents the test renderer,
+not every user's terminal palette; real-terminal review remains necessary.
 
-V1A explicitly updates all 81 V0 snapshots. It changes only palette values,
-semantic color mappings, and color intensity. It does not change composer
-height, width, padding, margins, message geometry, header, Markdown hierarchy,
-Tool Activity, Settings/Trace layout, Runtime, Context, or persistence.
+V1A explicitly updates all 81 V0 snapshots. It changes palette values,
+semantic color mappings, color intensity, and the inline-code background
+contract. It does not change composer height, width, padding, margins, message
+geometry, header, Markdown hierarchy, Tool Activity, Settings/Trace layout,
+Runtime, Context, or persistence.
 
 ## Consequences and validation
 
