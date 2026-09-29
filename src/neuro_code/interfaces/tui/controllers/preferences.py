@@ -68,7 +68,7 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                 )
                 self._agent_preferences = self._agent_preference_resolution.effective()
                 self._apply_agent_preferences_to_ui()
-        self.push_screen(
+        await self.push_screen(
             SettingsScreen(
                 self._language,
                 language=self._language,
@@ -147,12 +147,14 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
             return
         if category == "theme":
             original = UiTheme.from_textual_name(self.theme)
-            self.push_screen(
-                ThemeSettingsScreen(
-                    original, language=self._language, preview=self._apply_ui_theme
-                ),
+            screen = ThemeSettingsScreen(
+                original, language=self._language, preview=self._apply_ui_theme
+            )
+            await self.push_screen(
+                screen,
                 partial(self._theme_settings_selected, original=original),
             )
+            screen.focus_selected_theme()
             return
         if category == "language":
             self.push_screen(

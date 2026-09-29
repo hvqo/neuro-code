@@ -73,6 +73,13 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
         # the detached prompt for its screen.
         app.on_text_area_changed(TextArea.Changed(PromptInput()))
 
+    def assert_theme_choice_focused(self, app: NeuroCodeApp, choice: UiTheme) -> Button:
+        self.assertIsInstance(app.screen, ThemeSettingsScreen)
+        target = app.screen.query_one(f"#settings-theme-{choice.value}", Button)
+        self.assertTrue(target.is_mounted)
+        self.assertIs(app.focused, target)
+        return target
+
     async def test_settings_switches_both_ways_without_losing_draft_or_messages(self) -> None:
         preferences = UiPreferencesFixture()
         app = NeuroCodeApp(
@@ -83,28 +90,6 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             cwd=Path("/workspace"),
         )
         async with app.run_test(size=(110, 40)) as pilot:
-
-            async def wait_for_theme_focus(choice: UiTheme) -> None:
-                for _ in range(100):
-                    screen = app.screen
-                    if isinstance(screen, ThemeSettingsScreen):
-                        target = next(iter(screen.query(f"#settings-theme-{choice.value}")), None)
-                        if target is not None and target.is_mounted and app.focused is target:
-                            return
-                    await pilot.pause(0.05)
-                self.fail(f"theme choice {choice.value} was not mounted and focused")
-
-            async def wait_for_theme_applied(choice: UiTheme) -> None:
-                for _ in range(100):
-                    if (
-                        app.theme == choice.textual_name
-                        and preferences.saved_themes[-1:] == [choice]
-                        and isinstance(app.screen, SettingsScreen)
-                    ):
-                        return
-                    await pilot.pause(0.05)
-                self.fail(f"theme choice {choice.value} was not applied and persisted")
-
             app._write_entry("assistant", '**Result**\n\n```python\nreturn "ok"\n```')
             await pilot.pause()
             prompt = app.query_one("#prompt", PromptInput)
@@ -118,18 +103,17 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             ]:
                 if not isinstance(app.screen, SettingsScreen):
                     await app.action_open_settings()
-                    await pilot.pause()
                 self.assertTrue(await pilot.click("#settings-category-theme"))
-                await pilot.pause()
                 self.assertIsInstance(app.screen, ThemeSettingsScreen)
                 initial_choice = app.screen.selected
-                await wait_for_theme_focus(initial_choice)
+                self.assert_theme_choice_focused(app, initial_choice)
                 target = app.screen.query_one(f"#settings-theme-{choice.value}", Button)
                 self.assertTrue(target.is_mounted)
                 target.focus()
-                await wait_for_theme_focus(choice)
+                await pilot.pause()
+                self.assert_theme_choice_focused(app, choice)
                 await pilot.press("enter")
-                await wait_for_theme_applied(choice)
+                await pilot.pause()
                 self.assertIsInstance(app.screen, SettingsScreen)
                 self.assertEqual(app.theme, choice.textual_name)
                 self.assertEqual(app.screen.styles.background.a, 0.25)
@@ -155,7 +139,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(palette.variables["fg-primary"].lower(), colors)
             self.assertEqual(preferences.saved_themes, [UiTheme.GRAPHITE, UiTheme.PORCELAIN])
             await pilot.press("escape")
-            await pilot.pause()
+            self.assertIs(app.screen, app.screen_stack[0])
             self.assertIs(app.focused, prompt)
 
     async def test_dark_startup_does_not_change_next_apps_light_palette(self) -> None:
@@ -170,22 +154,10 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(54, 24)) as pilot:
                 self.assertEqual(app.theme, selected.textual_name)
                 await app.action_open_settings()
-                await pilot.pause()
                 await pilot.click("#settings-category-theme")
-                for _ in range(100):
-                    if isinstance(app.screen, ThemeSettingsScreen):
-                        target = next(
-                            iter(app.screen.query(f"#settings-theme-{selected.value}")), None
-                        )
-                        if target is not None and target.is_mounted and app.focused is target:
-                            break
-                    await pilot.pause(0.05)
-                else:
-                    self.fail("selected theme button was not mounted and focused")
-                self.assertIsInstance(app.screen, ThemeSettingsScreen)
+                self.assert_theme_choice_focused(app, selected)
                 self.assertEqual(app.focused.id, f"settings-theme-{selected.value}")
                 await pilot.press("escape")
-                await pilot.pause()
                 self.assertIsInstance(app.screen, SettingsScreen)
                 self.assertEqual(app.theme, selected.textual_name)
         self.assertNotEqual(
@@ -269,72 +241,36 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             cwd=Path("/workspace"),
         )
         async with app.run_test(size=(54, 24)) as pilot:
-
-            async def wait_for_theme_applied(selected: UiTheme) -> None:
-                for _ in range(100):
-                    if app.theme == selected.textual_name and preferences.saved_themes[-1:] == [
-                        selected
-                    ]:
-                        return
-                    # The modal dismissal callback applies and persists the
-                    # choice asynchronously after the key event is dispatched.
-                    await pilot.pause(0.05)
-                self.fail("selected theme was not applied and persisted")
-
-            async def wait_for_settings_screen() -> None:
-                for _ in range(100):
-                    if isinstance(app.screen, SettingsScreen):
-                        return
-                    await pilot.pause(0.05)
-                self.fail("settings screen was not restored after theme selection")
-
-            async def wait_for_theme_screen(
-                selected: UiTheme, *, require_focus: bool = False
-            ) -> None:
-                for _ in range(100):
-                    screen = app.screen
-                    if isinstance(screen, ThemeSettingsScreen):
-                        target = next(iter(screen.query(f"#settings-theme-{selected.value}")), None)
-                        if (
-                            target is not None
-                            and target.is_mounted
-                            and (not require_focus or app.focused is target)
-                        ):
-                            return
-                    # The Windows runner can have a delayed Textual message pump
-                    # and screen children under the full suite; yield a bounded
-                    # interval until the selected button is actually mounted.
-                    await pilot.pause(0.05)
-                self.fail("selected theme button was not mounted and focused")
-
             prompt = app.query_one("#prompt", PromptInput)
             prompt.value = "中文草稿\nkeep this"
             prompt.cursor_location = (1, 3)
-            await app._settings_category_selected("theme")
-            await wait_for_theme_screen(UiTheme.PORCELAIN, require_focus=True)
+            await app.action_open_settings()
+            self.assertIsInstance(app.screen, SettingsScreen)
+            self.assertTrue(await pilot.click("#settings-category-theme"))
+            self.assert_theme_choice_focused(app, UiTheme.PORCELAIN)
             await pilot.press("up")
-            await pilot.pause()
             self.assertEqual(app.theme, UiTheme.ONE_DARK.textual_name)
             focused = app.screen.query_one("#settings-theme-one-dark", Button)
             viewport = app.screen.query_one("#settings-themes")
             self.assertTrue(viewport.region.contains_region(focused.region))
             self.assertEqual(preferences.saved_themes, [])
             await pilot.press("escape")
-            await pilot.pause()
+            self.assertIsInstance(app.screen, SettingsScreen)
             self.assertEqual(app.theme, UiTheme.PORCELAIN.textual_name)
             self.assertEqual(preferences.saved_themes, [])
             self.assertEqual(prompt.value, "中文草稿\nkeep this")
             self.assertEqual(prompt.cursor_location, (1, 3))
-            await pilot.click("#settings-category-theme")
-            await wait_for_theme_screen(UiTheme.PORCELAIN, require_focus=True)
+            self.assertTrue(await pilot.click("#settings-category-theme"))
+            self.assert_theme_choice_focused(app, UiTheme.PORCELAIN)
             app.screen.query_one("#settings-theme-system", Button).focus()
+            await pilot.pause()
             await pilot.press("enter")
-            await wait_for_theme_applied(UiTheme.SYSTEM)
-            await wait_for_settings_screen()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, SettingsScreen)
             self.assertEqual(app.theme, UiTheme.SYSTEM.textual_name)
             self.assertEqual(preferences.saved_themes, [UiTheme.SYSTEM])
-            await pilot.click("#settings-category-theme")
-            await wait_for_theme_screen(UiTheme.SYSTEM, require_focus=True)
+            self.assertTrue(await pilot.click("#settings-category-theme"))
+            self.assert_theme_choice_focused(app, UiTheme.SYSTEM)
             self.assertEqual(app.focused.id, "settings-theme-system")
 
     async def test_send_button_uses_existing_submission_and_command_pipeline(self) -> None:
