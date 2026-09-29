@@ -7,6 +7,15 @@ baselines cover 9 fixtures × 3 viewports × 3 themes = 81 screenshots.
 Whitespace-only line-end padding from the SVG serializer is normalized; rendered
 text and geometry remain unchanged.
 
+## Known V0 baseline limitation
+
+The snapshots expose a System theme contrast defect: surface, selection, border,
+muted text, and Composer roles collapse to the same or similar ANSI
+`bright_black`. This is the pre-redesign baseline, not visual-quality approval.
+System snapshots show Textual's deterministic ANSI rendering, not every user's
+terminal palette. V1A should first restore semantic-role contrast and improve
+System theme adaptation. V0 records this issue without changing production visuals.
+
 ## Run the regression suite
 
 ```bash

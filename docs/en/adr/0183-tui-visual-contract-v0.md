@@ -54,6 +54,16 @@ semantic color, adaptive composer behavior, source-based Markdown reflow, and
 separate history/activity cells; no Rust implementation or directory structure is
 copied.
 
+## Known Baseline Defect
+
+The V0 snapshots expose insufficient semantic-role contrast in the System theme:
+surface, selected surface, border, dim/muted text, and Composer surface, border,
+and muted text map to the same or similar ANSI `bright_black`. This is a known
+pre-redesign defect retained in the baseline, not approval of the current visual
+quality. System snapshots represent Textual's deterministic ANSI rendering; they
+do not represent every user's actual terminal ANSI palette. V1A's first priority
+is semantic-role contrast and improved System theme adaptation.
+
 ## Consequences
 
 - Full-screen changes can be reviewed against committed, viewport-specific output.

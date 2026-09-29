@@ -40,6 +40,14 @@ Provider。基线矩阵覆盖空会话、用户与助手消息、长 Markdown、
 语义色、自适应 Composer、基于源文本的 Markdown 重排，以及分离的历史/活动
 单元等原则；没有复制 Rust 实现或目录结构。
 
+## 已知基线问题
+
+V0 截图揭示 System 主题存在语义角色对比不足：surface、selected surface、border、
+dim/muted text 以及 Composer 的表面、边框和弱化文字大量映射到相同或近似的
+ANSI bright_black。这是保留在基线中的改造前缺陷；记录它不代表认可当前视觉质量。
+System 快照表示 Textual 的确定性 ANSI 渲染，不代表每位用户终端的实际 ANSI 调色板。
+V1A 的首要目标是恢复语义角色对比，并改进 System 主题适配。
+
 ## 后果
 
 - 全屏变化可以对照按视口区分的已提交基线进行审查。
