@@ -43,9 +43,9 @@ the actual terminal after selecting `/settings` → Appearance → **System**:
    distinguishable against the terminal's own default foreground/background.
 4. If available, repeat with both a dark and a light Konsole color scheme. Take
    screenshots from the actual terminal; do not treat the browser gallery as a
-   simulation of either palette. Confirm idle Composer has a visible fine rule
-   and keyboard focus recolors it clearly; the rule occupies the previous top
-   inset, so Composer contents should not move.
+   simulation of either palette. Confirm the adaptive Composer surface remains
+   easy to locate and keyboard focus remains clear without adding a top rule in
+   either state; Composer contents should not move.
 
 ## Run the regression suite
 

@@ -204,24 +204,30 @@ def test_adaptive_system_inline_code_keeps_its_background_free_contract() -> Non
     ],
 )
 @pytest.mark.asyncio
-async def test_system_composer_focus_rule_changes_color_without_changing_geometry(
+async def test_system_composer_has_no_top_rule_and_keeps_geometry_when_focused(
     palette: TerminalPalette,
 ) -> None:
     app = make_app(UiTheme.SYSTEM, fixture="user-assistant", terminal_palette=palette)
     async with app.run_test(size=(100, 32)) as pilot:
         prompt = app.query_one("#prompt")
         surface = app.query_one("#prompt-surface")
-        focused_region = tuple(surface.region)
-        focus_color = surface.styles.border_top[1]
+        focused_surface_region = tuple(surface.region)
+        focused_prompt_region = tuple(prompt.region)
+        assert surface.styles.padding.top == 1
+        assert not surface.styles.border_top[0]
+
         prompt.blur()
         await pilot.pause()
-        assert tuple(surface.region) == focused_region
-        idle_color = surface.styles.border_top[1]
-        assert idle_color != focus_color
+        idle_surface_region = tuple(surface.region)
+        idle_prompt_region = tuple(prompt.region)
+        assert surface.styles.padding.top == 1
+        assert not surface.styles.border_top[0]
+
         prompt.focus()
         await pilot.pause()
-        assert tuple(surface.region) == focused_region
-        assert surface.styles.border_top[1] == focus_color
+        assert tuple(surface.region) == idle_surface_region == focused_surface_region
+        assert tuple(prompt.region) == idle_prompt_region == focused_prompt_region
+        assert not surface.styles.border_top[0]
 
 
 @pytest.mark.asyncio

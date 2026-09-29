@@ -462,17 +462,6 @@ class NeuroCodeApp(
         border: none;
     }
 
-    /* Reuse the existing top inset as a rule; this keeps the Composer's
-       measured region and text coordinates unchanged in System mode. */
-    .system-theme #prompt-surface {
-        border-top: solid $composer-border;
-        padding: 0 1 1 1;
-    }
-
-    .system-theme #prompt-surface:focus-within {
-        border-top: solid $composer-focus-border;
-    }
-
     #prompt-caption-hint {
         width: 1fr;
         height: 1;
