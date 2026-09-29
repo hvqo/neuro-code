@@ -9,6 +9,10 @@ import pytest
 from textual.widgets import Static
 
 from neuro_code.interfaces.tui.app import NeuroCodeApp
+from neuro_code.interfaces.tui.terminal_palette import (
+    TerminalColorLevel,
+    TerminalPalette,
+)
 from neuro_code.interfaces.tui.widgets import PromptInput
 from neuro_code.shared.ui_theme import UiTheme
 from tests.visual.showcases import (
@@ -22,6 +26,17 @@ VIEWPORTS = ((120, 40), (100, 32), (80, 24))
 THEMES = (UiTheme.GRAPHITE, UiTheme.PORCELAIN, UiTheme.SYSTEM)
 SNAPSHOT_ROOT = Path(__file__).parent / "visual" / "snapshots"
 _TITLE = "Neuro Code visual baseline"
+SYSTEM_PALETTE_FIXTURES = (
+    (
+        "dark",
+        TerminalPalette(TerminalColorLevel.TRUECOLOR, (232, 232, 232), (30, 30, 30)),
+    ),
+    (
+        "light",
+        TerminalPalette(TerminalColorLevel.TRUECOLOR, (30, 30, 30), (246, 246, 246)),
+    ),
+    ("unknown", TerminalPalette()),
+)
 
 
 def snapshot_name(fixture: str, theme: UiTheme, viewport: tuple[int, int]) -> str:
@@ -33,8 +48,10 @@ async def capture_snapshot(
     fixture: str,
     theme: UiTheme,
     viewport: tuple[int, int],
+    *,
+    terminal_palette: TerminalPalette | None = None,
 ) -> str:
-    app = make_app(theme, fixture=fixture)
+    app = make_app(theme, fixture=fixture, terminal_palette=terminal_palette)
 
     def fixed_clock(instance: NeuroCodeApp) -> None:
         instance.query_one("#clock", Static).update("13:37")
@@ -86,4 +103,38 @@ async def test_tui_visual_snapshot(
         f"Rendered output saved to: {received}\n"
         "Inspect the SVG or render the visual gallery, then update intentionally with:\n"
         "NEURO_TUI_UPDATE_SNAPSHOTS=1 uv run pytest tests/test_tui_visual_snapshots.py -q"
+    )
+
+
+@pytest.mark.parametrize(("palette_name", "terminal_palette"), SYSTEM_PALETTE_FIXTURES)
+@pytest.mark.parametrize("fixture", ["user-assistant", "settings"])
+@pytest.mark.asyncio
+async def test_tui_system_terminal_palette_snapshot(
+    palette_name: str,
+    terminal_palette: TerminalPalette,
+    fixture: str,
+) -> None:
+    actual = canonicalize_svg(
+        await capture_snapshot(
+            fixture,
+            UiTheme.SYSTEM,
+            (100, 32),
+            terminal_palette=terminal_palette,
+        )
+    )
+    path = SNAPSHOT_ROOT / f"system-palette-{palette_name}__{fixture}__100x32.svg"
+    if os.environ.get("NEURO_TUI_UPDATE_SNAPSHOTS") == "1":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="\n") as snapshot_file:
+            snapshot_file.write(actual)
+        return
+
+    received = Path(gettempdir()) / "neuro-code-tui-visual-received" / path.name
+    received.parent.mkdir(parents=True, exist_ok=True)
+    received.write_text(actual, encoding="utf-8", newline="\n")
+    expected = path.read_text(encoding="utf-8") if path.exists() else "<missing snapshot>"
+    assert actual == expected, (
+        f"Visual baseline differs: {path}\n"
+        f"Rendered output saved to: {received}\n"
+        "Update intentionally with NEURO_TUI_UPDATE_SNAPSHOTS=1 and the visual snapshot test."
     )

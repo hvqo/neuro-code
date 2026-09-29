@@ -16,7 +16,7 @@ def _embedded_svg(content: bytes, label: str) -> str:
     return f'<img alt="{label}" src="data:image/svg+xml;base64,{encoded}">'
 
 
-def _snapshot_at_ref(ref: str, path: Path) -> bytes:
+def _snapshot_at_ref(ref: str, path: Path) -> bytes | None:
     relative = path.relative_to(REPOSITORY_ROOT).as_posix()
     try:
         return subprocess.run(
@@ -26,6 +26,12 @@ def _snapshot_at_ref(ref: str, path: Path) -> bytes:
             check=True,
         ).stdout
     except subprocess.CalledProcessError as error:
+        if (
+            b"does not exist" in error.stderr
+            or b"Path '" in error.stderr
+            or b"but not in" in error.stderr
+        ):
+            return None
         raise SystemExit(
             f"Cannot read {relative} at {ref}: {error.stderr.decode(errors='replace')}"
         ) from error
@@ -43,7 +49,12 @@ def render_gallery(output: Path, *, before_ref: str | None = None) -> Path:
         if before_ref is None:
             cards.append(f"<figure><figcaption>{label}</figcaption>{current}</figure>")
         else:
-            before = _embedded_svg(_snapshot_at_ref(before_ref, path), f"{label} before")
+            before_svg = _snapshot_at_ref(before_ref, path)
+            before = (
+                _embedded_svg(before_svg, f"{label} before")
+                if before_svg is not None
+                else "<span class=missing>Not present in the V0 baseline</span>"
+            )
             cards.append(
                 f"<figure><figcaption>{label}</figcaption><div class=pair>"
                 f"<div><strong>Before ({html.escape(before_ref)})</strong>{before}</div>"
@@ -63,6 +74,7 @@ main { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)
 figure { margin: 0; padding: .6rem; background: #242424; border: 1px solid #555; }
 figcaption { padding: 0 0 .5rem; color: #ddd; font: 12px ui-monospace, monospace; }
 img { display: block; width: 100%; height: auto; }
+.missing { display: block; padding: 1rem; color: #aaa; border: 1px dashed #555; }
 .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
 .pair strong { display: block; margin-bottom: .4rem; font: 12px ui-monospace, monospace; }
 </style>

@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import replace
+from functools import lru_cache
 from typing import ClassVar, Protocol
 
 from pygments.style import Style as PygmentsStyle
@@ -32,6 +33,11 @@ from rich.syntax import PygmentsSyntaxTheme, SyntaxTheme, TokenType
 from rich.theme import Theme as RichTheme
 from textual.theme import Theme
 
+from neuro_code.interfaces.tui.terminal_palette import (
+    ResolvedSystemPalette,
+    TerminalPalette,
+    resolve_system_palette,
+)
 from neuro_code.shared.ui_theme import UiTheme
 
 BG_0 = "#F6F5F2"
@@ -344,16 +350,16 @@ def _palette(
 _PALETTES = {
     UiTheme.PORCELAIN: {},
     UiTheme.GRAPHITE: _DARK_COLORS,
-    # System is terminal-native: broad surfaces share the terminal default
-    # background. Borders, dim text, ANSI state accents, and selection semantics
-    # provide hierarchy without assuming any particular ANSI palette luminance.
+    # The unknown-palette System fallback keeps native default fills. ANSI white
+    # gives existing panel edges a visible role without guessing bright-black's
+    # luminance; detected palettes replace these tokens with derived RGB roles.
     UiTheme.SYSTEM: {
         BG_0: "default",
         BG_1: "default",
         BG_2: "default",
         BG_3: "default",
         BORDER_SUBTLE: "white",
-        BORDER: "default",
+        BORDER: "white",
         FG_DIM: "default",
         FG_MUTED: "default",
         FG_SECONDARY: "default",
@@ -543,23 +549,75 @@ def _translate(style: str, colors: Mapping[str, str]) -> str:
     return re.sub(r"#[0-9a-fA-F]{6}\b", lambda m: colors.get(m[0].upper(), m[0]), style)
 
 
-def _semantic_rich_style(style: str, colors: Mapping[str, str], choice: UiTheme) -> str:
+@lru_cache(maxsize=16)
+def _resolved_system_palette(palette: TerminalPalette | None) -> ResolvedSystemPalette:
+    return resolve_system_palette(palette or TerminalPalette())
+
+
+@lru_cache(maxsize=16)
+def _system_colors(palette: TerminalPalette | None) -> dict[str, str]:
+    resolved = _resolved_system_palette(palette)
+    colors = dict(_PALETTES[UiTheme.SYSTEM])
+    colors.update(
+        {
+            BG_0: resolved.canvas.removeprefix("ansi_"),
+            BG_1: resolved.surface.removeprefix("ansi_"),
+            BG_2: resolved.surface_subtle.removeprefix("ansi_"),
+            BG_3: resolved.surface_selected.removeprefix("ansi_"),
+            BORDER_SUBTLE: resolved.border_subtle.removeprefix("ansi_"),
+            BORDER: resolved.border_normal.removeprefix("ansi_"),
+            FG_DIM: resolved.text_muted.removeprefix("ansi_"),
+            FG_MUTED: resolved.text_muted.removeprefix("ansi_"),
+            FG_SECONDARY: resolved.text_secondary.removeprefix("ansi_"),
+            FG_EMPHASIS: resolved.text_primary.removeprefix("ansi_"),
+            FG_BODY: resolved.text_primary.removeprefix("ansi_"),
+            FG_PRIMARY: resolved.text_primary.removeprefix("ansi_"),
+            ACCENT: resolved.accent.removeprefix("ansi_"),
+            ACCENT_BLUE: resolved.accent.removeprefix("ansi_"),
+            ACCENT_CYAN: resolved.accent.removeprefix("ansi_"),
+            ACCENT_ORANGE: resolved.accent.removeprefix("ansi_"),
+            ACCENT_VIOLET: resolved.accent.removeprefix("ansi_"),
+        }
+    )
+    return colors
+
+
+def _theme_colors(choice: UiTheme, palette: TerminalPalette | None) -> Mapping[str, str]:
+    return _system_colors(palette) if choice is UiTheme.SYSTEM else _PALETTES[choice]
+
+
+def _semantic_rich_style(
+    style: str,
+    colors: Mapping[str, str],
+    choice: UiTheme,
+    system_palette: ResolvedSystemPalette | None = None,
+) -> str:
     translated = _translate(style, colors)
-    if choice is UiTheme.SYSTEM and any(
-        token in style.upper() for token in (FG_DIM, FG_MUTED, FG_SECONDARY)
+    if (
+        choice is UiTheme.SYSTEM
+        and any(token in style.upper() for token in (FG_DIM, FG_MUTED, FG_SECONDARY))
+        and not (system_palette and system_palette.adaptive)
     ):
         return f"dim {translated}"
     return translated
 
 
-def _textual_theme(choice: UiTheme) -> Theme:
+def textual_theme_for(
+    choice: UiTheme,
+    terminal_palette: TerminalPalette | None = None,
+) -> Theme:
     if choice is UiTheme.PORCELAIN:
         return TEXTUAL_THEME
-    colors = _PALETTES[choice]
+    colors = _theme_colors(choice, terminal_palette)
+    system_palette = (
+        _resolved_system_palette(terminal_palette) if choice is UiTheme.SYSTEM else None
+    )
 
     def css(value: str) -> str:
         translated = _translate(value, colors)
-        return f"ansi_{translated}" if choice is UiTheme.SYSTEM else translated
+        if choice is UiTheme.SYSTEM and not translated.startswith("#"):
+            return translated if translated.startswith("ansi_") else f"ansi_{translated}"
+        return translated
 
     variables = {
         key: css(value) if value.startswith("#") else value
@@ -567,21 +625,23 @@ def _textual_theme(choice: UiTheme) -> Theme:
     }
     variables["modal-overlay"] = "ansi_default" if choice is UiTheme.SYSTEM else "#000000"
     if choice is UiTheme.SYSTEM:
+        assert system_palette is not None
         variables["input-selection-background"] = "ansi_blue"
         variables["button-focus-text-style"] = "bold reverse"
-        variables["text-secondary-intensity"] = "dim"
-        variables["text-muted-intensity"] = "dim"
+        intensity = "none" if system_palette.adaptive else "dim"
+        variables["text-secondary-intensity"] = intensity
+        variables["text-muted-intensity"] = intensity
         variables.update(
             {
-                "composer-surface": "ansi_default",
-                "composer-border": "ansi_default",
-                "composer-focus-border": "ansi_bright_blue",
-                "composer-muted": "ansi_default",
+                "composer-surface": system_palette.composer_surface,
+                "composer-border": system_palette.border_normal,
+                "composer-focus-border": system_palette.border_focus,
+                "composer-muted": system_palette.text_muted,
                 "composer-selection": "ansi_blue",
-                "composer-selection-text": "ansi_bright_white",
+                "composer-selection-text": "ansi_default",
                 "selected-button-text-style": "bold reverse",
-                "user-message-surface": "ansi_default",
-                "user-message-border": "ansi_default",
+                "user-message-surface": system_palette.user_message_surface,
+                "user-message-border": system_palette.border_normal,
             }
         )
     elif choice is UiTheme.GRAPHITE:
@@ -614,7 +674,7 @@ def _textual_theme(choice: UiTheme) -> Theme:
     return replace(
         TEXTUAL_THEME,
         name=choice.textual_name,
-        dark=choice is not UiTheme.SYSTEM,
+        dark=(system_palette.mode != "light") if system_palette else True,
         primary=css(ACCENT),
         secondary=css(TEXT_SECONDARY),
         accent=css(ACCENT),
@@ -643,7 +703,7 @@ class _PaletteSyntaxTheme(SyntaxTheme):
         return Style(bgcolor=self.colors[SURFACE])
 
 
-TEXTUAL_THEMES = {choice: _textual_theme(choice) for choice in UiTheme}
+TEXTUAL_THEMES = {choice: textual_theme_for(choice) for choice in UiTheme}
 _MARKDOWN_THEMES = {
     choice: MARKDOWN_THEME
     if choice is UiTheme.PORCELAIN
@@ -682,11 +742,25 @@ def theme_style(owner: _ThemeOwner, style: str) -> str:
 
 
 def markdown_theme(owner: _ThemeOwner) -> RichTheme:
-    return _MARKDOWN_THEMES[UiTheme.from_textual_name(owner.app.theme)]
+    choice = UiTheme.from_textual_name(owner.app.theme)
+    palette = getattr(owner.app, "terminal_palette", None)
+    if choice is not UiTheme.SYSTEM:
+        return _MARKDOWN_THEMES[choice]
+    colors = _theme_colors(choice, palette)
+    resolved = _resolved_system_palette(palette)
+    return RichTheme(
+        {
+            name: _semantic_rich_style(str(style), colors, choice, resolved)
+            for name, style in MARKDOWN_THEME.styles.items()
+        }
+    )
 
 
 def syntax_theme(owner: _ThemeOwner) -> SyntaxTheme:
-    return _SYNTAX_THEMES[UiTheme.from_textual_name(owner.app.theme)]
+    choice = UiTheme.from_textual_name(owner.app.theme)
+    if choice is not UiTheme.SYSTEM:
+        return _SYNTAX_THEMES[choice]
+    return _PaletteSyntaxTheme(_theme_colors(choice, getattr(owner.app, "terminal_palette", None)))
 
 
 EFFORT_STYLES = {
@@ -839,5 +913,6 @@ __all__ = [
     "loading_style",
     "markdown_theme",
     "syntax_theme",
+    "textual_theme_for",
     "theme_style",
 ]

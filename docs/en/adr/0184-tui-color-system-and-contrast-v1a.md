@@ -41,29 +41,44 @@ primary/secondary/muted contrast is also guarded. Subtle separators can be
 quieter. These checks reject accidental collapses, not certify visual quality
 or every terminal rendering.
 
-System has a different responsibility: preserve legibility under an unknown
-terminal palette. The terminal default background is used for the canvas,
-composer, user messages, and ordinary panels; it does not assume that
-`ansi_bright_black` is dark. Default foreground, dim text, border glyphs,
-reverse selection, and a few ANSI state accents provide hierarchy. Inline
-Markdown code uses foreground color only; fenced code and diffs retain their
-independent styling. An unknown palette cannot guarantee numeric luminance or
-WCAG ratios, so System uses semantic-role tests instead of fabricated RGB
-measurements. Its deterministic Textual ANSI SVG represents the test renderer,
-not every user's terminal palette; real-terminal review remains necessary.
+System is a terminal-aware adaptive palette, not a transparent/default-only
+theme. A small startup adapter makes one bounded OSC 10/11 query before
+Textual owns terminal input. When both defaults are returned with sufficient
+contrast and output is TrueColor or ANSI256, surfaces and secondary text are
+derived from the actual foreground/background pair. ANSI16, unsupported
+queries, malformed replies, and low-contrast pairs fail soft to terminal
+defaults, visible ANSI-white panel rules, dim secondary text, reverse
+selection, and ANSI-blue focus. Probe failure adds at most 60 ms and does not
+prevent startup. System never uses `ansi_bright_black` as a broad fill.
 
-V1A explicitly updates all 81 V0 snapshots. It changes palette values,
-semantic color mappings, color intensity, and the inline-code background
-contract. It does not change composer height, width, padding, margins, message
-geometry, header, Markdown hierarchy, Tool Activity, Settings/Trace layout,
-Runtime, Context, or persistence.
+Canvas, subtle/selected surface, Composer, and User Message roles remain
+separate where the output capability can represent them. The System-only
+Composer rule reuses its existing top inset, so the measured geometry and text
+coordinates remain unchanged; focus recolors that rule with the adaptive
+accent, or ANSI bright blue in fallback mode. Inline Markdown code retains the
+V1A foreground-only/no-background contract; fenced code and diffs retain their
+independent styling. When the terminal palette is unavailable, RGB contrast
+cannot be claimed; deterministic semantic-role tests cover that fallback.
+Textual SVGs use injected dark, light, or unknown fixtures and still do not
+represent every real terminal palette. Real-terminal review remains necessary.
+
+V1A updates the 81 V0 snapshots and adds six deterministic System screenshots
+for dark, light, and unknown palettes across conversation and Settings views.
+This correction changes System palette resolution and surface/border colors
+only. It preserves the previously approved inline-code fix and does not change
+composer height, width, margins, message geometry, header, Markdown hierarchy,
+Tool Activity, Settings/Trace layout, Runtime, Context, or persistence. The
+Composer's existing one-cell top inset becomes its rule; the inner content
+coordinates stay fixed.
 
 ## Consequences and validation
 
 Theme selection continues to change only palette, not layout semantics.
-Snapshots protect the three V0 themes at three viewports; contrast and role
-tests protect the final values, while a theme-switch test checks widget regions.
-The gallery can compare committed V0 SVGs with V1A side by side using
-`--before-ref`. See `tests/visual/README.md` for commands and the ANSI caveat.
+Snapshots protect the three V0 themes at three viewports; six additional
+snapshots pin the adaptive/fallback palette fixtures. Contrast and role tests
+protect final values, while theme-switch and focus tests check widget regions
+and affordance colors. The gallery can compare committed V0 SVGs with V1A side
+by side using `--before-ref`; palette-only samples appear as V1A-only cards.
+See `tests/visual/README.md` for commands and the ANSI caveat.
 The remaining visual-system phases can change geometry only under a separate
 review.

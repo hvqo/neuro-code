@@ -921,9 +921,12 @@ editors are not modified. Modified Enter keys depend on terminal forwarding
 and are not universally guaranteed. Dedicated
 theme tokens distinguish composer and user-message fills from ordinary panels, with
 top/left rules for boundaries and readable placeholder, cursor and selection colors.
-The system theme retains default backgrounds and uses foreground-colored rules. Narrow/short terminals compact the
-chrome with bounded multiline height. Permissions, execution and session contracts
-remain unchanged.
+System makes one bounded OSC 10/11 default-color query before Textual owns input; it
+derives subtle surfaces when RGB and TrueColor/ANSI256 are available, then fails soft
+to default fills, visible ANSI borders, dim secondary text and ANSI focus. Composer
+focus recolors an existing top inset without moving its contents. Narrow/short terminals
+compact the chrome with bounded multiline height. Permissions, execution and session
+contracts remain unchanged.
 
 The scrollback is a vertical conversation of stable message widgets rather
 than a pre-rendered log plus a temporary streaming surface. User prompts and

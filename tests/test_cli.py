@@ -2016,6 +2016,7 @@ api_key_env = "FIXTURE_KEY"
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
                     ui_theme: UiTheme,
+                    terminal_palette: object,
                     initial_items: object,
                     provider_name: str,
                     model_name: str,
@@ -2057,6 +2058,7 @@ api_key_env = "FIXTURE_KEY"
                         subagent_relationship_lifecycle=subagent_relationship_lifecycle,
                         language=language,
                         ui_theme=ui_theme,
+                        terminal_palette=terminal_palette,
                         initial_items=initial_items,
                         provider_name=provider_name,
                         model_name=model_name,
@@ -2130,6 +2132,7 @@ api_key_env = "FIXTURE_KEY"
             self.assertGreaterEqual(launch_item_counts[1], 2)
             self.assertEqual(captured["language"], UiLanguage.SIMPLIFIED_CHINESE)
             self.assertEqual(captured["ui_theme"], UiTheme.GRAPHITE)
+            self.assertIsNotNone(captured["terminal_palette"])
             self.assertIsNotNone(captured["preference_resolution"])
             self.assertIsInstance(captured["provider_catalog"], PersistentProviderCatalog)
             self.assertIsInstance(
@@ -2291,6 +2294,7 @@ api_key_env = "FIXTURE_KEY"
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
                     ui_theme: UiTheme,
+                    terminal_palette: object,
                     initial_items: object,
                     provider_name: str,
                     model_name: str,
@@ -2324,6 +2328,7 @@ api_key_env = "FIXTURE_KEY"
                         subagent_relationship_query,
                         subagent_relationship_lifecycle,
                         language,
+                        terminal_palette,
                         initial_items,
                         provider_name,
                         model_name,
@@ -2426,6 +2431,7 @@ api_key_env = "SECOND_KEY"
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
                     ui_theme: UiTheme,
+                    terminal_palette: object,
                     initial_items: object,
                     provider_name: str,
                     model_name: str,
@@ -2455,6 +2461,7 @@ api_key_env = "SECOND_KEY"
                         subagent_relationship_query,
                         subagent_relationship_lifecycle,
                         language,
+                        terminal_palette,
                         initial_items,
                         provider_name,
                         model_name,
@@ -2602,6 +2609,7 @@ api_key_env = "SECOND_KEY"
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
                     ui_theme: UiTheme,
+                    terminal_palette: object,
                     initial_items: object,
                     provider_name: str,
                     model_name: str,

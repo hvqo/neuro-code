@@ -104,11 +104,14 @@ def test_system_uses_terminal_semantics_without_foreground_fill_collision() -> N
     # Muted prose relies on dim intensity and has no surface fill of its own.
     assert roles["text-muted"] == "ansi_default"
     assert roles["text-muted-intensity"] == "dim"
-    assert roles["border"] == "ansi_default"
+    assert roles["border"] == "ansi_white"
     assert roles["border-subtle"] == "ansi_white"
-    assert roles["border-focus"] != roles["border"]
+    assert roles["border-focus"] == "ansi_bright_blue"
     assert roles["text-secondary-intensity"] == "dim"
     assert roles["text-muted-intensity"] == "dim"
+    assert roles["composer-border"] == "ansi_white"
+    assert roles["composer-focus-border"] == "ansi_bright_blue"
+    assert roles["user-message-border"] == "ansi_white"
     assert roles["button-focus-text-style"] == "bold reverse"
     assert roles["selected-button-text-style"] == "bold reverse"
     assert roles["input-selection-background"] == "ansi_blue"

@@ -21,9 +21,14 @@ palette.
 
 ## Real-terminal manual check
 
-The SVG snapshots are deterministic Textual ANSI output. They cannot reproduce
-the active Konsole profile's ANSI palette, so use the actual terminal for this
-check after selecting `/settings` → Appearance → **System**:
+System palette screenshots inject three deterministic inputs: dark RGB,
+light RGB, and unknown/ANSI fallback. They never issue terminal queries in CI.
+At interactive startup Neuro Code makes one optional OSC 10/11 query with a
+60 ms deadline before Textual starts reading input; reliable RGB plus
+TrueColor/ANSI256 enables derived surfaces, while unsupported/low-capability
+terminals use default fills, visible ANSI rules, dim text, and ANSI focus.
+The SVG snapshots still cannot reproduce the active Konsole palette, so use
+the actual terminal after selecting `/settings` → Appearance → **System**:
 
 1. Inspect the canvas, Composer, a historical User Message, Settings, Permission
    approval, Tool Activity, and an Error. Confirm ordinary panels do not become
@@ -38,7 +43,9 @@ check after selecting `/settings` → Appearance → **System**:
    distinguishable against the terminal's own default foreground/background.
 4. If available, repeat with both a dark and a light Konsole color scheme. Take
    screenshots from the actual terminal; do not treat the browser gallery as a
-   simulation of either palette.
+   simulation of either palette. Confirm idle Composer has a visible fine rule
+   and keyboard focus recolors it clearly; the rule occupies the previous top
+   inset, so Composer contents should not move.
 
 ## Run the regression suite
 
@@ -77,7 +84,16 @@ uv run python tests/visual/render_gallery.py --before-ref fe191e4b2ddd947d90e588
 Open `/tmp/neuro-code-tui-v1a-compare.html` in a browser. Each card contains
 the same fixture, theme, and viewport before and after. For System, compare
 semantic structure in this renderer and also inspect your actual terminal;
-the browser SVG is not a simulation of your terminal's ANSI palette.
+the browser SVG is not a simulation of your terminal's ANSI palette. The six
+`system-palette-*` cards are V1A-only deterministic dark/light/fallback
+samples because V0 had no equivalent palette fixtures.
+
+To update only those six palette samples after an intentional visual change:
+
+```bash
+NEURO_TUI_UPDATE_SNAPSHOTS=1 uv run pytest tests/test_tui_visual_snapshots.py -k system_terminal_palette -q
+uv run python tests/visual/render_gallery.py --before-ref fe191e4b2ddd947d90e588456f7b74fbaa95a7b0 --output /tmp/neuro-code-tui-v1a-compare.html
+```
 
 ## Update snapshots
 

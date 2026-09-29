@@ -17,6 +17,7 @@ from neuro_code.interfaces.tui.screens import (
     TraceScreen,
 )
 from neuro_code.interfaces.tui.state import ToolActivityGroupState, ToolFeedbackState
+from neuro_code.interfaces.tui.terminal_palette import TerminalPalette
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
 
@@ -103,13 +104,19 @@ def make_trace_fixture() -> TraceCollector:
     return collector
 
 
-def make_app(theme: UiTheme, *, fixture: str) -> NeuroCodeApp:
+def make_app(
+    theme: UiTheme,
+    *,
+    fixture: str,
+    terminal_palette: TerminalPalette | None = None,
+) -> NeuroCodeApp:
     trace = make_trace_fixture() if fixture == "trace" else TraceCollector()
     return NeuroCodeApp(
         _VisualFixtureRunner(),  # type: ignore[arg-type]
         trace_collector=trace,
         language=UiLanguage.ENGLISH,
         ui_theme=theme,
+        terminal_palette=terminal_palette,
         provider_name="fixture-provider",
         model_name="fixture-model",
         cwd=Path("/workspace/neuro-code"),
