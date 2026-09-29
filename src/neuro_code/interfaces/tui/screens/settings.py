@@ -732,6 +732,8 @@ class ThemeSettingsScreen(ModalScreen[UiTheme | None]):
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         for choice in UiTheme:
             if event.widget.id == f"settings-theme-{choice.value}":
+                # Commit scroll visibility with the focus event, before the next key.
+                event.widget.scroll_visible(animate=False, immediate=True)
                 if self.preview is not None:
                     self.preview(choice)
                 if choice is self.selected:
