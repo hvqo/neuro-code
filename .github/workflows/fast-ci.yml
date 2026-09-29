@@ -1,0 +1,120 @@
+name: Fast CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.12", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      # Core architecture, permissions, sandbox, provider-failure and memory
+      # regressions stay on every PR; Full CI runs the complete suite.
+      - name: Run focused cross-platform tests
+        run: >-
+          uv run pytest
+          tests/architecture
+          tests/test_permissions.py
+          tests/test_application_permissions.py
+          tests/test_scoped_permissions.py
+          tests/test_sandbox.py
+          tests/test_security_capabilities.py
+          tests/test_provider_failure_conformance.py
+          tests/test_redaction.py
+          tests/test_project_memory.py
+          --durations=25
+
+  terminal-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    env:
+      NEURO_CODE_RUN_TERMINAL_SMOKE: "1"
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - run: uv run pytest tests/test_terminal_smoke.py --durations=25
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - run: uv run python scripts/check_all.py --quick
+
+  package-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: "0.11.29"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv build
+      - run: uv venv --python 3.12 .wheel-smoke
+      - run: uv pip install --python .wheel-smoke/bin/python dist/neuro_code-*.whl
+      - run: .wheel-smoke/bin/python -m neuro_code --help
+      - run: .wheel-smoke/bin/neuro --help
+      - run: .wheel-smoke/bin/neuro-code --help
+      - name: Verify removed compatibility modules stay absent
+        run: |
+          .wheel-smoke/bin/python - <<'PY'
+          import importlib.util
+
+          removed = (
+              "neuro_code.runtime",
+              "neuro_code.ports",
+              "neuro_code.errors",
+              "neuro_code.async_utils",
+              "neuro_code.redaction",
+              "neuro_code.providers",
+              "neuro_code.providers.anthropic",
+              "neuro_code.providers.failover",
+              "neuro_code.providers.gemini",
+              "neuro_code.providers.image_references",
+              "neuro_code.providers.openai_compatible",
+              "neuro_code.providers.openai_responses",
+              "neuro_code.providers.xai_responses",
+          )
+
+          def exists(name: str) -> bool:
+              try:
+                  return importlib.util.find_spec(name) is not None
+              except ModuleNotFoundError:
+                  return False
+
+          unexpected = [name for name in removed if exists(name)]
+          assert not unexpected, f"unexpected compatibility modules: {unexpected}"
+          PY

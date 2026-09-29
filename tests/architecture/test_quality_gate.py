@@ -29,8 +29,16 @@ def test_quality_workflow_keeps_documentation_gates() -> None:
     复述的易变事实又会与源码漂移。
     """
 
-    workflow = (_PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    workflows = (
+        _PROJECT_ROOT / ".github" / "workflows" / "ci.yml",
+        _PROJECT_ROOT / ".github" / "workflows" / "fast-ci.yml",
+    )
+    completion_script = (_PROJECT_ROOT / "scripts" / "check_all.py").read_text(encoding="utf-8")
 
-    assert "python scripts/check_docs_parity.py" in workflow
-    assert "python scripts/check_docs_consistency.py" in workflow
+    assert all(
+        "python scripts/check_all.py --quick" in path.read_text(encoding="utf-8")
+        for path in workflows
+    )
+    assert "scripts/check_docs_parity.py" in completion_script
+    assert "scripts/check_docs_consistency.py" in completion_script
     assert (_PROJECT_ROOT / "scripts" / "check_docs_consistency.py").is_file()

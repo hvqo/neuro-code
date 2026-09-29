@@ -1,9 +1,9 @@
-name: CI
+name: Full CI
 
 on:
   push:
     branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,7 +24,17 @@ jobs:
           python-version: ${{ matrix.python }}
           enable-cache: true
       - run: uv sync --extra dev --locked
-      - run: uv run pytest
+      - name: Run the full suite with coverage (Ubuntu, Python 3.12)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: >-
+          uv run pytest
+          --cov=neuro_code
+          --cov-report=term-missing
+          --cov-fail-under=85
+          --durations=25
+      - name: Run the full suite
+        if: matrix.os != 'ubuntu-latest' || matrix.python != '3.12'
+        run: uv run pytest --durations=25
 
   terminal-smoke:
     strategy:
@@ -43,7 +53,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --extra dev --locked
-      - run: uv run pytest tests/test_terminal_smoke.py
+      - run: uv run pytest tests/test_terminal_smoke.py --durations=25
 
   linux-sandbox-integration:
     # Pin 22.04: ubuntu-latest currently resolves to 24.04, whose default
@@ -92,7 +102,7 @@ jobs:
           uv run pytest
           tests/security/test_linux_sandbox_integration.py
           -m sandbox_integration
-          -q -rs
+          -q -rs --durations=25
           --junitxml=/tmp/neuro-code-linux-sandbox-${{ matrix.python }}.xml
       - name: Require every Linux security test to execute
         run: |
@@ -147,7 +157,7 @@ jobs:
           uv run pytest
           tests/security/test_macos_sandbox_integration.py
           -m sandbox_integration
-          -q -rs
+          -q -rs --durations=25
           --junitxml=${{ runner.temp }}/neuro-code-macos-seatbelt-${{ matrix.python }}.xml
       - name: Require every macOS security test to execute
         if: always()
@@ -200,7 +210,7 @@ jobs:
           tests/test_background_tasks.py::LocalBackgroundTaskManagerTests::test_windows_shutdown_terminates_atomically_owned_descendant
           tests/test_terminal_smoke.py::test_production_cli_ctrl_keys_resize_and_restore_through_windows_conpty
           tests/test_terminal_smoke.py::test_windows_conpty_reports_resize_and_preserves_nonzero_exit
-          -q -rs
+          -q -rs --durations=25
 
   windows-native-sandbox-security:
     runs-on: windows-latest
@@ -238,7 +248,7 @@ jobs:
         run: >-
           uv run pytest
           tests/security/test_windows_sandbox_native_acceptance.py
-          -q -rs
+          -q -rs --durations=25
 
   windows-native-sandbox-runtime:
     runs-on: windows-latest
@@ -259,6 +269,7 @@ jobs:
           tests/security/test_windows_native_runtime_acceptance.py
           -q -rs -s
           --junitxml=${{ runner.temp }}/neuro-code-windows-native-runtime.xml
+          --durations=25
       - name: Require W3 native acceptance execution
         shell: pwsh
         env:
@@ -398,6 +409,7 @@ jobs:
           uv run pytest
           tests/security/test_windows_native_workload_compatibility.py
           -q -rs -s
+          --durations=25
           --junitxml=${{ runner.temp }}/neuro-code-w5-compatibility.xml
       - name: Require W5 matrix execution
         shell: pwsh
@@ -430,15 +442,8 @@ jobs:
           version: "0.11.29"
           python-version: "3.12"
           enable-cache: true
-      - run: uv lock --check
       - run: uv sync --extra dev --locked
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run mypy
-      - run: uv run python scripts/check_docs_parity.py
-      - run: uv run python scripts/check_docs_consistency.py
-      - run: uv run pytest --cov=neuro_code --cov-report=term-missing --cov-fail-under=85
-      - run: uv build
+      - run: uv run python scripts/check_all.py --quick
 
   package-smoke:
     runs-on: ubuntu-latest
