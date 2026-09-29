@@ -64,7 +64,7 @@ class SettingsScreen(ModalScreen[str | None]):
         width: 94%; max-width: 132; height: 90%;
         padding: 1 2; border: round $border; background: $surface;
     }
-    #settings-title { text-style: bold; color: $text-primary; height: 1; }
+    #settings-title { text-style: none; color: $text-primary; height: 1; }
     #settings-description, #settings-help { color: $text-muted; text-style: $text-muted-intensity; height: auto; }
     #settings-search { width: 100%; margin: 1 0; }
     #settings-body { height: 1fr; }
@@ -78,7 +78,7 @@ class SettingsScreen(ModalScreen[str | None]):
     }
     #settings-categories { width: 1fr; height: 1fr; }
     .settings-group { height: auto; margin-bottom: 2; padding: 1 2; background: $boost 35%; }
-    .settings-group-title { color: $text-primary; text-style: bold; margin: 0 1 1 1; }
+    .settings-group-title { color: $text-primary; text-style: none; margin: 0 1 1 1; }
     .settings-entry { height: auto; padding: 1 0; border-top: solid $border; }
     .settings-entry MenuOptionButton { width: 100%; height: 2; content-align: left middle; background: transparent; }
     .settings-entry MenuOptionButton:focus { background: $surface; }
@@ -511,7 +511,7 @@ class LanguageSettingsScreen(ModalScreen[UiLanguage | None]):
     }
 
     #language-settings-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -635,7 +635,7 @@ class ThemeSettingsScreen(ModalScreen[UiTheme | None]):
     }
 
     #theme-settings-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -774,7 +774,7 @@ class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
     }
 
     #network-settings-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -785,7 +785,7 @@ class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
     }
 
     #network-settings-dialog Label {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-top: 2;
         margin-bottom: 1;
@@ -803,7 +803,7 @@ class NetworkProxySettingsScreen(ModalScreen[ManagedProviderSettings | None]):
         padding-left: 1;
         border-left: tall $border-focus;
         color: $text-primary;
-        text-style: bold;
+        text-style: none;
     }
 
     #network-settings-error.empty {
@@ -976,11 +976,11 @@ class BraveSearchApiKeySettingsScreen(ModalScreen[ManagedProviderSettings | None
         width: 82%; max-width: 88; height: auto; padding: $space-2 $space-3;
         border: round $border; background: $surface;
     }
-    #search-api-key-title { text-style: bold; color: $text-primary; margin-bottom: 1; }
+    #search-api-key-title { text-style: none; color: $text-primary; margin-bottom: 1; }
     #search-api-key-description, #search-api-key-status, #search-api-key-error {
         color: $text-muted; height: auto; margin-bottom: 1;
     }
-    #search-api-key-error { color: $text-primary; text-style: bold; }
+    #search-api-key-error { color: $text-primary; text-style: none; }
     #search-api-key-actions {
         align-horizontal: right; border-top: solid $border; padding-top: 1; margin-top: 1;
     }
@@ -1120,7 +1120,7 @@ class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
     }
 
     #background-wake-settings-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -1131,7 +1131,7 @@ class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
     }
 
     #background-wake-settings-dialog Label {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-top: 2;
         margin-bottom: 1;
@@ -1149,7 +1149,7 @@ class BackgroundWakeSettingsScreen(ModalScreen[ManagedProviderSettings | None]):
         padding-left: 1;
         border-left: tall $border-focus;
         color: $text-primary;
-        text-style: bold;
+        text-style: none;
     }
 
     #background-wake-settings-error.empty {

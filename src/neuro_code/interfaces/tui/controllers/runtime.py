@@ -166,7 +166,7 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         hints = Text()
         hints.append(
             ui_text(self._language, "command_hint.tab"),
-            style=f"bold {theme_style(self, TEXT_EMPHASIS)}",
+            style=theme_style(self, TEXT_EMPHASIS),
         )
         hints.append("  ", style=theme_style(self, TEXT_DISABLED))
         for index, completion in enumerate(completions[:_COMMAND_HINT_LIMIT]):

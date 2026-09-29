@@ -114,7 +114,7 @@ class TextValueScreen(ModalScreen[str | None]):
     }
 
     #text-value-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -223,7 +223,7 @@ class ConfirmActionScreen(ModalScreen[bool]):
     }
 
     #confirm-action-title {
-        text-style: bold;
+        text-style: none;
         color: $warning;
         margin-bottom: 1;
     }
@@ -327,7 +327,7 @@ class ProjectPickerScreen(ModalScreen[str | None]):
     }
 
     #project-picker-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -422,7 +422,7 @@ class SessionLibraryScreen(ModalScreen[SessionLibraryAction | None]):
     }
 
     #library-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }

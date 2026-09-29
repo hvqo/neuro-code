@@ -1,4 +1,5 @@
-"""Deterministic, provider-free TUI visual fixtures."""
+# ruff: noqa: RUF001
+"""Deterministic, provider-free TUI visual fixtures with natural CJK punctuation."""
 
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ VISUAL_FIXTURES = (
     "empty-conversation",
     "user-assistant",
     "long-markdown",
+    "mixed-language-long-answer",
     "tool-activity",
     "error",
     "permission",
@@ -59,6 +61,29 @@ def stable_visual_state(width: int, height: int) -> tuple[int, int]:
 
 The final paragraph gives the long-message viewport a repeatable continuation and
 exercises the same Markdown renderer used for ordinary assistant messages.
+"""
+
+_MIXED_LANGUAGE_LONG_ANSWER = """# 仓库审查结论
+
+本轮检查了 `src/neuro_code/interfaces/tui/theme.py` 与 `tests/visual/showcases.py`。
+当前**主要结论**是：正文应保持连续可读，路径和命令只作为定位证据。
+This paragraph mixes English terms with 中文说明，用于观察换行与 regular 字重。
+
+## 证据与判断
+
+- `theme.py` 定义语义样式，`uv run pytest tests/test_tui_visual_snapshots.py -q`
+  负责检查渲染结果；命令本身不是高优先级状态。
+- 工具摘要应让 `read_file`、耗时 `120ms` 和路径退到次要阅读层。
+
+> 提醒：Snapshot 固定了 Textual 的输出，但 System Theme 在真实终端上的 ANSI
+> palette 仍需要人工检查。这里的引文只作为辅助说明。
+
+### 下一步
+
+确认列表、引用和行内 `AGENTS.md` 不形成视觉标签。围栏代码仍可保留独立背景。
+
+最后继续阅读这一段较长的中文说明，以确认在 80 列和 120 列终端中，
+段落之间的层级稳定，普通句子不会被标题、状态色或耗时数字抢走注意力。
 """
 
 
@@ -138,6 +163,10 @@ def populate_fixture(app: NeuroCodeApp, fixture: str) -> None:
     if fixture == "long-markdown":
         app._write_entry("user", "Show the formatted review notes.")
         app._write_entry("assistant", _LONG_MARKDOWN)
+        return
+    if fixture == "mixed-language-long-answer":
+        app._write_entry("user", "请总结审查证据，并说明如何验证。")
+        app._write_entry("assistant", _MIXED_LANGUAGE_LONG_ANSWER)
         return
     if fixture == "tool-activity":
         _populate_tool_activity(app)

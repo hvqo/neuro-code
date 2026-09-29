@@ -170,7 +170,7 @@ TEXTUAL_THEME = Theme(
         # Keep the current neutral focus treatment for graphical themes. System
         # overrides this with terminal-native reverse video.
         "button-focus-text-style": "none",
-        "selected-button-text-style": "bold",
+        "selected-button-text-style": "none",
         "footer-background": BACKGROUND,
         "footer-description-background": BACKGROUND,
         "footer-description-foreground": TEXT_MUTED,
@@ -201,27 +201,27 @@ MARKDOWN_THEME = RichTheme(
         "markdown.text": TEXT_BODY,
         "markdown.em": f"italic {TEXT_EMPHASIS}",
         "markdown.strong": f"bold {TEXT_PRIMARY}",
-        # Inline code is part of a prose line, not a panel or chip. Keep the
-        # accent on the foreground only; fenced code retains its own surface.
-        "markdown.code": ACCENT_CODE,
+        # Inline code is part of a prose line, not a panel or chip. Use a
+        # restrained foreground only; fenced code retains its own surface.
+        "markdown.code": TEXT_EMPHASIS,
         "markdown.code_block": f"{TEXT_BODY} on {SURFACE}",
-        "markdown.block_quote": f"italic {TEXT_SECONDARY}",
+        "markdown.block_quote": TEXT_SECONDARY,
         "markdown.list": TEXT_BODY,
         "markdown.item": TEXT_BODY,
-        "markdown.item.bullet": f"bold {TEXT_SECONDARY}",
-        "markdown.item.number": f"bold {TEXT_SECONDARY}",
+        "markdown.item.bullet": TEXT_MUTED,
+        "markdown.item.number": TEXT_MUTED,
         "markdown.hr": BORDER_SUBTLE,
         "markdown.h1": f"bold {TEXT_PRIMARY}",
-        "markdown.h2": f"bold {TEXT_PRIMARY}",
-        "markdown.h3": f"bold {TEXT_EMPHASIS}",
-        "markdown.h4": f"bold {TEXT_BODY}",
-        "markdown.h5": f"bold {TEXT_EMPHASIS}",
-        "markdown.h6": f"bold {TEXT_SECONDARY}",
+        "markdown.h2": TEXT_PRIMARY,
+        "markdown.h3": TEXT_EMPHASIS,
+        "markdown.h4": TEXT_BODY,
+        "markdown.h5": TEXT_EMPHASIS,
+        "markdown.h6": TEXT_SECONDARY,
         "markdown.link": f"underline {ACCENT}",
         "markdown.link_url": f"underline {ACCENT}",
         "markdown.table.border": BORDER_SUBTLE,
-        "markdown.table.header": f"bold {TEXT_EMPHASIS}",
-        "markdown.kbd": f"bold {TEXT_EMPHASIS} on {SURFACE_SELECTED}",
+        "markdown.table.header": TEXT_EMPHASIS,
+        "markdown.kbd": f"{TEXT_EMPHASIS} on {SURFACE_SELECTED}",
     }
 )
 
@@ -236,22 +236,22 @@ class _MonochromePygmentsStyle(PygmentsStyle):
         Text: TEXT_BODY,
         Whitespace: TEXT_BODY,
         Comment: f"italic {TEXT_MUTED}",
-        Keyword: f"bold {ACCENT_VIOLET}",
-        Keyword.Type: f"bold {ACCENT_CODE}",
+        Keyword: ACCENT_VIOLET,
+        Keyword.Type: ACCENT_CODE,
         Operator: SYNTAX_OPERATOR,
-        Operator.Word: f"bold {SYNTAX_OPERATOR}",
+        Operator.Word: SYNTAX_OPERATOR,
         Name: TEXT_BODY,
         Name.Builtin: ACCENT_CODE,
-        Name.Function: f"bold {ACCENT_BLUE}",
-        Name.Class: f"bold {ACCENT_WARNING}",
+        Name.Function: ACCENT_BLUE,
+        Name.Class: ACCENT_WARNING,
         Name.Decorator: ACCENT_ORANGE,
         String: ACCENT_SUCCESS,
         Number: ACCENT_NUMBER,
         Generic.Deleted: ACCENT_ERROR,
-        Generic.Inserted: f"bold {ACCENT_SUCCESS}",
-        Generic.Heading: f"bold {TEXT_PRIMARY}",
-        Generic.Subheading: f"bold {ACCENT_CODE}",
-        Error: f"bold {ACCENT_ERROR}",
+        Generic.Inserted: ACCENT_SUCCESS,
+        Generic.Heading: TEXT_PRIMARY,
+        Generic.Subheading: ACCENT_CODE,
+        Error: ACCENT_ERROR,
     }
 
 
@@ -627,7 +627,7 @@ def textual_theme_for(
     if choice is UiTheme.SYSTEM:
         assert system_palette is not None
         variables["input-selection-background"] = "ansi_blue"
-        variables["button-focus-text-style"] = "bold reverse"
+        variables["button-focus-text-style"] = "reverse"
         intensity = "none" if system_palette.adaptive else "dim"
         variables["text-secondary-intensity"] = intensity
         variables["text-muted-intensity"] = intensity
@@ -639,7 +639,7 @@ def textual_theme_for(
                 "composer-muted": system_palette.text_muted,
                 "composer-selection": "ansi_blue",
                 "composer-selection-text": "ansi_default",
-                "selected-button-text-style": "bold reverse",
+                "selected-button-text-style": "reverse",
                 "user-message-surface": system_palette.user_message_surface,
                 "user-message-border": system_palette.border_normal,
             }
@@ -781,32 +781,32 @@ MODE_STYLES = {
 
 USER_TEXT_STYLE = TEXT_PRIMARY
 ASSISTANT_TEXT_STYLE = TEXT_BODY
-SYSTEM_LABEL_STYLE = f"bold {TEXT_EMPHASIS}"
+SYSTEM_LABEL_STYLE = TEXT_EMPHASIS
 SYSTEM_TEXT_STYLE = TEXT_BODY
-STATUS_LABEL_STYLE = f"bold {TEXT_SECONDARY}"
+STATUS_LABEL_STYLE = TEXT_SECONDARY
 STATUS_TEXT_STYLE = TEXT_SECONDARY
-RECOVERABLE_LABEL_STYLE = f"bold {ACCENT_WARNING}"
+RECOVERABLE_LABEL_STYLE = ACCENT_WARNING
 RECOVERABLE_TEXT_STYLE = TEXT_EMPHASIS
-TOOL_LABEL_STYLE = f"bold {TEXT_SECONDARY}"
+TOOL_LABEL_STYLE = TEXT_SECONDARY
 TOOL_TEXT_STYLE = TEXT_SECONDARY
 TOOL_TITLE_STYLE = TEXT_SECONDARY
 TOOL_ACTIVE_STYLE = ACCENT
-TOOL_COMPLETE_STYLE = f"bold {ACCENT_SUCCESS}"
-TOOL_META_STYLE = TEXT_SECONDARY
+TOOL_COMPLETE_STYLE = ACCENT_SUCCESS
+TOOL_META_STYLE = TEXT_MUTED
 TOOL_DETAIL_STYLE = TEXT_SECONDARY
 TOOL_GUIDE_STYLE = TEXT_MUTED
-ERROR_LABEL_STYLE = f"bold {ACCENT_ERROR}"
-ERROR_TEXT_STYLE = f"bold {ACCENT_ERROR}"
+ERROR_LABEL_STYLE = ACCENT_ERROR
+ERROR_TEXT_STYLE = ACCENT_ERROR
 ERROR_DETAIL_STYLE = ACCENT_ERROR
 WAITING_STYLE = ACCENT_WARNING
 
-DIFF_HUNK_STYLE = f"bold {ACCENT_VIOLET} on {SURFACE_SELECTED}"
-DIFF_FILE_STYLE = f"bold {ACCENT_BLUE}"
+DIFF_HUNK_STYLE = f"{TEXT_SECONDARY} on {SURFACE_SELECTED}"
+DIFF_FILE_STYLE = TEXT_SECONDARY
 DIFF_ADDITION_STYLE = f"{ACCENT_SUCCESS} on {SURFACE_SELECTED}"
 DIFF_DELETION_STYLE = f"{ACCENT_ERROR} on {SURFACE_HOVER}"
 DIFF_CONTEXT_STYLE = TEXT_BODY
-DIFF_SUMMARY_ADDITION_STYLE = f"bold {ACCENT_SUCCESS} on {SURFACE_SELECTED}"
-DIFF_SUMMARY_DELETION_STYLE = f"bold {ACCENT_ERROR} on {SURFACE_HOVER}"
+DIFF_SUMMARY_ADDITION_STYLE = f"{ACCENT_SUCCESS} on {SURFACE_SELECTED}"
+DIFF_SUMMARY_DELETION_STYLE = f"{ACCENT_ERROR} on {SURFACE_HOVER}"
 
 LOADING_LEVEL_STYLES = (
     TEXT_DIM,
@@ -821,7 +821,7 @@ LOADING_LEVEL_STYLES = (
 
 CONNECTION_STATUS_STYLES = {
     "success": TOOL_COMPLETE_STYLE,
-    "warning": f"bold {ACCENT_WARNING}",
+    "warning": ACCENT_WARNING,
     "error": ERROR_TEXT_STYLE,
 }
 
@@ -833,7 +833,7 @@ def loading_style(level: int) -> str:
 
     safe_level = max(0, min(len(LOADING_LEVEL_STYLES) - 1, level))
     style = LOADING_LEVEL_STYLES[safe_level]
-    return f"bold {style}" if safe_level == len(LOADING_LEVEL_STYLES) - 1 else style
+    return style
 
 
 __all__ = [

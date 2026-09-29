@@ -44,7 +44,7 @@ class ToolInspectorScreen(ModalScreen[None]):
     #tool-inspector-title {
         height: 1;
         color: $text-primary;
-        text-style: bold;
+        text-style: none;
     }
 
     #tool-inspector-subtitle,

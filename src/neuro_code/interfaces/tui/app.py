@@ -341,7 +341,7 @@ class NeuroCodeApp(
         border-left: solid $user-message-border;
         background: $user-message-surface;
         color: $text-primary;
-        text-style: bold;
+        text-style: none;
     }
 
     .message-assistant {
@@ -390,7 +390,7 @@ class NeuroCodeApp(
     .message-error {
         color: $text-primary;
         border-left: tall $error;
-        text-style: bold;
+        text-style: none;
     }
 
     #composer {
@@ -491,12 +491,12 @@ class NeuroCodeApp(
         border: none;
         background: $composer-surface;
         color: $border-focus;
-        text-style: bold;
+        text-style: none;
     }
 
     #prompt-send:hover, #prompt-send:focus {
         background: $surface-selected;
-        text-style: bold reverse;
+        text-style: reverse;
     }
 
     #prompt-newline {
@@ -1096,7 +1096,7 @@ class NeuroCodeApp(
 
     def _refresh_header(self) -> None:
         brand = Text()
-        brand.append("NEURO", style=f"bold {theme_style(self, BRAND_TEXT)}")
+        brand.append("NEURO", style=theme_style(self, BRAND_TEXT))
         brand.append(" / CODE", style=theme_style(self, TEXT_MUTED))
         self._main_screen_query_one("#brand", Static).update(brand)
         self._update_clock()

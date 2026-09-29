@@ -8,8 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
-from rich.console import RenderableType
-from rich.markdown import Markdown
+from rich.console import JustifyMethod, RenderableType
+from rich.markdown import Heading, Markdown, MarkdownElement
 from rich.table import Table
 from rich.text import Text
 from textual import events
@@ -98,10 +98,21 @@ class MenuOptionButton(Button):
         return table
 
 
+class _ReadingHeading(Heading):
+    """Keep document headings on the conversation reading axis."""
+
+    LEVEL_ALIGN: ClassVar[dict[str, JustifyMethod]] = {**Heading.LEVEL_ALIGN, "h1": "left"}
+
+
 class AssistantMarkdown(Markdown):
     """Safe model Markdown whose string form remains useful in diagnostics.
 
     安全的模型 Markdown,其字符串形式仍适合诊断."""
+
+    elements: ClassVar[dict[str, type[MarkdownElement]]] = {
+        **Markdown.elements,
+        "heading_open": _ReadingHeading,
+    }
 
     def __str__(self) -> str:
         return self.markup

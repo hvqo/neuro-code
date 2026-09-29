@@ -73,7 +73,7 @@ class ProviderSettingsScreen(
     }
 
     #provider-settings-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -90,7 +90,7 @@ class ProviderSettingsScreen(
     #provider-settings-protocol-title,
     #provider-settings-proxy-title,
     #provider-settings-background-wake-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-top: 2;
         margin-bottom: 1;
@@ -115,7 +115,7 @@ class ProviderSettingsScreen(
         padding-left: 1;
         border-left: tall $border-focus;
         color: $text-primary;
-        text-style: bold;
+        text-style: none;
     }
 
     #provider-settings-error.empty {
@@ -205,7 +205,7 @@ class ProviderSettingsScreen(
     }
 
     #provider-settings-form Label {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-top: 2;
         margin-bottom: 1;

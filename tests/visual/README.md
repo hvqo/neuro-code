@@ -3,7 +3,9 @@
 This V0 harness exports deterministic SVG screenshots from the real Textual TUI
 widgets. It does not start a Session or Provider and does not make network calls.
 Fixtures pin the clock, provider/model labels, workspace path, and trace IDs. The
-baselines cover 9 fixtures × 3 viewports × 3 themes = 81 screenshots.
+V0 baselines covered 9 fixtures × 3 viewports × 3 themes = 81 screenshots.
+V1B adds a mixed Chinese/English long answer for a 10-fixture, 90-screenshot
+matrix, plus the six deterministic System terminal-palette screenshots.
 Whitespace-only line-end padding from the SVG serializer is normalized; rendered
 text and geometry remain unchanged.
 
@@ -87,6 +89,27 @@ semantic structure in this renderer and also inspect your actual terminal;
 the browser SVG is not a simulation of your terminal's ANSI palette. The six
 `system-palette-*` cards are V1A-only deterministic dark/light/fallback
 samples because V0 had no equivalent palette fixtures.
+
+For focused V1A-before/V1B-after review, the following command reads the
+committed V1A snapshots from the V1B branch point. It includes the five
+reading scenarios; the mixed-language fixture is new and shows an explicit
+missing-before label. No baseline or worktree is modified:
+
+```bash
+uv run python tests/visual/render_gallery.py \
+  --before-ref 743022d5dede4227cdabaf0daf6ac7472ce50db1 \
+  --after-label V1B \
+  --fixtures long-markdown user-assistant tool-activity error mixed-language-long-answer \
+  --output /tmp/neuro-code-tui-v1b-reading-compare.html
+```
+
+Open `/tmp/neuro-code-tui-v1b-reading-compare.html` in a browser. Compare
+regular prose, H1/H2/H3, lists, quotes, inline and fenced code, tool metadata,
+and error text at all three viewports and themes. A real-terminal reading pass
+is still needed for System ANSI palettes and long Chinese/English paragraphs.
+The gallery removes Rich SVG's fixed `textLength` from embedded images so
+browser CJK fallback glyphs do not overlap; committed snapshot bytes and their
+exact regression comparison remain unchanged.
 
 To update only those six palette samples after an intentional visual change:
 

@@ -60,7 +60,7 @@ class ToolActivityPresentationMixin(TuiAppControllerMixin):
         table.add_column(width=1, no_wrap=True)
         table.add_column(ratio=1, overflow="ellipsis", no_wrap=True)
         table.add_column(width=8, justify="right", no_wrap=True)
-        table.add_row("", Text(title, style=f"bold {theme_style(self, TEXT_EMPHASIS)}"), "")
+        table.add_row("", Text(title, style=theme_style(self, TEXT_EMPHASIS)), "")
         for marker, marker_style, summary, duration in self._tool_activity_rows(group):
             table.add_row(
                 Text(marker, style=marker_style),
@@ -126,7 +126,7 @@ class ToolActivityPresentationMixin(TuiAppControllerMixin):
     ) -> Text:
         peek = self._tool_activity_peek_presentation(group, title=title)
         rendered = Text(overflow="fold")
-        rendered.append(peek.title, style=f"bold {theme_style(self, TEXT_EMPHASIS)}")
+        rendered.append(peek.title, style=theme_style(self, TEXT_EMPHASIS))
         rendered.append("\n")
         rendered.append(peek.help, style=theme_style(self, TOOL_META_STYLE))
         rendered.append("\n")

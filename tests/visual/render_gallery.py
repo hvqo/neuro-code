@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import html
+import re
 import subprocess
 from pathlib import Path
 from tempfile import gettempdir
@@ -12,6 +13,10 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _embedded_svg(content: bytes, label: str) -> str:
+    # Rich's SVG exporter fixes each text run to a terminal-cell textLength.
+    # Browser CJK fallback fonts can then compress Chinese glyphs into overlaps.
+    # This is gallery-only; checked-in snapshots remain exact exporter output.
+    content = re.sub(rb' textLength="[0-9.]+"', b"", content)
     encoded = base64.b64encode(content).decode("ascii")
     return f'<img alt="{label}" src="data:image/svg+xml;base64,{encoded}">'
 
@@ -37,10 +42,18 @@ def _snapshot_at_ref(ref: str, path: Path) -> bytes | None:
         ) from error
 
 
-def render_gallery(output: Path, *, before_ref: str | None = None) -> Path:
+def render_gallery(
+    output: Path,
+    *,
+    before_ref: str | None = None,
+    after_label: str = "V1A",
+    fixtures: frozenset[str] | None = None,
+) -> Path:
     snapshots = sorted(SNAPSHOT_ROOT.glob("*.svg"))
+    if fixtures is not None:
+        snapshots = [path for path in snapshots if path.stem.split("__", 1)[0] in fixtures]
     if not snapshots:
-        raise SystemExit("No SVG baselines found; run the visual snapshot tests first.")
+        raise SystemExit("No matching SVG baselines found; run the visual snapshot tests first.")
 
     cards: list[str] = []
     for path in snapshots:
@@ -53,12 +66,12 @@ def render_gallery(output: Path, *, before_ref: str | None = None) -> Path:
             before = (
                 _embedded_svg(before_svg, f"{label} before")
                 if before_svg is not None
-                else "<span class=missing>Not present in the V0 baseline</span>"
+                else "<span class=missing>Not present in the before baseline</span>"
             )
             cards.append(
                 f"<figure><figcaption>{label}</figcaption><div class=pair>"
                 f"<div><strong>Before ({html.escape(before_ref)})</strong>{before}</div>"
-                f"<div><strong>V1A</strong>{current}</div></div></figure>"
+                f"<div><strong>{html.escape(after_label)}</strong>{current}</div></div></figure>"
             )
 
     document = (
@@ -102,8 +115,25 @@ def main() -> None:
         "--before-ref",
         help="Show each committed snapshot at this Git ref beside the current snapshot.",
     )
+    parser.add_argument(
+        "--after-label",
+        default="V1A",
+        help="Label the current snapshots in a before/after gallery.",
+    )
+    parser.add_argument(
+        "--fixtures",
+        nargs="+",
+        help="Include only these fixture names in the gallery.",
+    )
     args = parser.parse_args()
-    print(render_gallery(args.output.resolve(), before_ref=args.before_ref))
+    print(
+        render_gallery(
+            args.output.resolve(),
+            before_ref=args.before_ref,
+            after_label=args.after_label,
+            fixtures=frozenset(args.fixtures) if args.fixtures else None,
+        )
+    )
 
 
 if __name__ == "__main__":

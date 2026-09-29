@@ -909,6 +909,12 @@ without mutable global theme state. Settings → Appearance provides a scrollabl
 picker, arrow-key preview, Enter to apply/save, and Esc to restore the original.
 Preview and persistence are separate. `system` uses terminal defaults and ANSI
 colors; other choices use explicit RGB palettes. See [TUI themes](tui-themes.md).
+The V1B typography contract keeps ordinary conversation and UI text regular:
+assistant prose leads, tool/status text recedes, and durations, paths, and IDs
+are metadata. Only explicit emphasis and the leading Markdown heading use bold;
+semantic state uses color and boundaries. Inline code remains foreground-only,
+while fenced code keeps its own surface. Theme changes preserve these reading
+roles and geometry. See [ADR 0185](adr/0185-tui-typography-and-reading-hierarchy-v1b.md).
 
 The existing atomic UI preferences port saves the shared `UiTheme` in the `theme`
 field; missing/invalid values fall back to Porcelain. Obsidian keeps the `graphite`
@@ -924,7 +930,7 @@ top/left rules for boundaries and readable placeholder, cursor and selection col
 System makes one bounded OSC 10/11 default-color query before Textual owns input; it
 derives subtle surfaces when RGB and TrueColor/ANSI256 are available, then fails soft
 to default fills, visible ANSI borders, dim secondary text and ANSI focus. Composer
-focus recolors an existing top inset without moving its contents. Narrow/short terminals
+uses its adaptive surface and focus treatment without moving its contents. Narrow/short terminals
 compact the chrome with bounded multiline height. Permissions, execution and session
 contracts remain unchanged.
 

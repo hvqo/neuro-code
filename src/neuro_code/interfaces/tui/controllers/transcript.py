@@ -36,7 +36,7 @@ from neuro_code.interfaces.tui.theme import (
     SYSTEM_TEXT_STYLE,
     TEXT_BODY,
     TEXT_DIM,
-    TEXT_EMPHASIS,
+    TEXT_MUTED,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     TOOL_DETAIL_STYLE,
@@ -181,32 +181,26 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
         )
 
     def _semantic_value_style(self, name: str, value: object) -> str | None:
-        if name in {"provider", "model", "profile", "source"}:
-            return f"bold {theme_style(self, TEXT_EMPHASIS)}"
-        if name in {"name", "task_id", "session_id", "title"}:
-            return f"bold {theme_style(self, TEXT_EMPHASIS)}"
-        if name == "path":
+        if name in {"provider", "model", "profile", "source", "name", "title"}:
             return theme_style(self, TEXT_SECONDARY)
-        if name == "cwd":
-            return theme_style(self, TEXT_SECONDARY)
+        if name in {"task_id", "session_id", "path", "cwd"}:
+            return theme_style(self, TEXT_MUTED)
         if name in {"effect", "outcome", "status"}:
-            return f"bold {theme_style(self, ACCENT_SUCCESS)}"
-        if name in {"duration", "steps", "step"}:
-            return f"bold {theme_style(self, TEXT_SECONDARY)}"
-        if name == "context":
-            return f"bold {theme_style(self, TEXT_SECONDARY)}"
+            return theme_style(self, ACCENT_SUCCESS)
+        if name in {"duration", "steps", "step", "context"}:
+            return theme_style(self, TEXT_MUTED)
         if name in {"effort", "requested", "effective"}:
             try:
                 effort = ReasoningEffort(str(value))
             except ValueError:
-                return f"bold {theme_style(self, TEXT_EMPHASIS)}"
-            return f"bold {theme_style(self, EFFORT_STYLES[effort.value])}"
+                return theme_style(self, TEXT_SECONDARY)
+            return theme_style(self, EFFORT_STYLES[effort.value])
         if name == "mode":
             try:
                 mode = InteractionMode(str(value))
             except ValueError:
-                return f"bold {theme_style(self, TEXT_EMPHASIS)}"
-            return f"bold {theme_style(self, MODE_STYLES[mode.value])}"
+                return theme_style(self, TEXT_SECONDARY)
+            return theme_style(self, MODE_STYLES[mode.value])
         if name == "policy":
             return theme_style(self, TEXT_SECONDARY)
         if name in {"message", "reason", "error"}:
@@ -252,7 +246,7 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
             return self._render_plan(self._plan, self._plan_comments)
         content = localize_error_text(self._language, content)
         label, label_style = labels.get(
-            category, (category.title(), f"bold {theme_style(self, TEXT_PRIMARY)}")
+            category, (category.title(), theme_style(self, TEXT_PRIMARY))
         )
         body = Text(overflow="fold")
         body.append(label, style=label_style)
