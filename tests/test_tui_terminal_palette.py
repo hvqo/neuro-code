@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import select
+import threading
+import time
 from io import StringIO
 from types import SimpleNamespace
 
@@ -8,6 +12,7 @@ import pytest
 from neuro_code.interfaces.tui.terminal_palette import (
     TerminalColorLevel,
     TerminalPalette,
+    _probe_default_colors,
     parse_osc_default_colors,
     probe_terminal_palette,
     resolve_system_palette,
@@ -52,6 +57,42 @@ def test_palette_probe_fails_soft_without_interactive_terminal() -> None:
     assert palette.foreground is None
     assert palette.background is None
     assert palette.color_level is TerminalColorLevel.UNKNOWN
+
+
+@pytest.mark.skipif(os.name != "posix", reason="PTY palette probing requires POSIX")
+def test_terminal_probe_reads_osc_pair_and_restores_terminal_mode() -> None:
+    import pty
+    import termios
+
+    master_fd, slave_fd = pty.openpty()
+    original_mode = termios.tcgetattr(slave_fd)
+    requests = bytearray()
+
+    def emulate_terminal() -> None:
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            readable, _, _ = select.select([master_fd], [], [], 0.05)
+            if readable:
+                requests.extend(os.read(master_fd, 512))
+                if b"\x1b]11;?\x1b\\" in requests:
+                    os.write(
+                        master_fd,
+                        b"\x1b]10;rgb:eeee/eeee/eeee\x1b\\\x1b]11;rgb:1a1a/1a1a/1a1a\x1b\\",
+                    )
+                    return
+
+    responder = threading.Thread(target=emulate_terminal, daemon=True)
+    responder.start()
+    try:
+        colors = _probe_default_colors(slave_fd, slave_fd, timeout_seconds=0.5)
+        responder.join(timeout=1.0)
+        assert colors == ((238, 238, 238), (26, 26, 26))
+        assert b"\x1b]10;?\x1b\\" in requests
+        assert b"\x1b]11;?\x1b\\" in requests
+        assert termios.tcgetattr(slave_fd) == original_mode
+    finally:
+        os.close(master_fd)
+        os.close(slave_fd)
 
 
 @pytest.mark.parametrize(

@@ -74,6 +74,10 @@ def _smoke_environment(
             "TERMINAL_SMOKE_KEY": "offline-fixture-key",
             "TERM": "xterm-256color",
             "COLORTERM": "truecolor",
+            # This PTY harness is not a terminal emulator and cannot answer
+            # OSC 10/11. Exercise the deterministic unknown-palette fallback;
+            # the bounded query protocol has its own simulated-PTY regression.
+            "NO_COLOR": "1",
             "COLUMNS": "100",
             "LINES": "30",
             "PYTHONUNBUFFERED": "1",
