@@ -28,17 +28,32 @@ transcript 保留会话身份提示。品牌不随草稿增高而移动。
 ### Composer 与键盘
 
 Composer 由有界的输入表面和底部单行运行状态栏组成。空输入表面
-在普通宽度占 3 行，在紧凑布局占 2 行，并随可见草稿行数增长。输入编辑器同时受
+在普通宽度占 2 行，在紧凑布局占 1 行，并随可见草稿行数增长。输入编辑器同时受
 现有 8 行上限和终端高度四分之一约束，矮终端至少保留 2 行预算；更长草稿在编辑器
 内部滚动。短草稿释放的空间全部交给主阅读区，空会话仍从顶部阅读轴开始。状态栏
 固定在底部，保留原有数据和提示；附件、运行中状态及命令提示在出现时保留自身行。
 
-默认 `Enter` 提交草稿。终端透传独立修饰键事件时，`Shift+Enter` 插入换行；终端
-无法区分修饰键时，仍可使用 `Ctrl+J`、`F2` 和可聚焦的“换行”按钮。用户自行选择
-的 Enter 换行模式保持原样。简短快捷键提示在编辑时仍可见，优先列出可靠的备用键，
-复用现有操作栏，不增加高度，也不随焦点移动。“换行”按钮提示说明终端透传限制，
-不声称所有终端都能区分
-`Shift+Enter` 和 `Enter`。
+默认 `Enter` 提交草稿。发送按钮与编辑器共用一行；不再有专属操作/提示行或
+换行按钮。Ctrl+J / F2 备用键移至 F1 / `/help`。用户自行选择的 Enter 换行模式保留。
+
+Textual 1.x 负责终端输入、POSIX 的 Kitty 消歧启用 (`CSI >1u`)、CSI-u `13;2u`
+到 `shift+enter` 的规范化，以及粘贴、编辑和退出恢复。`TerminalKeyboardCapability`
+只记录真正收到的修饰 Enter；启用请求、终端名称、环境变量都不代表支持。
+不增加输入读取器、协议解析器或启动等待。独立 `shift+enter` 在选区插入换行；
+旧 CR 和 SS3 keypad Enter 保持发送，Ctrl+J / F2 保持换行。
+
+已审计 Konsole 25.12.3 的默认 keytab：Shift+Return 输出 SS3 `ESC O M`，Textual
+将其解析为 keypad Enter。这不是可靠的 Shift 编码，不能全局改为换行而破坏数字
+小键盘 Enter。该版本 VT 模拟器没有 Kitty 键盘协商。用户可在终端按键配置中显式
+把 Shift+Return 映射为 `\E[13;2u`，或使用支持增强上报的版本/链路；Neuro 不修改配置。
+Kitty / Ghostty 可上报 CSI-u；WezTerm 需启用 Kitty 协议选项。Windows Terminal
+取决于版本，而 Textual 1.x Windows 驱动不启用 Kitty 协商；已送达的独立事件能处理，
+未确认链路保持备用键。Help 显示已观察/未确认能力，不根据品牌声称普遍支持。
+终端快捷键和 multiplexer 也可能改变输入链路，因此仍需实机验收。
+
+来源：[Konsole 25.12.3 默认 keytab](https://github.com/KDE/konsole/blob/v25.12.3/data/keyboard-layouts/default.keytab)、
+[Kitty 协议](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)、
+[WezTerm 选项](https://wezterm.org/config/lua/config/enable_kitty_keyboard.html)。
 
 本决策仅改变外壳几何和输入提示。V1A 的颜色与自适应 System 表面、V1B 的排版、
 权限行为、运行状态值和持久会话历史仍由现有实现负责。

@@ -25,7 +25,7 @@ async def test_empty_session_preserves_reading_space_and_a_locatable_composer(
         composer = app.query_one("#composer")
         surface = app.query_one("#prompt-surface")
         prompt = app.query_one("#prompt", PromptInput)
-        actions = app.query_one("#prompt-actions")
+        send = app.query_one("#prompt-send")
         status = app.query_one("#runtime-bar")
         brand = app.query_one("#brand")
         runtime_primary = app.query_one("#runtime-primary")
@@ -35,10 +35,13 @@ async def test_empty_session_preserves_reading_space_and_a_locatable_composer(
         assert header.region.bottom == transcript.region.y
         assert transcript.region.bottom == composer.region.y
         assert composer.region.bottom == status.region.bottom == height
-        assert composer.region.height == (3 if width <= 80 else 4)
+        assert composer.region.height == (2 if width <= 80 else 3)
         assert transcript.region.height >= height * 4 // 5
-        assert prompt.region.height == actions.region.height == status.region.height == 1
-        assert surface.region.height >= prompt.region.height + actions.region.height
+        assert prompt.region.height == send.region.height == status.region.height == 1
+        assert surface.region.height >= prompt.region.height
+        assert send.region.y == prompt.region.y
+        assert not app.query("#prompt-caption-hint")
+        assert not app.query("#prompt-newline")
         assert surface.styles.background == prompt.styles.background
         assert prompt.region.x == runtime_primary.region.x
         assert abs(prompt.region.x - brand.region.x) <= 1
@@ -72,7 +75,7 @@ async def test_long_draft_grows_then_scrolls_with_viewport_budget_and_shrinks() 
         prompt.value = ""
         await pilot.pause()
         assert prompt.region.height == 1
-        assert composer.region.height == 3
+        assert composer.region.height == 2
 
 
 @pytest.mark.asyncio
@@ -89,9 +92,13 @@ async def test_long_content_keeps_shell_height_and_transcript_scrollable(
         composer = app.query_one("#composer")
 
         assert transcript.region.height >= viewport[1] * 4 // 5
-        assert composer.region.height == (3 if viewport[0] <= 80 else 4)
+        assert composer.region.height == (2 if viewport[0] <= 80 else 3)
         assert composer.region.bottom == viewport[1]
         if fixture == "long-markdown":
+            # The compact shell may fit this sample at 120x40. Longer history
+            # must still scroll without consuming Composer rows.
+            populate_fixture(app, fixture)
+            await pilot.pause()
             assert transcript.max_scroll_y > 0
 
 

@@ -920,12 +920,12 @@ The existing atomic UI preferences port saves the shared `UiTheme` in the `theme
 field; missing/invalid values fall back to Porcelain. Obsidian keeps the `graphite`
 identifier. Startup and first-run provider setup restore the same choice. Switching
 preserves message widgets, drafts and cursor position. Conversation and composer
-use the terminal width with small insets. The composer has no extra title; its editor
-and action row are separate. Default Enter sends through the existing submission
-pipeline. Shift+Enter, Ctrl+J, F2 and the focusable Newline button share
-selection-aware insertion without submitting; disabled/read-only editors are not
-modified. Modified Enter keys depend on terminal forwarding; Ctrl+J, F2 and the
-button remain available when they are not distinct. Dedicated theme tokens
+use the terminal width with small insets. The composer has no extra title; its editor and Send button share a row.
+Default Enter sends through the existing submission pipeline. Shift+Enter,
+Ctrl+J and F2 share selection-aware insertion; disabled/read-only editors remain
+unchanged. Textual owns protocol parsing; distinct modified Enter is observed,
+not assumed from terminal names. Legacy CR/keypad Enter keep their send semantics.
+F1 / `/help` describes fallback and reports observed keyboard capability. Dedicated theme tokens
 distinguish composer and user-message fills from ordinary panels, with readable
 placeholder, cursor and selection colors.
 System makes one bounded OSC 10/11 default-color query before Textual owns input; it
@@ -939,9 +939,8 @@ the empty shell returns the released rows to a genuinely empty, top-anchored
 transcript instead of repeating model and workspace metadata there. A resume
 notice keeps its session identity only; the bottom bar owns model, mode,
 effort, context usage, and workspace. The prompt and bottom metadata share a
-reading axis. The shortcut hint stays visible in the existing action row and
-lists reliable newline fallbacks before the button tooltip's conditional
-Shift+Enter guidance. See
+reading axis. Shortcut explanations are available in Help; removing their dedicated row returns
+one more row to the transcript without changing the multiline budget. See
 [ADR 0186](adr/0186-tui-composer-and-shell-layout-v1c.md). Permissions, execution
 and session contracts remain unchanged.
 

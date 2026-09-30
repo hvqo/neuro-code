@@ -455,29 +455,14 @@ class NeuroCodeApp(
     #prompt-surface {
         width: 100%;
         height: auto;
-        min-height: 3;
-        max-height: 11;
+        min-height: 2;
+        max-height: 10;
         padding: 0 1 1 1;
         background: $composer-surface;
         border: none;
     }
 
-    #prompt-caption-hint {
-        width: 1fr;
-        height: 1;
-        text-align: left;
-        color: $composer-muted;
-        text-style: $text-muted-intensity;
-        overflow: hidden hidden;
-    }
-
-    #prompt-actions {
-        height: 1;
-        margin-top: 0;
-        background: $composer-surface;
-    }
-
-    #prompt-send, #prompt-newline {
+    #prompt-send {
         width: auto;
         min-width: 8;
         height: 1;
@@ -494,20 +479,6 @@ class NeuroCodeApp(
         background: $surface-selected;
         text-style: reverse;
     }
-
-    #prompt-newline {
-        color: $composer-muted;
-        text-style: $text-muted-intensity;
-        margin-right: 1;
-    }
-
-    #prompt-newline:hover, #prompt-newline:focus {
-        background: $surface-selected;
-        text-style: reverse;
-    }
-
-    .compact-chrome #prompt-actions { margin-top: 0; }
-
 
     #prompt-row {
         width: 100%;
@@ -559,8 +530,8 @@ class NeuroCodeApp(
     }
 
     .compact-chrome #prompt-surface {
-        min-height: 2;
-        max-height: 9;
+        min-height: 1;
+        max-height: 8;
         padding: 0 1;
     }
 
@@ -978,31 +949,20 @@ class NeuroCodeApp(
             with Vertical(id="composer"):
                 yield Horizontal(id="attachment-tray")
                 yield Static(id="turn-activity")
-                with Vertical(id="prompt-surface"):
-                    with Horizontal(id="prompt-row"):
-                        yield PromptInput(
-                            placeholder=ui_text(self._language, "prompt.placeholder"),
-                            id="prompt",
-                            enter_behavior=self._agent_preferences.enter_behavior or "send",
-                            soft_wrap=self._agent_preferences.prompt_soft_wrap is not False,
-                        )
-                    with Horizontal(id="prompt-actions"):
-                        yield Static(id="prompt-caption-hint")
-                        yield Button(ui_text(self._language, "prompt.newline"), id="prompt-newline")
-                        yield Button(ui_text(self._language, "prompt.send"), id="prompt-send")
+                with Vertical(id="prompt-surface"), Horizontal(id="prompt-row"):
+                    yield PromptInput(
+                        placeholder=ui_text(self._language, "prompt.placeholder"),
+                        id="prompt",
+                        enter_behavior=self._agent_preferences.enter_behavior or "send",
+                        soft_wrap=self._agent_preferences.prompt_soft_wrap is not False,
+                    )
+                    yield Button(ui_text(self._language, "prompt.send"), id="prompt-send")
                 yield Static(id="command-hints")
                 yield Horizontal(
                     Static(id="runtime-primary"),
                     Static(id="runtime-secondary"),
                     id="runtime-bar",
                 )
-
-    @on(Button.Pressed, "#prompt-newline")
-    def _insert_composer_newline(self, event: Button.Pressed) -> None:
-        event.stop()
-        prompt = self._main_screen_query_one("#prompt", PromptInput)
-        prompt.insert_prompt_newline()
-        prompt.focus()
 
     @on(Button.Pressed, "#prompt-send")
     def _send_composer_message(self, event: Button.Pressed) -> None:

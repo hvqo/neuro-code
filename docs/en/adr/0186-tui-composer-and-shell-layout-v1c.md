@@ -35,8 +35,8 @@ switches change the palette, not these geometry rules.
 ### Composer and keyboard
 
 The Composer uses a bounded prompt surface plus a single bottom runtime-status
-row. The empty prompt surface occupies three rows
-at normal widths and two in compact chrome; it grows with visible draft lines.
+row. The empty prompt surface occupies two rows
+at normal widths and one in compact chrome; it grows with visible draft lines.
 The prompt editor is capped by the existing eight-line limit and a quarter of
 the terminal height, with a two-line minimum budget for short terminals. Longer
 drafts scroll within the editor. The transcript takes every row released by a
@@ -45,15 +45,34 @@ axis. The status row stays at the bottom and retains its existing data and
 tooltips. Attachments, active-turn status, and command hints keep their owned
 rows when visible.
 
-Default `Enter` submits the draft. `Shift+Enter` inserts a newline when the
-terminal forwards a distinct modified-key event; `Ctrl+J`, `F2`, and the
-focusable Newline button remain available when it does not. The always-visible
-hint lists the reliable fallback; the Newline button tooltip explains
-conditional `Shift+Enter`. The optional user-selected Enter-newline mode remains
-intact. The compact shortcut hint
-stays visible while editing and shares the existing action row, so it adds no
-height or focus-dependent movement. The tooltip does not claim that every
-terminal distinguishes `Shift+Enter` from `Enter`.
+Default `Enter` submits the draft. The Send button shares the editor row;
+there is no dedicated actions/hint row or Newline button. Keyboard fallbacks
+live in F1 / `/help`. The optional user-selected Enter-newline mode remains.
+
+Textual 1.x owns terminal input and Kitty disambiguation on POSIX (`CSI >1u`),
+normalizes CSI-u `13;2u` to `shift+enter`, and owns paste, editing and teardown.
+`TerminalKeyboardCapability` records only observed normalized modified Enter;
+requesting a protocol, a terminal name or an environment variable is not proof
+of support. No additional terminal reader, protocol parser or startup wait is
+introduced. A distinct `shift+enter` inserts a selection-aware newline. Legacy
+CR and SS3 keypad Enter remain Send; Ctrl+J / F2 remain newline fallbacks.
+
+The audited Konsole 25.12.3 default keytab sends Shift+Return as SS3 `ESC O M`,
+which Textual maps to keypad Enter. This is not a reliable Shift encoding and
+cannot be globally reinterpreted without breaking keypad Enter. That release
+has no Kitty keyboard negotiation in its VT emulator. A user may explicitly
+map Shift+Return to `\E[13;2u` in a terminal key profile, or use a version and
+input path that supports enhanced reporting; Neuro does not change profiles.
+Kitty and Ghostty can report CSI-u; WezTerm requires its Kitty protocol option.
+Windows Terminal support is version-dependent, and Textual 1.x's Windows driver
+does not enable Kitty negotiation: distinct events already delivered are handled,
+but unconfirmed paths retain fallback. Help reports observed/unconfirmed capability,
+never blanket support based on terminal branding. Multiplexers and terminal shortcuts
+can also alter the input path. Real-terminal acceptance remains necessary.
+
+Sources: [Konsole 25.12.3 default keytab](https://github.com/KDE/konsole/blob/v25.12.3/data/keyboard-layouts/default.keytab),
+[Kitty protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/),
+[WezTerm option](https://wezterm.org/config/lua/config/enable_kitty_keyboard.html).
 
 This changes shell geometry and prompt guidance only. V1A colors and adaptive
 System surfaces, V1B typography, permission behavior, runtime status values,

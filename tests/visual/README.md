@@ -130,8 +130,12 @@ Composer fixtures have no V1B cards. In a real terminal,
 type a short draft, several lines, and a draft longer than the editor cap;
 check the surface remains locatable and the status stays at the bottom. Confirm
 `Enter` sends, `Shift+Enter` inserts a newline if the terminal reports it as a
-distinct key, and `Ctrl+J` / `F2` or the Newline button provide a usable
-fallback. Test a dark and light System terminal palette as well as one RGB
+distinct key, and `Ctrl+J` / `F2` provide a usable fallback listed in F1 / `/help`.
+The Send button shares the prompt row; shortcut hints never reserve a row.
+Help distinguishes observed modified Enter from unconfirmed reporting.
+Konsole 25.12.3 default Shift+Return emits SS3 keypad Enter, so it sends until
+the user explicitly maps it to CSI-u `\E[13;2u` or uses an enhanced input path.
+Never reinterpret keypad Enter or infer support from `$TERM`. Test a dark and light System terminal palette as well as one RGB
 theme; SVG screenshots alone cannot verify terminal key reporting.
 
 To update only those six palette samples after an intentional visual change:

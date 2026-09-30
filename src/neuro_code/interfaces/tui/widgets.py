@@ -26,6 +26,7 @@ from neuro_code.interfaces.tui.state import (
     _PROMPT_MAX_VISIBLE_LINES,
     _SUCCESS_MARK,
 )
+from neuro_code.interfaces.tui.terminal_keyboard import TerminalKeyboardCapability
 from neuro_code.interfaces.tui.theme import (
     ACCENT_CODE,
     TEXT_DISABLED,
@@ -398,6 +399,7 @@ class PromptInput(TextArea):
         soft_wrap: bool = True,
     ) -> None:
         super().__init__(soft_wrap=soft_wrap, tab_behavior="focus", id=id)
+        self.keyboard_capability = TerminalKeyboardCapability()
         self.enter_behavior = enter_behavior
         self.placeholder = placeholder
 
@@ -441,6 +443,7 @@ class PromptInput(TextArea):
         self.post_message(self.ImagePasteRequested(self))
 
     async def _on_key(self, event: events.Key) -> None:
+        self.keyboard_capability.observe(event.key)
         if event.key == "enter":
             event.prevent_default().stop()
             if self.enter_behavior == "newline":
