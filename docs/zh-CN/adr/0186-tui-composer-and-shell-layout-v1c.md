@@ -55,6 +55,42 @@ Kitty / Ghostty 可上报 CSI-u；WezTerm 需启用 Kitty 协议选项。Windows
 [Kitty 协议](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)、
 [WezTerm 选项](https://wezterm.org/config/lua/config/enable_kitty_keyboard.html)。
 
+### 应用侧协商可行性
+
+2026-09-30 审计使用本机安装的 Textual **1.0.0** 与 Konsole **25.12.3**。
+Textual POSIX `LinuxDriver.start_application_mode()` 已在启动输入线程前发送
+Kitty 消歧 push (`CSI >1u`)，退出 alternate screen 前发送 pop (`CSI <u`)。
+焦点事件本身不是键盘能力响应，每次聚焦重新 push 会使协议栈不平衡。因此复用
+驱动生命周期，不新增竞争输入读取器，不额外启用其他协议模式。
+
+为核验真实 Konsole 路径，offscreen Qt harness 调用了本机
+`libkonsoleprivate.so.25.12.3` 的 `Vt102Emulation`：设置 UTF-8、重置终端状态、
+使用默认按键翻译器，将应用输出送入 `receiveData()`，将 Qt Return/Shift+Return
+送入 `sendKeyEvent()`，捕获 `sendData()`。这验证真实模拟器与按键翻译器；
+不是 GUI/物理按键验收，也不是 fake transport。
+
+| 探测 | 实际响应 / 按键输出 |
+| --- | --- |
+| Device attributes `CSI c`（正向对照） | `CSI ?62;1;4c` |
+| 启用 focus reporting 后获得焦点（正向对照） | `CSI I` |
+| Kitty 查询 `CSI ?u`，在 `CSI >1u` 前后 | 均无响应 |
+| modifyOtherKeys 查询 `CSI ?4m`，在 `CSI >4;2m` 前后 | 均无响应 |
+| Return，在任一启用请求前后 | CR (`0d`) |
+| Shift+Return，在任一请求或聚焦前后 | SS3 `ESC O M` (`1b4f4d`) |
+
+对应的 [VT 模拟器源码](https://github.com/KDE/konsole/blob/v25.12.3/src/Vt102Emulation.cpp)
+没有 Kitty 键盘 flags 或 modifyOtherKeys 处理分支，按键仍由 keytab 翻译。
+[modifyOtherKeys 是 xterm 协议](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html)，
+不是所有终端的通用能力。这些请求无法在该版 Konsole 恢复缺失的 Shift 信息。
+结论限定于已验证版本，不根据 `$TERM` 推断，也不声称未来 Konsole 版本不支持。
+
+不增加 production workaround。SS3 继续作为 keypad Enter/发送；增强链路实际
+送达 CSI-u `13;2u` 时自动换行。Help 保留 Ctrl+J / F2 作为旧链路备用键。
+当前 Windows 驱动不协商 Kitty；终端或 multiplexer 声称支持，不等于当前驱动/
+解析器实际送达独立事件。带 release events、alternate keys、associated text 的
+额外 Kitty flags 超出当前解析器契约，不试探性开启。不新增启动等待、聚焦探测、
+终端配置修改或 IME/粘贴拦截。
+
 本决策仅改变外壳几何和输入提示。V1A 的颜色与自适应 System 表面、V1B 的排版、
 权限行为、运行状态值和持久会话历史仍由现有实现负责。
 
@@ -65,3 +101,6 @@ Kitty / Ghostty 可上报 CSI-u；WezTerm 需启用 Kitty 协议选项。Windows
 底部状态栏、模态层、主题切换和草稿的增长/收缩；键盘测试区分
 换行与发送。终端按键上报不受 Textual 控制，因此真实终端仍需人工验证
 `Shift+Enter`。已提交的 V1B 快照作为 V1C 对比画廊的改造前基线。
+真实驱动 PTY 回归额外验证协议自动 push/pop、终端模式恢复、独立 Shift+Enter
+与旧 keypad Enter 的区分，以及 bracketed 多行中文粘贴到真实 PromptInput。
+本次可行性审计不需要修改任何 snapshot 或 production layout。

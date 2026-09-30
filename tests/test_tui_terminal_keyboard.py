@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+import errno
+import json
+import os
+import select
+import subprocess
+import sys
+import time
+from pathlib import Path
+
 import pytest
 from textual import events
 from textual._xterm_parser import XTermParser
@@ -11,6 +20,87 @@ from neuro_code.interfaces.tui.terminal_keyboard import TerminalKeyboardCapabili
 from neuro_code.interfaces.tui.widgets import PromptInput
 from neuro_code.shared.ui_theme import UiTheme
 from tests.visual.showcases import make_app
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Textual LinuxDriver requires a POSIX PTY")
+@pytest.mark.parametrize(
+    ("wire", "value", "modified"),
+    [
+        ("first\x1b[O\x1b[I\x1b[13;2usecond\r", "first\nsecond", True),
+        ("legacy\x1bOM", "legacy", False),
+        ("\x1b[200~中文 draft\r\nsecond\x1b[201~\r", "中文 draft\nsecond", False),
+    ],
+)
+def test_real_driver_negotiates_restores_and_delivers_prompt_input(
+    tmp_path: Path, wire: str, value: str, modified: bool
+) -> None:
+    """A terminal request is not support; only wire events preserve modifiers.
+
+    Exercise the actual driver lifecycle, input thread, parser, message queue,
+    and PromptInput without a Provider or a second terminal input reader.
+    """
+    import pty
+    import termios
+
+    master, slave = pty.openpty()
+    original_mode = termios.tcgetattr(slave)
+    ready = tmp_path / "ready"
+    result = tmp_path / "result.json"
+    environment = os.environ.copy()
+    for name in ("TEXTUAL_DRIVER", "TEXTUAL_PRESS"):
+        environment.pop(name, None)
+    environment.update(TEXTUAL_ANIMATIONS="none", TERM="xterm-256color")
+    output = bytearray()
+    child = subprocess.Popen(
+        [sys.executable, "tests/fixtures/terminal_keyboard_app.py", str(ready), str(result)],
+        cwd=Path(__file__).resolve().parents[1],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        env=environment,
+    )
+
+    def read_output() -> None:
+        if select.select([master], [], [], 0.05)[0]:
+            try:
+                output.extend(os.read(master, 65536))
+            except OSError as error:
+                if error.errno != errno.EIO:
+                    raise
+        assert len(output) < 1_000_000, "terminal fixture output exceeded its bound"
+
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+            read_output()
+        assert ready.exists(), output.decode("utf-8", errors="replace")
+        read_output()
+        assert b"\x1b[>1u" in output
+        os.write(master, wire.encode("utf-8"))
+        deadline = time.monotonic() + 10
+        while child.poll() is None and time.monotonic() < deadline:
+            read_output()
+        assert child.poll() == 0, output.decode("utf-8", errors="replace")
+        while select.select([master], [], [], 0)[0]:
+            read_output()
+        assert json.loads(result.read_text(encoding="utf-8")) == {
+            "value": value,
+            "modified_enter_observed": modified,
+        }
+        # The same driver owns teardown: restore protocol before alt-screen exit
+        # and restore raw-mode changes; focus cycling never adds another push.
+        assert output.count(b"\x1b[>1u") == 1
+        assert output.count(b"\x1b[<u") == 1
+        assert output.index(b"\x1b[<u") < output.index(b"\x1b[?1049l")
+        assert b"\x1b[?2004h" in output
+        assert b"\x1b[?2004l" in output
+        assert termios.tcgetattr(slave) == original_mode
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+        os.close(master)
+        os.close(slave)
 
 
 @pytest.mark.parametrize(

@@ -138,6 +138,32 @@ the user explicitly maps it to CSI-u `\E[13;2u` or uses an enhanced input path.
 Never reinterpret keypad Enter or infer support from `$TERM`. Test a dark and light System terminal palette as well as one RGB
 theme; SVG screenshots alone cannot verify terminal key reporting.
 
+### Keyboard feasibility and real-driver checks
+
+Textual 1.0.0's POSIX driver already sends Kitty `CSI >1u` at startup and
+`CSI <u` on exit. More startup/focus requests cannot add an unsupported protocol
+to a terminal. The installed Konsole 25.12.3 emulator was tested directly via
+its native library: Kitty and modifyOtherKeys queries received no reply; enable
+requests left Shift+Return as `ESC O M`. Device-attribute and focus responses
+provided positive controls. See [ADR 0186](../../docs/en/adr/0186-tui-composer-and-shell-layout-v1c.md#application-side-negotiation-feasibility)
+for source references, version boundaries and the exact probe matrix.
+
+Run the provider-free real POSIX driver regression with:
+
+```bash
+uv run pytest tests/test_tui_terminal_keyboard.py -k real_driver -q
+```
+
+It uses a PTY, the production PromptInput and Textual LinuxDriver (not
+`run_test`'s headless driver). It checks startup/teardown, real input delivery,
+legacy keypad Enter, enhanced Shift+Enter and bracketed multiline Chinese paste.
+PTY injection proves the application path, not the terminal's physical-key
+encoding. For manual acceptance, open F1 / `/help`, try Shift+Enter in a draft
+and check whether distinct modified Enter is observed; also test plain Enter,
+paste, selection replacement, history restore and an active IME. Do not label
+Konsole 25.12.3's default profile as automatically supported. Ctrl+J / F2 remain
+Help-only fallbacks; no application change can enable absent terminal handlers.
+
 To update only those six palette samples after an intentional visual change:
 
 ```bash

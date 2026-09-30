@@ -74,6 +74,48 @@ Sources: [Konsole 25.12.3 default keytab](https://github.com/KDE/konsole/blob/v2
 [Kitty protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/),
 [WezTerm option](https://wezterm.org/config/lua/config/enable_kitty_keyboard.html).
 
+### Application-side negotiation feasibility
+
+The 2026-09-30 audit used installed Textual **1.0.0** and Konsole **25.12.3**.
+Textual's POSIX `LinuxDriver.start_application_mode()` already pushes Kitty
+disambiguation (`CSI >1u`) before starting its input thread. It pops the mode
+(`CSI <u`) before leaving the alternate screen. Focus alone is not a keyboard
+capability response, and pushing again on every focus would unbalance the stack.
+The application therefore reuses the driver lifecycle, rather than adding a
+competing reader or sending additional protocol modes.
+
+To check the actual installed Konsole path, an offscreen Qt harness invoked
+`Vt102Emulation` in `libkonsoleprivate.so.25.12.3`, with UTF-8, reset terminal
+state and the default key translator. It fed application escape sequences to
+`receiveData()`, injected Qt Return/Shift+Return events into `sendKeyEvent()`,
+and captured `sendData()`. This exercises the real emulator and key translator;
+it is not a GUI/physical-key acceptance test or a fake transport.
+
+| Probe | Observed reply / key output |
+| --- | --- |
+| Device attributes `CSI c` (positive control) | `CSI ?62;1;4c` |
+| Focus reporting enabled, then focus gained (positive control) | `CSI I` |
+| Kitty query `CSI ?u`, before/after `CSI >1u` | No reply |
+| modifyOtherKeys query `CSI ?4m`, before/after `CSI >4;2m` | No reply |
+| Return, before/after either enable request | CR (`0d`) |
+| Shift+Return, before/after either request or focus | SS3 `ESC O M` (`1b4f4d`) |
+
+The matching [VT emulator source](https://github.com/KDE/konsole/blob/v25.12.3/src/Vt102Emulation.cpp)
+has no Kitty keyboard flags or modifyOtherKeys handler; key dispatch still uses
+the keytab. [modifyOtherKeys is an xterm protocol](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html),
+not a universal capability. These requests cannot recover the missing Shift
+modifier in this Konsole release. This conclusion is version-specific, not an
+inference from `$TERM` and not a claim about future Konsole releases.
+
+No production workaround is added. SS3 remains keypad Enter/Send; enhanced
+paths delivering CSI-u `13;2u` get Newline automatically. Help retains Ctrl+J / F2
+for legacy paths. The current Windows driver does not negotiate Kitty, and a
+terminal or multiplexer advertising support is insufficient unless the active
+driver/parser actually delivers the distinct event. Extra Kitty flags for
+release events, alternate keys or associated text are outside this parser's
+contract and are not enabled speculatively. There is no new startup timeout,
+focus probe, profile mutation, or IME/paste interception.
+
 This changes shell geometry and prompt guidance only. V1A colors and adaptive
 System surfaces, V1B typography, permission behavior, runtime status values,
 and durable session history keep their existing owners.
@@ -88,3 +130,7 @@ growth/shrinkage; keyboard tests check newline versus submit. A real terminal
 still needs a manual `Shift+Enter`
 check because terminal key reporting is outside Textual's control. The V1B
 snapshots remain available as the committed before baseline for a V1C gallery.
+Real-driver PTY regressions additionally verify automatic protocol push/pop,
+restored terminal mode, normalized Shift+Enter versus legacy keypad Enter, and
+bracketed multiline Chinese paste reaching the actual PromptInput. No snapshot
+or production layout changes are needed for this feasibility audit.
