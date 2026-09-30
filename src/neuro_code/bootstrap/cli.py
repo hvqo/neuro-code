@@ -524,6 +524,7 @@ class BootstrapCliServices:
                     managed_provider_settings=managed_provider_settings,
                     language=language,
                     ui_theme=await ui_preferences.load_theme(),
+                    syntax_theme=await ui_preferences.load_syntax_theme(),
                     terminal_palette=terminal_palette,
                     initial_items=controller.items,
                     provider_name=controller.provider_name,

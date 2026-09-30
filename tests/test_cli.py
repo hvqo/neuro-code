@@ -117,6 +117,7 @@ from neuro_code.interfaces.cli.subagents import (
 )
 from neuro_code.interfaces.tui.state import TUI_RELOAD_RUNTIME_CONFIGURATION
 from neuro_code.shared.errors import ConfigurationError, ProviderError
+from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
 
@@ -1975,7 +1976,14 @@ api_key_env = "FIXTURE_KEY"
             root = Path(directory)
             self._write_provider_config(root / "state")
             (root / "state" / "ui-preferences.json").write_text(
-                json.dumps({"version": 1, "language": "zh-CN", "theme": "graphite"}),
+                json.dumps(
+                    {
+                        "version": 1,
+                        "language": "zh-CN",
+                        "theme": "graphite",
+                        "syntax_theme": "dracula",
+                    }
+                ),
                 encoding="utf-8",
             )
             captured: dict[str, object] = {}
@@ -2016,6 +2024,7 @@ api_key_env = "FIXTURE_KEY"
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
                     ui_theme: UiTheme,
+                    syntax_theme: SyntaxTheme,
                     terminal_palette: object,
                     initial_items: object,
                     provider_name: str,
@@ -2058,6 +2067,7 @@ api_key_env = "FIXTURE_KEY"
                         subagent_relationship_lifecycle=subagent_relationship_lifecycle,
                         language=language,
                         ui_theme=ui_theme,
+                        syntax_theme=syntax_theme,
                         terminal_palette=terminal_palette,
                         initial_items=initial_items,
                         provider_name=provider_name,
@@ -2132,6 +2142,7 @@ api_key_env = "FIXTURE_KEY"
             self.assertGreaterEqual(launch_item_counts[1], 2)
             self.assertEqual(captured["language"], UiLanguage.SIMPLIFIED_CHINESE)
             self.assertEqual(captured["ui_theme"], UiTheme.GRAPHITE)
+            self.assertEqual(captured["syntax_theme"], SyntaxTheme.DRACULA)
             self.assertIsNotNone(captured["terminal_palette"])
             self.assertIsNotNone(captured["preference_resolution"])
             self.assertIsInstance(captured["provider_catalog"], PersistentProviderCatalog)
@@ -2294,6 +2305,7 @@ api_key_env = "FIXTURE_KEY"
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
                     ui_theme: UiTheme,
+                    syntax_theme: SyntaxTheme,
                     terminal_palette: object,
                     initial_items: object,
                     provider_name: str,
@@ -2302,6 +2314,7 @@ api_key_env = "FIXTURE_KEY"
                     user_interaction: object,
                     socks_supported: bool,
                 ) -> None:
+                    assert syntax_theme is SyntaxTheme.AUTO
                     del (
                         runner,
                         turn_service,
@@ -2431,6 +2444,7 @@ api_key_env = "SECOND_KEY"
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
                     ui_theme: UiTheme,
+                    syntax_theme: SyntaxTheme,
                     terminal_palette: object,
                     initial_items: object,
                     provider_name: str,
@@ -2439,6 +2453,7 @@ api_key_env = "SECOND_KEY"
                     user_interaction: object,
                     socks_supported: bool,
                 ) -> None:
+                    assert syntax_theme is SyntaxTheme.AUTO
                     del (
                         approval_controller,
                         turn_service,
@@ -2609,6 +2624,7 @@ api_key_env = "SECOND_KEY"
                     subagent_relationship_lifecycle: object,
                     language: UiLanguage,
                     ui_theme: UiTheme,
+                    syntax_theme: SyntaxTheme,
                     terminal_palette: object,
                     initial_items: object,
                     provider_name: str,
@@ -2617,6 +2633,7 @@ api_key_env = "SECOND_KEY"
                     user_interaction: object,
                     socks_supported: bool,
                 ) -> None:
+                    assert syntax_theme is SyntaxTheme.AUTO
                     del (
                         approval_controller,
                         turn_service,

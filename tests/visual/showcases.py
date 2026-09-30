@@ -8,6 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 from uuid import UUID
 
+from tests.visual.syntax_fixtures import SYNTAX_FIXTURES
+
 from neuro_code.application.permissions.contracts import PermissionRequest
 from neuro_code.application.trace.collector import TraceCollector
 from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
@@ -15,11 +17,13 @@ from neuro_code.interfaces.tui.app import NeuroCodeApp
 from neuro_code.interfaces.tui.screens import (
     PermissionApprovalScreen,
     SettingsScreen,
+    SyntaxThemeSettingsScreen,
     TraceScreen,
 )
 from neuro_code.interfaces.tui.state import ToolActivityGroupState, ToolFeedbackState
 from neuro_code.interfaces.tui.terminal_palette import TerminalPalette
 from neuro_code.interfaces.tui.widgets import PromptInput
+from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
 
@@ -37,6 +41,8 @@ VISUAL_FIXTURES = (
     "long-composer",
     "settings",
     "trace",
+    *SYNTAX_FIXTURES,
+    "syntax-settings",
 )
 
 _LONG_MARKDOWN = """# Review summary
@@ -138,6 +144,7 @@ def make_app(
     *,
     fixture: str,
     terminal_palette: TerminalPalette | None = None,
+    syntax_choice: SyntaxTheme = SyntaxTheme.AUTO,
 ) -> NeuroCodeApp:
     trace = make_trace_fixture() if fixture == "trace" else TraceCollector()
     return NeuroCodeApp(
@@ -145,6 +152,7 @@ def make_app(
         trace_collector=trace,
         language=UiLanguage.ENGLISH,
         ui_theme=theme,
+        syntax_theme=syntax_choice,
         terminal_palette=terminal_palette,
         provider_name="fixture-provider",
         model_name="fixture-model",
@@ -155,7 +163,10 @@ def make_app(
 def populate_fixture(app: NeuroCodeApp, fixture: str) -> None:
     """Add deterministic presentation state after the app has mounted."""
 
-    if fixture == "empty-conversation":
+    if fixture in SYNTAX_FIXTURES:
+        app._write_entry("assistant", SYNTAX_FIXTURES[fixture])
+        return
+    if fixture in {"empty-conversation", "syntax-settings"}:
         return
     if fixture == "user-assistant":
         app._write_entry("user", "Summarize the current review findings.")
@@ -228,6 +239,14 @@ def show_fixture_screen(app: NeuroCodeApp, fixture: str, theme: UiTheme) -> None
         )
     elif fixture == "trace":
         app.push_screen(TraceScreen(app._trace_collector, language=UiLanguage.ENGLISH))
+    elif fixture == "syntax-settings":
+        app.push_screen(
+            SyntaxThemeSettingsScreen(
+                app._syntax_theme,
+                language=UiLanguage.ENGLISH,
+                preview=app._apply_syntax_theme,
+            )
+        )
     elif fixture not in VISUAL_FIXTURES:
         raise ValueError(f"unknown visual fixture: {fixture}")
 

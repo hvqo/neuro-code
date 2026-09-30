@@ -20,6 +20,7 @@ from neuro_code.application.ports.agent_preferences import (
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.shared.async_utils import run_blocking
+from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
 
@@ -185,6 +186,23 @@ class JsonUiPreferencesStore:
         language, effort, mode, _ = self._load_preferences()
         self._save_preferences(language, effort, mode, theme)
 
+    async def load_syntax_theme(self) -> SyntaxTheme:
+        return await run_blocking(self._load_syntax_theme)
+
+    def _load_syntax_theme(self) -> SyntaxTheme:
+        try:
+            return SyntaxTheme(self._read_payload().get("syntax_theme", "auto"))
+        except (OSError, UnicodeError, ValueError, TypeError):
+            return SyntaxTheme.AUTO
+
+    async def save_syntax_theme(self, theme: SyntaxTheme) -> None:
+        async with self._write_lock:
+            await run_blocking(self._save_syntax_theme, theme)
+
+    def _save_syntax_theme(self, theme: SyntaxTheme) -> None:
+        language, effort, mode, ui_theme = self._load_preferences()
+        self._save_preferences(language, effort, mode, ui_theme, syntax_theme=theme)
+
     def _save_preferences(
         self,
         language: UiLanguage,
@@ -194,8 +212,11 @@ class JsonUiPreferencesStore:
         *,
         agent: AgentPreferences | None = None,
         workspace: Path | None = None,
+        syntax_theme: SyntaxTheme | None = None,
     ) -> None:
         payload = self._read_payload()
+        if syntax_theme is not None:
+            payload["syntax_theme"] = syntax_theme.value
         if agent is not None:
             if workspace is None:
                 payload["agent"] = asdict(agent)

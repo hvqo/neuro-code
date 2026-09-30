@@ -48,8 +48,16 @@ def render_gallery(
     before_ref: str | None = None,
     after_label: str = "V1A",
     fixtures: frozenset[str] | None = None,
+    syntax_only: bool = False,
 ) -> Path:
     snapshots = sorted(SNAPSHOT_ROOT.glob("*.svg"))
+    if syntax_only:
+        snapshots = [
+            path
+            for path in snapshots
+            if path.stem.startswith(("syntax-", "long-markdown__"))
+            or (path.stem.startswith("system-palette-") and "__syntax-" in path.stem)
+        ]
     if fixtures is not None:
         snapshots = [path for path in snapshots if path.stem.split("__", 1)[0] in fixtures]
     if not snapshots:
@@ -125,6 +133,11 @@ def main() -> None:
         nargs="+",
         help="Include only these fixture names in the gallery.",
     )
+    parser.add_argument(
+        "--syntax",
+        action="store_true",
+        help="Show syntax fixtures, selections and the existing Markdown baseline.",
+    )
     args = parser.parse_args()
     print(
         render_gallery(
@@ -132,6 +145,7 @@ def main() -> None:
             before_ref=args.before_ref,
             after_label=args.after_label,
             fixtures=frozenset(args.fixtures) if args.fixtures else None,
+            syntax_only=args.syntax,
         )
     )
 

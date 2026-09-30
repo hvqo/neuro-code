@@ -63,3 +63,25 @@ def test_gallery_keeps_snapshot_bytes_but_allows_browser_cjk_glyph_width() -> No
     encoded = embedded.split("base64,", 1)[1].split('"', 1)[0]
     assert base64.b64decode(encoded) == b"<svg><text>\xe4\xb8\xad\xe6\x96\x87</text></svg>"
     assert b'textLength="24.4"' in source
+
+
+def test_syntax_gallery_includes_choices_palette_cases_and_prose_comparison(tmp_path: Path) -> None:
+    snapshot_root = tmp_path / "snapshots"
+    snapshot_root.mkdir()
+    included = (
+        "syntax-python__graphite__80x24",
+        "syntax-choice-dracula__porcelain__100x32",
+        "system-palette-unknown__syntax-settings__100x32",
+        "long-markdown__system__120x40",
+    )
+    for name in (*included, "composer-single__graphite__80x24", "settings__system__100x32"):
+        (snapshot_root / f"{name}.svg").write_bytes(b"<svg>fixture</svg>")
+    with patch.object(render_gallery, "SNAPSHOT_ROOT", snapshot_root):
+        output = render_gallery.render_gallery(
+            tmp_path / "syntax.html", syntax_only=True, after_label="V2A"
+        )
+    document = output.read_text()
+    for name in included:
+        assert name.replace("__", " · ") in document
+    assert "composer-single" not in document
+    assert "settings · system" not in document

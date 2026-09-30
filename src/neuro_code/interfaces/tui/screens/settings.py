@@ -38,9 +38,11 @@ from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.interfaces.tui.screens.agent_preferences import PREFERENCE_GROUPS
 from neuro_code.interfaces.tui.state import _ERROR_MARK
+from neuro_code.interfaces.tui.syntax import SYNTAX_THEMES
 from neuro_code.interfaces.tui.text import language_name, ui_text
 from neuro_code.interfaces.tui.theme import ERROR_TEXT_STYLE, theme_style
 from neuro_code.interfaces.tui.widgets import MenuOptionButton
+from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
 
@@ -106,6 +108,7 @@ class SettingsScreen(ModalScreen[str | None]):
         interaction_mode: InteractionMode = InteractionMode.NORMAL,
         permission_level: str = "ask",
         ui_theme: UiTheme = UiTheme.PORCELAIN,
+        syntax_theme: SyntaxTheme = SyntaxTheme.AUTO,
         initial_category: str | None = None,
         provider_settings: ManagedProviderSettings | None = None,
         preference_resolution: AgentPreferenceResolution | None = None,
@@ -119,6 +122,7 @@ class SettingsScreen(ModalScreen[str | None]):
         self.interaction_mode = interaction_mode
         self.permission_level = permission_level
         self.ui_theme = ui_theme
+        self.syntax_theme = syntax_theme
         self.provider_settings = provider_settings
         self.preference_resolution = preference_resolution or AgentPreferenceResolution(
             defaults=AgentPreferences(
@@ -135,7 +139,7 @@ class SettingsScreen(ModalScreen[str | None]):
         self._group = "all"
 
     GROUPS: ClassVar[dict[str, tuple[str, ...]]] = {
-        "appearance": ("language", "theme", "input"),
+        "appearance": ("language", "theme", "syntax-theme", "input"),
         "connection": ("providers", "network"),
         "agent": ("agent-reasoning", "agent-interaction-mode", "execution"),
         "web": ("web-tools", "search-api-key"),
@@ -204,6 +208,12 @@ class SettingsScreen(ModalScreen[str | None]):
             "theme": (
                 "settings.theme.title",
                 ui_text(self.language, f"settings.theme.{self.ui_theme.value}"),
+            ),
+            "syntax-theme": (
+                "settings.syntax.title",
+                ui_text(self.language, "settings.syntax.auto")
+                if self.syntax_theme is SyntaxTheme.AUTO
+                else SYNTAX_THEMES[self.syntax_theme].label,
             ),
             "providers": (
                 "settings.category.providers.label",

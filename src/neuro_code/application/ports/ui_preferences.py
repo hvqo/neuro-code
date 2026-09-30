@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
+from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
 
@@ -42,6 +43,10 @@ class UiPreferencesStore(Protocol):
     async def load_theme(self) -> UiTheme: ...
 
     async def save_theme(self, theme: UiTheme) -> None: ...
+
+    async def load_syntax_theme(self) -> SyntaxTheme: ...
+
+    async def save_syntax_theme(self, theme: SyntaxTheme) -> None: ...
 
     async def load_language(self) -> UiLanguage: ...
 

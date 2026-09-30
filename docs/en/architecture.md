@@ -903,8 +903,8 @@ represented once by its check mark. See
 [ADR 0029](adr/0029-auditable-in-place-tool-cards.md), with the presentation
 refinement in [ADR 0108](adr/0108-editorial-tui-presentation.md).
 
-The TUI presentation uses one semantic registry for 13 appearance choices. CSS,
-Rich Markdown and syntax highlighting resolve colors from the same palette,
+The TUI presentation uses one semantic registry for 13 appearance choices. CSS and
+Rich Markdown prose resolve colors from the UI palette,
 without mutable global theme state. Settings → Appearance provides a scrollable
 picker, arrow-key preview, Enter to apply/save, and Esc to restore the original.
 Preview and persistence are separate. `system` uses terminal defaults and ANSI
@@ -915,6 +915,17 @@ are metadata. Only explicit emphasis and the leading Markdown heading use bold;
 semantic state uses color and boundaries. Inline code remains foreground-only,
 while fenced code keeps its own surface. Theme changes preserve these reading
 roles and geometry. See [ADR 0185](adr/0185-tui-typography-and-reading-hierarchy-v1b.md).
+
+V2A resolves fenced-code tokens through an independent `SyntaxTheme` registry,
+using mature Pygments styles. Appearance Settings has a separate syntax picker
+with live Python preview and Save/Cancel. The optional `syntax_theme` preference
+uses Auto for old configurations. Auto selects a compatible dark/light style
+from the actual code surface; explicit choices adapt foreground contrast without
+changing their saved identifier or the UI-owned surface. System reuses the
+existing terminal palette and falls back to default/ANSI token foregrounds
+when RGB is unknown. Inline code stays foreground-only; UI geometry, runtime,
+prompt/context and keyboard behavior are unaffected. See
+[ADR 0187](adr/0187-independent-tui-syntax-theme-v2a.md).
 
 The existing atomic UI preferences port saves the shared `UiTheme` in the `theme`
 field; missing/invalid values fall back to Porcelain. Obsidian keeps the `graphite`

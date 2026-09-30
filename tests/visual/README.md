@@ -9,8 +9,56 @@ matrix, plus the six deterministic System terminal-palette screenshots.
 V1C adds focused single-line, idle single-line, and long Composer fixtures for
 a 13-fixture, 117-screenshot matrix, plus the same six System palette
 screenshots (123 total).
+V2A adds eight syntax/code-prose fixtures and a syntax-settings fixture: the
+22-fixture × 3-theme × 3-viewport matrix is 198 screenshots. Fifteen System
+palette screenshots and 21 curated selection previews bring the total to 234.
 Whitespace-only line-end padding from the SVG serializer is normalized; rendered
 text and geometry remain unchanged.
+V2A also pins colored output when constructing fixture apps, independent of the
+caller's `NO_COLOR`. Earlier committed baselines inherited `NO_COLOR` from the
+development shell and were grayscale; all 123 earlier snapshots are explicitly
+regenerated with real palette colors. This is a harness correction, not a UI
+palette or layout change. Production continues to honor the user's `NO_COLOR`.
+The before/after gallery therefore includes this output-filter difference as
+well as the new code token colors.
+
+## V2A Syntax Theme review
+
+The syntax fixtures cover Python, Rust, JSON, Shell, Diff, unknown language,
+long code, code with surrounding prose/inline code, and the live picker.
+All use the existing renderer without sessions/network. Auto and six explicit
+syntax choices have preview cards at 100×32 in Graphite, Porcelain, and a
+detected dark System palette. Separate System dark/light/unknown fixtures
+cover Python, Diff and the picker; CI never probes the developer's terminal.
+
+Update deliberately, then confirm a normal rerun passes:
+
+```bash
+NEURO_TUI_UPDATE_SNAPSHOTS=1 uv run pytest tests/test_tui_visual_snapshots.py -q
+uv run pytest tests/test_tui_visual_snapshots.py -q
+uv run python tests/visual/render_gallery.py --syntax --before-ref 52cb90c7b9242c4ac618b0781c10b41e253ee618 --after-label V2A --output /tmp/neuro-code-tui-v2a-syntax-gallery.html
+xdg-open /tmp/neuro-code-tui-v2a-syntax-gallery.html
+```
+
+New syntax cards have no V1C counterpart; the existing long-Markdown cards
+provide a direct before/after comparison. The gallery is a local artifact,
+not a new visual framework or production surface.
+
+Manual acceptance in a real terminal:
+
+- Open `/settings` → Appearance → Syntax Theme. Preview every choice, Save,
+  restart, and confirm the same independent choice is restored.
+- Switch Graphite/Porcelain/System while retaining a syntax choice. Check
+  readable token colors, neutral surrounding prose, unchanged code surface,
+  and unchanged Composer/user geometry and draft/cursor.
+- Read Python, Rust, JSON, Shell and Diff at 120×40, 100×32 and 80×24; inspect
+  comments, strings/numbers, classes/functions, diff added/removed/hunk/context.
+- Check unknown-language code and long wrapping. `AGENTS.md` inline code must
+  stay foreground-only; no chips or per-token backgrounds.
+- Check System on real dark/light palettes and low-color/unknown terminals.
+  The terminal fallback retains the saved preference but uses default/ANSI
+  token colors. Snapshot ANSI values cannot prove real palette contrast.
+- Cancel preview and verify the original syntax choice returns without writes.
 
 ## Known V0 baseline limitation
 
