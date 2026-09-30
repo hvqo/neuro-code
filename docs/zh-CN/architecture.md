@@ -673,9 +673,11 @@ V1B 排版契约让普通对话及界面文字保持 regular：Assistant 正文�
 曜石黑保持 `graphite` 标识。启动与首次供应商配置均恢复所选主题。切换保留消息组件、
 草稿和光标。对话与输入区使用可用终端宽度，仅留少量边距；输入区不显示额外标题，编辑器与发送按钮共用一行。
 默认 Enter 复用既有输入提交流程；Shift+Enter、Ctrl+J、F2 共用选区替换方法，
-只插入换行而不提交；禁用或只读时不编辑。Textual 负责协议解析，键盘能力只根据
-已收到的独立修饰 Enter 确认，不按终端名推断。旧 CR/keypad Enter 保持发送，
-F1 / `/help` 展示 Ctrl+J / F2 备用键和已观察/未确认状态。独立主题
+只插入换行而不提交；禁用或只读时不编辑。`TerminalInputNormalizer` 依次处理原生
+修饰键、按终端身份/版本限定的 `TerminalInputCompatibilityRegistry` 规则，最后使用
+Ctrl+J/F2 备用键。仅当专用 `KONSOLE_VERSION` 严格标记识别为 Konsole 25.12.x 时，
+无字符的 SS3 Enter 映射为换行，普通 CR 仍发送；身份未知时失败关闭。该规则也会让
+物理小键盘 Enter 换行。F1 / `/help` 说明这一取舍和已观察到的原生键盘能力。独立主题
 令牌为输入区和历史用户消息提供不同于普通面板的底色。输入占位、
 光标和选区使用清晰的对比色；`system` 在 Textual 接管输入前有界查询一次 OSC 10/11
 默认色，在 RGB 与 TrueColor/ANSI256 可用时派生克制表面，否则回退默认填充、可见

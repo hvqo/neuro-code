@@ -26,7 +26,11 @@ from neuro_code.interfaces.tui.state import (
     _PROMPT_MAX_VISIBLE_LINES,
     _SUCCESS_MARK,
 )
-from neuro_code.interfaces.tui.terminal_keyboard import TerminalKeyboardCapability
+from neuro_code.interfaces.tui.terminal_keyboard import (
+    TerminalInputAction,
+    TerminalInputNormalizer,
+    TerminalKeyboardCapability,
+)
 from neuro_code.interfaces.tui.theme import (
     ACCENT_CODE,
     TEXT_DISABLED,
@@ -344,15 +348,14 @@ class PromptInput(TextArea):
 
     带有明确提交语义且高度有界的多行提示编辑器.
 
-    Terminal bracketed paste is preserved as real document lines. ``Enter``
-    submits the complete prompt. ``Ctrl+J`` and ``F2`` insert a newline;
-    modified Enter keys also work when the terminal forwards distinct events.
-    The composer also exposes a focusable newline button for terminals that
-    intercept shortcuts. Common editor selection remains local to the prompt.
+    Terminal bracketed paste is preserved as real document lines. A shared
+    input normalizer maps Enter to submit and verified modified-key reports to
+    newline; the compatibility registry handles versioned terminal quirks.
+    Common editor selection remains local to the prompt.
 
     终端 bracketed paste 会保留为真实文档行.``Enter`` 提交完整提示,
-    ``Ctrl+J``/``F2`` 插入换行,组合 Enter 仅在终端透传独立事件时可用.
-    输入区还提供可聚焦的换行按钮,供快捷键被拦截时使用.编辑选择保持在提示框内.
+    输入归一化器将 Enter 映射为发送,将增强修饰键和已验证的终端兼容规则映射为换行.
+    编辑选择保持在提示框内.
     """
 
     @dataclass
@@ -397,11 +400,22 @@ class PromptInput(TextArea):
         id: str | None = None,
         enter_behavior: str = "send",
         soft_wrap: bool = True,
+        input_normalizer: TerminalInputNormalizer | None = None,
     ) -> None:
         super().__init__(soft_wrap=soft_wrap, tab_behavior="focus", id=id)
         self.keyboard_capability = TerminalKeyboardCapability()
+        self.input_normalizer = input_normalizer or TerminalInputNormalizer.from_environment()
         self.enter_behavior = enter_behavior
         self.placeholder = placeholder
+
+    @property
+    def keyboard_help_key(self) -> str:
+        compatibility_help_key = self.input_normalizer.compatibility_help_key
+        if compatibility_help_key is not None:
+            return compatibility_help_key
+        if self.keyboard_capability.modified_enter_observed:
+            return self.keyboard_capability.help_key
+        return self.input_normalizer.help_key
 
     @property
     def value(self) -> str:
@@ -444,16 +458,17 @@ class PromptInput(TextArea):
 
     async def _on_key(self, event: events.Key) -> None:
         self.keyboard_capability.observe(event.key)
-        if event.key == "enter":
+        action = self.input_normalizer.normalize(event.key, event.character)
+        if action is TerminalInputAction.NEWLINE:
+            event.prevent_default().stop()
+            self.insert_prompt_newline()
+            return
+        if action is TerminalInputAction.SEND:
             event.prevent_default().stop()
             if self.enter_behavior == "newline":
                 self.insert_prompt_newline()
             elif not self.disabled and not self.read_only:
                 self.post_message(self.Submitted(self, self.text))
-            return
-        if event.key in {"shift+enter", "alt+enter", "ctrl+j", "f2"}:
-            event.prevent_default().stop()
-            self.insert_prompt_newline()
             return
         if event.key == "ctrl+a":
             event.prevent_default().stop()

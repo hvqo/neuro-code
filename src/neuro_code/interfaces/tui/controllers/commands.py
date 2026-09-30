@@ -675,7 +675,7 @@ class CommandControllerMixin(TuiAppControllerMixin):
         self._write_ui_entry(
             "system",
             "command.help",
-            keyboard_status=ui_text(self._language, prompt.keyboard_capability.help_key),
+            keyboard_status=ui_text(self._language, prompt.keyboard_help_key),
         )
 
     def action_copy_prompt(self) -> None:

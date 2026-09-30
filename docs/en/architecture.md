@@ -923,9 +923,13 @@ preserves message widgets, drafts and cursor position. Conversation and composer
 use the terminal width with small insets. The composer has no extra title; its editor and Send button share a row.
 Default Enter sends through the existing submission pipeline. Shift+Enter,
 Ctrl+J and F2 share selection-aware insertion; disabled/read-only editors remain
-unchanged. Textual owns protocol parsing; distinct modified Enter is observed,
-not assumed from terminal names. Legacy CR/keypad Enter keep their send semantics.
-F1 / `/help` describes fallback and reports observed keyboard capability. Dedicated theme tokens
+unchanged. `TerminalInputNormalizer` resolves native modified keys, then a
+version-scoped `TerminalInputCompatibilityRegistry`, then the legacy Ctrl+J/F2
+fallback. Konsole 25.12.x is recognized only by its strict `KONSOLE_VERSION`
+marker; the SS3 no-character Enter becomes Newline, while ordinary CR remains
+Send. Unknown identities fail closed, and this rule also maps physical keypad
+Enter to Newline. F1 / `/help` describes this tradeoff and observed native
+keyboard capability. Dedicated theme tokens
 distinguish composer and user-message fills from ordinary panels, with readable
 placeholder, cursor and selection colors.
 System makes one bounded OSC 10/11 default-color query before Textual owns input; it

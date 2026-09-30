@@ -37,23 +37,30 @@ Composer 由有界的输入表面和底部单行运行状态栏组成。空输�
 换行按钮。Ctrl+J / F2 备用键移至 F1 / `/help`。用户自行选择的 Enter 换行模式保留。
 
 Textual 1.x 负责终端输入、POSIX 的 Kitty 消歧启用 (`CSI >1u`)、CSI-u `13;2u`
-到 `shift+enter` 的规范化，以及粘贴、编辑和退出恢复。`TerminalKeyboardCapability`
-只记录真正收到的修饰 Enter；启用请求、终端名称、环境变量都不代表支持。
-不增加输入读取器、协议解析器或启动等待。独立 `shift+enter` 在选区插入换行；
-旧 CR 和 SS3 keypad Enter 保持发送，Ctrl+J / F2 保持换行。
+到 `shift+enter` 的规范化，以及粘贴、编辑和退出恢复。`TerminalInputNormalizer`
+按固定顺序处理输入：原生修饰键事件、`TerminalInputCompatibilityRegistry` 中按终端
+身份/版本限定的规则、最后是 Ctrl+J / F2 备用键。其他 Enter 事件保持既有发送语义。
+`TerminalKeyboardCapability` 仍只记录实际观察到的原生修饰 Enter，不根据终端品牌推断。
+`KONSOLE_VERSION` 只用于识别这条有版本范围的兼容规则，不代表终端普遍支持增强键盘上报。
 
-已审计 Konsole 25.12.3 的默认 keytab：Shift+Return 输出 SS3 `ESC O M`，Textual
-将其解析为 keypad Enter。这不是可靠的 Shift 编码，不能全局改为换行而破坏数字
-小键盘 Enter。该版本 VT 模拟器没有 Kitty 键盘协商。用户可在终端按键配置中显式
-把 Shift+Return 映射为 `\E[13;2u`，或使用支持增强上报的版本/链路；Neuro 不修改配置。
-Kitty / Ghostty 可上报 CSI-u；WezTerm 需启用 Kitty 协议选项。Windows Terminal
-取决于版本，而 Textual 1.x Windows 驱动不启用 Kitty 协商；已送达的独立事件能处理，
-未确认链路保持备用键。Help 显示已观察/未确认能力，不根据品牌声称普遍支持。
-终端快捷键和 multiplexer 也可能改变输入链路，因此仍需实机验收。
+Konsole 25.12.x 是已验证的兼容规则。Konsole 25.12.3 默认 keytab 将 Shift+Return
+编码为 SS3 `ESC O M`。Textual 将其规范化为 `key="enter", character=None`；普通
+Return 则为 `key="enter", character="\\r"`。兼容注册表只在已验证的 Konsole
+25.12 版本范围内，将无字符的 Enter 或 keypad-enter 事件映射为换行，普通 Return
+仍发送。Konsole 会向其子 Session 注入专用数字环境标记 `KONSOLE_VERSION`；解析器只接受
+25.12.0 至 25.12.x 的严格六位编码，不从 `$TERM` 推断。标记缺失/格式错误、已知
+multiplexer 或 SSH 环境一律失败关闭。以后可以只向注册表增加终端规则，无需在
+`PromptInput` 中加入终端名称分支。
 
-来源：[Konsole 25.12.3 默认 keytab](https://github.com/KDE/konsole/blob/v25.12.3/data/keyboard-layouts/default.keytab)、
-[Kitty 协议](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)、
-[WezTerm 选项](https://wezterm.org/config/lua/config/enable_kitty_keyboard.html)。
+SS3 序列不包含物理按键是否为 Shift+Return 的信息。因此对匹配的 Konsole 版本，
+物理小键盘 Enter 也会插入换行；应用无法区分这两者。Help 会说明这一代价。本规则
+不修改终端配置或 keytab。原生 CSI-u `shift+enter` 优先；未匹配的终端仍由普通
+Enter 发送，Ctrl+J / F2 仅作为 Help 中的备用键。仍需在真实 Konsole 验收。
+
+来源：[Konsole 版本环境变量导出](https://github.com/KDE/konsole/blob/v25.12.3/src/session/SessionManager.cpp#L1254-L1286)、
+[Konsole 25.12.3 默认 keytab](https://github.com/KDE/konsole/blob/v25.12.3/data/keyboard-layouts/default.keytab)、
+[Textual 1.0.0 输入解析器](https://github.com/Textualize/textual/blob/v1.0.0/src/textual/_xterm_parser.py)、
+[Kitty 协议](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)。
 
 ### 应用侧协商可行性
 
@@ -84,12 +91,10 @@ Kitty 消歧 push (`CSI >1u`)，退出 alternate screen 前发送 pop (`CSI <u`)
 不是所有终端的通用能力。这些请求无法在该版 Konsole 恢复缺失的 Shift 信息。
 结论限定于已验证版本，不根据 `$TERM` 推断，也不声称未来 Konsole 版本不支持。
 
-不增加 production workaround。SS3 继续作为 keypad Enter/发送；增强链路实际
-送达 CSI-u `13;2u` 时自动换行。Help 保留 Ctrl+J / F2 作为旧链路备用键。
-当前 Windows 驱动不协商 Kitty；终端或 multiplexer 声称支持，不等于当前驱动/
-解析器实际送达独立事件。带 release events、alternate keys、associated text 的
-额外 Kitty flags 超出当前解析器契约，不试探性开启。不新增启动等待、聚焦探测、
-终端配置修改或 IME/粘贴拦截。
+终端输入兼容层不新增终端输入读取器、协议协商请求、启动等待、聚焦探测、配置修改
+或 IME/粘贴拦截。当前 Windows 驱动不协商 Kitty；终端或 multiplexer 声称支持，
+不等于当前驱动/解析器实际送达独立事件。带 release events、alternate keys、
+associated text 的额外 Kitty flags 超出当前解析器契约，不试探性开启。
 
 本决策仅改变外壳几何和输入提示。V1A 的颜色与自适应 System 表面、V1B 的排版、
 权限行为、运行状态值和持久会话历史仍由现有实现负责。
@@ -98,9 +103,8 @@ Kitty 消歧 push (`CSI >1u`)，退出 alternate screen 前发送 pop (`CSI <u`)
 
 确定性 Textual 截图覆盖 Graphite、Porcelain、System 在 120×40、100×32、80×24
 的界面，包含聚焦/空闲单行输入与长草稿。几何测试约束主阅读区占比、阅读轴、
-底部状态栏、模态层、主题切换和草稿的增长/收缩；键盘测试区分
-换行与发送。终端按键上报不受 Textual 控制，因此真实终端仍需人工验证
-`Shift+Enter`。已提交的 V1B 快照作为 V1C 对比画廊的改造前基线。
-真实驱动 PTY 回归额外验证协议自动 push/pop、终端模式恢复、独立 Shift+Enter
-与旧 keypad Enter 的区分，以及 bracketed 多行中文粘贴到真实 PromptInput。
-本次可行性审计不需要修改任何 snapshot 或 production layout。
+底部状态栏、模态层、主题切换和草稿的增长/收缩。归一化器和 PromptInput 测试覆盖
+普通 Enter、增强 Shift+Enter、Konsole 精确版本范围、未知终端 fallback、注册表扩展及
+Ctrl+J/F2。真实驱动 PTY 回归覆盖协议 push/pop 与退出恢复、Konsole SS3 归一化后再由
+普通 Enter 提交、原生修饰 Enter，以及 bracketed 多行中文粘贴。人工 Konsole 验收还需
+确认物理小键盘 Enter 的取舍，并复核 IME、历史、选区和布局行为。

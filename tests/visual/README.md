@@ -132,11 +132,15 @@ check the surface remains locatable and the status stays at the bottom. Confirm
 `Enter` sends, `Shift+Enter` inserts a newline if the terminal reports it as a
 distinct key, and `Ctrl+J` / `F2` provide a usable fallback listed in F1 / `/help`.
 The Send button shares the prompt row; shortcut hints never reserve a row.
-Help distinguishes observed modified Enter from unconfirmed reporting.
-Konsole 25.12.3 default Shift+Return emits SS3 keypad Enter, so it sends until
-the user explicitly maps it to CSI-u `\E[13;2u` or uses an enhanced input path.
-Never reinterpret keypad Enter or infer support from `$TERM`. Test a dark and light System terminal palette as well as one RGB
-theme; SVG screenshots alone cannot verify terminal key reporting.
+Help distinguishes observed native modified Enter from an unconfirmed path.
+Konsole 25.12.x is recognized only by its dedicated, strict `KONSOLE_VERSION`
+marker. Its no-character SS3 Enter maps to newline, so both Shift+Return and a
+physical keypad Enter insert a newline on that verified release range; the
+wire encoding cannot distinguish them. Unknown, remote, and known multiplexed
+paths fail closed: plain Enter sends and Ctrl+J / F2 remain available in Help.
+Neuro Code does not change terminal profiles or keytabs. Test a dark and light
+System terminal palette as well as one RGB theme; SVG screenshots alone cannot
+verify terminal key reporting.
 
 ### Keyboard feasibility and real-driver checks
 
@@ -145,7 +149,9 @@ Textual 1.0.0's POSIX driver already sends Kitty `CSI >1u` at startup and
 to a terminal. The installed Konsole 25.12.3 emulator was tested directly via
 its native library: Kitty and modifyOtherKeys queries received no reply; enable
 requests left Shift+Return as `ESC O M`. Device-attribute and focus responses
-provided positive controls. See [ADR 0186](../../docs/en/adr/0186-tui-composer-and-shell-layout-v1c.md#application-side-negotiation-feasibility)
+provided positive controls. Konsole also exports `KONSOLE_VERSION`; the
+compatibility registry uses this dedicated version marker rather than `$TERM`.
+See [ADR 0186](../../docs/en/adr/0186-tui-composer-and-shell-layout-v1c.md#application-side-negotiation-feasibility)
 for source references, version boundaries and the exact probe matrix.
 
 Run the provider-free real POSIX driver regression with:
@@ -156,13 +162,15 @@ uv run pytest tests/test_tui_terminal_keyboard.py -k real_driver -q
 
 It uses a PTY, the production PromptInput and Textual LinuxDriver (not
 `run_test`'s headless driver). It checks startup/teardown, real input delivery,
-legacy keypad Enter, enhanced Shift+Enter and bracketed multiline Chinese paste.
-PTY injection proves the application path, not the terminal's physical-key
-encoding. For manual acceptance, open F1 / `/help`, try Shift+Enter in a draft
-and check whether distinct modified Enter is observed; also test plain Enter,
-paste, selection replacement, history restore and an active IME. Do not label
-Konsole 25.12.3's default profile as automatically supported. Ctrl+J / F2 remain
-Help-only fallbacks; no application change can enable absent terminal handlers.
+unknown-terminal SS3 Send, exact Konsole-marker SS3 newline followed by ordinary
+Enter Send, enhanced Shift+Enter and bracketed multiline Chinese paste. PTY
+injection proves the application normalization path, not the physical key
+encoding. For manual acceptance on Konsole 25.12.x, open F1 / `/help` and
+confirm the compatibility warning. Press Shift+Return mid-draft and confirm a
+newline; press plain Return and confirm it submits; press physical keypad Enter
+and confirm it inserts a newline under the documented quirk. Also test paste,
+selection replacement, history restore and an active IME. Ctrl+J / F2 remain
+Help-only fallbacks, and Neuro Code never edits the user's profile.
 
 To update only those six palette samples after an intentional visual change:
 
