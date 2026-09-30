@@ -2422,11 +2422,12 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             tool = next(message for message in messages if message.category == "tool")
             composer = app.query_one("#prompt-row", Horizontal)
             self.assertEqual({user.region.x, assistant.region.x, tool.region.x}, {3})
-            self.assertEqual(composer.region.x, 4)
+            self.assertEqual(composer.region.x, 5)
+            self.assertEqual(composer.region.x, user.content_region.x)
             self.assertEqual(user.region.width, assistant.region.width)
             self.assertEqual(tool.region.width, assistant.region.width)
             self.assertGreater(assistant.region.width, app.screen.size.width - 10)
-            self.assertLessEqual(abs(composer.region.width - assistant.region.width), 2)
+            self.assertLessEqual(abs(composer.region.width - assistant.region.width), 3)
 
     async def test_transcript_messages_fit_a_narrow_terminal(self) -> None:
         app = NeuroCodeApp(
