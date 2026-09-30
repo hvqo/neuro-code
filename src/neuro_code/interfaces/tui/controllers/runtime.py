@@ -129,20 +129,9 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         self.sub_title = ui_text(self._language, "subtitle")
         prompt = self._main_screen_query_one("#prompt", PromptInput)
         prompt.placeholder = ui_text(self._language, "prompt.placeholder")
-        self._main_screen_query_one("#prompt-caption-hint", Static).update(
-            ui_text(
-                self._language,
-                "prompt.hint.newline"
-                if self._agent_preferences.enter_behavior == "newline"
-                else "prompt.hint",
-            )
-        )
         self._main_screen_query_one("#prompt-send", Button).label = ui_text(
             self._language, "prompt.send"
         )
-        newline = self._main_screen_query_one("#prompt-newline", Button)
-        newline.label = ui_text(self._language, "prompt.newline")
-        newline.tooltip = ui_text(self._language, "prompt.newline.help")
         prompt.refresh()
         self._refresh_command_hints(prompt.value)
         self._refresh_runtime_bar()

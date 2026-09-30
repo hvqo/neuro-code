@@ -19,6 +19,7 @@ from neuro_code.interfaces.tui.screens import (
 )
 from neuro_code.interfaces.tui.state import ToolActivityGroupState, ToolFeedbackState
 from neuro_code.interfaces.tui.terminal_palette import TerminalPalette
+from neuro_code.interfaces.tui.widgets import PromptInput
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
 
@@ -30,7 +31,10 @@ VISUAL_FIXTURES = (
     "tool-activity",
     "error",
     "permission",
+    "single-line-composer",
+    "idle-composer",
     "multiline-composer",
+    "long-composer",
     "settings",
     "trace",
 )
@@ -52,7 +56,7 @@ repository or a real model response.
 | --- | --- |
 | Conversation | Reading axis and message spacing |
 | Code | Isolated syntax palette |
-| Composer | Fixed footer and multiline input |
+| Composer | Bounded adaptive footer and multiline input |
 
 ```python
 def stable_visual_state(width: int, height: int) -> tuple[int, int]:
@@ -181,6 +185,15 @@ def populate_fixture(app: NeuroCodeApp, fixture: str) -> None:
     if fixture == "multiline-composer":
         prompt = app.query_one("#prompt")
         prompt.text = "Inspect the transcript rendering\nthen compare the compact viewport."
+        return
+    if fixture in {"single-line-composer", "idle-composer"}:
+        app.query_one("#prompt", PromptInput).text = "Review the current shell layout."
+        return
+    if fixture == "long-composer":
+        prompt = app.query_one("#prompt", PromptInput)
+        lines = [f"Evidence item {number}: inspect the current layout." for number in range(1, 13)]
+        prompt.text = "\n".join(lines)
+        prompt.move_cursor((len(lines) - 1, len(lines[-1])))
         return
     if fixture in {"permission", "settings", "trace"}:
         return

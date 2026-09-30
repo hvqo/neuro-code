@@ -920,19 +920,33 @@ The existing atomic UI preferences port saves the shared `UiTheme` in the `theme
 field; missing/invalid values fall back to Porcelain. Obsidian keeps the `graphite`
 identifier. Startup and first-run provider setup restore the same choice. Switching
 preserves message widgets, drafts and cursor position. Conversation and composer
-use the terminal width with small insets. The composer has no extra title; its editor
-and action row are separate. Send reuses the existing submission pipeline. Ctrl+J, F2 and a focusable Newline
-button share selection-aware insertion without submitting; disabled/read-only
-editors are not modified. Modified Enter keys depend on terminal forwarding
-and are not universally guaranteed. Dedicated
-theme tokens distinguish composer and user-message fills from ordinary panels, with
-top/left rules for boundaries and readable placeholder, cursor and selection colors.
+use the terminal width with small insets. The composer has no extra title; its editor and Send button share a row.
+Default Enter sends through the existing submission pipeline. Shift+Enter,
+Ctrl+J and F2 share selection-aware insertion; disabled/read-only editors remain
+unchanged. `TerminalInputNormalizer` resolves native modified keys, then a
+version-scoped `TerminalInputCompatibilityRegistry`, then the legacy Ctrl+J/F2
+fallback. Konsole 25.12.x is recognized only by its strict `KONSOLE_VERSION`
+marker; the SS3 no-character Enter becomes Newline, while ordinary CR remains
+Send. Unknown identities fail closed, and this rule also maps physical keypad
+Enter to Newline. F1 / `/help` describes this tradeoff and observed native
+keyboard capability. Dedicated theme tokens
+distinguish composer and user-message fills from ordinary panels, with readable
+placeholder, cursor and selection colors.
 System makes one bounded OSC 10/11 default-color query before Textual owns input; it
 derives subtle surfaces when RGB and TrueColor/ANSI256 are available, then fails soft
 to default fills, visible ANSI borders, dim secondary text and ANSI focus. Composer
 uses its adaptive surface and focus treatment without moving its contents. Narrow/short terminals
-compact the chrome with bounded multiline height. Permissions, execution and session
-contracts remain unchanged.
+compact the chrome with bounded multiline height. V1C makes the Header one row,
+keeps the status in one bottom row, and sizes the prompt surface to the draft.
+The editor respects both an eight-line limit and the terminal-height budget;
+the empty shell returns the released rows to a genuinely empty, top-anchored
+transcript instead of repeating model and workspace metadata there. A resume
+notice keeps its session identity only; the bottom bar owns model, mode,
+effort, context usage, and workspace. The prompt and bottom metadata share a
+reading axis. Shortcut explanations are available in Help; removing their dedicated row returns
+one more row to the transcript without changing the multiline budget. See
+[ADR 0186](adr/0186-tui-composer-and-shell-layout-v1c.md). Permissions, execution
+and session contracts remain unchanged.
 
 The scrollback is a vertical conversation of stable message widgets rather
 than a pre-rendered log plus a temporary streaming surface. User prompts and

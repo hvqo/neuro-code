@@ -289,8 +289,8 @@ class NeuroCodeApp(
 
     #header {
         width: 100%;
-        height: 3;
-        padding: $space-1 $space-4 $space-0 $space-4;
+        height: 1;
+        padding: 0 $space-3;
         background: $background;
     }
 
@@ -395,7 +395,7 @@ class NeuroCodeApp(
 
     #composer {
         height: auto;
-        padding: $space-0 $space-3 $space-1 $space-3;
+        padding: 0 $space-3;
         background: $background;
     }
 
@@ -433,7 +433,7 @@ class NeuroCodeApp(
         color: $text-secondary;
         text-style: $text-secondary-intensity;
         align-vertical: middle;
-        margin-top: 1;
+        margin-top: 0;
     }
 
     #runtime-primary,
@@ -455,33 +455,14 @@ class NeuroCodeApp(
     #prompt-surface {
         width: 100%;
         height: auto;
-        min-height: 6;
-        max-height: 13;
-        padding: 1;
+        min-height: 2;
+        max-height: 10;
+        padding: 1 1 1 2;
         background: $composer-surface;
         border: none;
     }
 
-    #prompt-caption-hint {
-        width: 1fr;
-        height: 1;
-        text-align: left;
-        color: $composer-muted;
-        text-style: $text-muted-intensity;
-        overflow: hidden hidden;
-    }
-
-    #prompt-caption-hint.hint-hidden {
-        opacity: 0;
-    }
-
-    #prompt-actions {
-        height: 1;
-        margin-top: 1;
-        background: $composer-surface;
-    }
-
-    #prompt-send, #prompt-newline {
+    #prompt-send {
         width: auto;
         min-width: 8;
         height: 1;
@@ -498,20 +479,6 @@ class NeuroCodeApp(
         background: $surface-selected;
         text-style: reverse;
     }
-
-    #prompt-newline {
-        color: $composer-muted;
-        text-style: $text-muted-intensity;
-        margin-right: 1;
-    }
-
-    #prompt-newline:hover, #prompt-newline:focus {
-        background: $surface-selected;
-        text-style: reverse;
-    }
-
-    .compact-chrome #prompt-actions { margin-top: 0; }
-
 
     #prompt-row {
         width: 100%;
@@ -550,7 +517,7 @@ class NeuroCodeApp(
     }
 
     .compact-chrome #header {
-        height: 2;
+        height: 1;
         padding: 0 2;
     }
 
@@ -563,9 +530,9 @@ class NeuroCodeApp(
     }
 
     .compact-chrome #prompt-surface {
-        min-height: 4;
-        max-height: 11;
-        padding: 0 1;
+        min-height: 1;
+        max-height: 8;
+        padding: 0 1 0 2;
     }
 
     .compact-chrome .message-user {
@@ -982,31 +949,20 @@ class NeuroCodeApp(
             with Vertical(id="composer"):
                 yield Horizontal(id="attachment-tray")
                 yield Static(id="turn-activity")
-                with Vertical(id="prompt-surface"):
-                    with Horizontal(id="prompt-row"):
-                        yield PromptInput(
-                            placeholder=ui_text(self._language, "prompt.placeholder"),
-                            id="prompt",
-                            enter_behavior=self._agent_preferences.enter_behavior or "send",
-                            soft_wrap=self._agent_preferences.prompt_soft_wrap is not False,
-                        )
-                    with Horizontal(id="prompt-actions"):
-                        yield Static(id="prompt-caption-hint")
-                        yield Button(ui_text(self._language, "prompt.newline"), id="prompt-newline")
-                        yield Button(ui_text(self._language, "prompt.send"), id="prompt-send")
+                with Vertical(id="prompt-surface"), Horizontal(id="prompt-row"):
+                    yield PromptInput(
+                        placeholder=ui_text(self._language, "prompt.placeholder"),
+                        id="prompt",
+                        enter_behavior=self._agent_preferences.enter_behavior or "send",
+                        soft_wrap=self._agent_preferences.prompt_soft_wrap is not False,
+                    )
+                    yield Button(ui_text(self._language, "prompt.send"), id="prompt-send")
                 yield Static(id="command-hints")
                 yield Horizontal(
                     Static(id="runtime-primary"),
                     Static(id="runtime-secondary"),
                     id="runtime-bar",
                 )
-
-    @on(Button.Pressed, "#prompt-newline")
-    def _insert_composer_newline(self, event: Button.Pressed) -> None:
-        event.stop()
-        prompt = self._main_screen_query_one("#prompt", PromptInput)
-        prompt.insert_prompt_newline()
-        prompt.focus()
 
     @on(Button.Pressed, "#prompt-send")
     def _send_composer_message(self, event: Button.Pressed) -> None:
@@ -1041,9 +997,6 @@ class NeuroCodeApp(
                 "system",
                 "startup.resumed",
                 session_id=self._runner.session_id or ui_text(self._language, "value.unknown"),
-                provider=self._provider_name,
-                model=self._model_name,
-                cwd=self._cwd,
             )
             self._write_recoverable_resume_notice(self._execution_record)
             self.run_worker(
@@ -1052,14 +1005,6 @@ class NeuroCodeApp(
                 group="session",
                 exclusive=False,
                 exit_on_error=False,
-            )
-        else:
-            self._write_ui_entry(
-                "system",
-                "startup.ready",
-                provider=self._provider_name,
-                model=self._model_name,
-                cwd=self._cwd,
             )
         if self._task_controller is not None:
             self.set_interval(_TASK_POLL_SECONDS, self._poll_background_tasks)

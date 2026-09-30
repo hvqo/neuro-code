@@ -6,6 +6,9 @@ Fixtures pin the clock, provider/model labels, workspace path, and trace IDs. Th
 V0 baselines covered 9 fixtures × 3 viewports × 3 themes = 81 screenshots.
 V1B adds a mixed Chinese/English long answer for a 10-fixture, 90-screenshot
 matrix, plus the six deterministic System terminal-palette screenshots.
+V1C adds focused single-line, idle single-line, and long Composer fixtures for
+a 13-fixture, 117-screenshot matrix, plus the same six System palette
+screenshots (123 total).
 Whitespace-only line-end padding from the SVG serializer is normalized; rendered
 text and geometry remain unchanged.
 
@@ -110,6 +113,64 @@ is still needed for System ANSI palettes and long Chinese/English paragraphs.
 The gallery removes Rich SVG's fixed `textLength` from embedded images so
 browser CJK fallback glyphs do not overlap; committed snapshot bytes and their
 exact regression comparison remain unchanged.
+
+For V1B-before/V1C-after shell review, run:
+
+```bash
+uv run python tests/visual/render_gallery.py \
+  --before-ref 3a9abd3cc8a60d38e6ff4ec0872df2d52f52f8ff \
+  --after-label V1C \
+  --fixtures empty-conversation single-line-composer idle-composer multiline-composer long-composer long-markdown tool-activity permission \
+  --output /tmp/neuro-code-tui-v1c-shell-compare.html
+```
+
+Open `/tmp/neuro-code-tui-v1c-shell-compare.html` to compare Header, reading
+area, Composer, and bottom status at 120×40, 100×32, and 80×24. The three new
+Composer fixtures have no V1B cards. In a real terminal,
+type a short draft, several lines, and a draft longer than the editor cap;
+check the surface remains locatable and the status stays at the bottom. Confirm
+`Enter` sends, `Shift+Enter` inserts a newline if the terminal reports it as a
+distinct key, and `Ctrl+J` / `F2` provide a usable fallback listed in F1 / `/help`.
+The Send button shares the prompt row; shortcut hints never reserve a row.
+Help distinguishes observed native modified Enter from an unconfirmed path.
+Konsole 25.12.x is recognized only by its dedicated, strict `KONSOLE_VERSION`
+marker. Its no-character SS3 Enter maps to newline, so both Shift+Return and a
+physical keypad Enter insert a newline on that verified release range; the
+wire encoding cannot distinguish them. Unknown, remote, and known multiplexed
+paths fail closed: plain Enter sends and Ctrl+J / F2 remain available in Help.
+Neuro Code does not change terminal profiles or keytabs. Test a dark and light
+System terminal palette as well as one RGB theme; SVG screenshots alone cannot
+verify terminal key reporting.
+
+### Keyboard feasibility and real-driver checks
+
+Textual 1.0.0's POSIX driver already sends Kitty `CSI >1u` at startup and
+`CSI <u` on exit. More startup/focus requests cannot add an unsupported protocol
+to a terminal. The installed Konsole 25.12.3 emulator was tested directly via
+its native library: Kitty and modifyOtherKeys queries received no reply; enable
+requests left Shift+Return as `ESC O M`. Device-attribute and focus responses
+provided positive controls. Konsole also exports `KONSOLE_VERSION`; the
+compatibility registry uses this dedicated version marker rather than `$TERM`.
+See [ADR 0186](../../docs/en/adr/0186-tui-composer-and-shell-layout-v1c.md#application-side-negotiation-feasibility)
+for source references, version boundaries and the exact probe matrix.
+
+Run the provider-free real POSIX driver regression with:
+
+```bash
+uv run pytest tests/test_tui_terminal_keyboard.py -k real_driver -q
+```
+
+It uses a PTY, the production PromptInput and Textual LinuxDriver (not
+`run_test`'s headless driver). It checks startup/teardown, real input delivery,
+unknown-terminal SS3 Send, exact Konsole-marker SS3 newline followed by ordinary
+Enter Send, enhanced Shift+Enter and bracketed multiline Chinese paste. PTY
+injection proves the application normalization path, not the physical key
+encoding. For manual acceptance on Konsole 25.12.x, open F1 / `/help` and
+confirm the compatibility warning. Press Shift+Return mid-draft and confirm a
+newline; press plain Return and confirm it submits; press physical keypad Enter
+and confirm it inserts a newline under the documented quirk. Also test paste,
+selection replacement, history restore and an active IME. Ctrl+J / F2 remain
+Help-only fallbacks, and Neuro Code never edits the user's profile.
 
 To update only those six palette samples after an intentional visual change:
 

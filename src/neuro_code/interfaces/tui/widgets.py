@@ -26,6 +26,11 @@ from neuro_code.interfaces.tui.state import (
     _PROMPT_MAX_VISIBLE_LINES,
     _SUCCESS_MARK,
 )
+from neuro_code.interfaces.tui.terminal_keyboard import (
+    TerminalInputAction,
+    TerminalInputNormalizer,
+    TerminalKeyboardCapability,
+)
 from neuro_code.interfaces.tui.theme import (
     ACCENT_CODE,
     TEXT_DISABLED,
@@ -343,15 +348,14 @@ class PromptInput(TextArea):
 
     带有明确提交语义且高度有界的多行提示编辑器.
 
-    Terminal bracketed paste is preserved as real document lines. ``Enter``
-    submits the complete prompt. ``Ctrl+J`` and ``F2`` insert a newline;
-    modified Enter keys also work when the terminal forwards distinct events.
-    The composer also exposes a focusable newline button for terminals that
-    intercept shortcuts. Common editor selection remains local to the prompt.
+    Terminal bracketed paste is preserved as real document lines. A shared
+    input normalizer maps Enter to submit and verified modified-key reports to
+    newline; the compatibility registry handles versioned terminal quirks.
+    Common editor selection remains local to the prompt.
 
     终端 bracketed paste 会保留为真实文档行.``Enter`` 提交完整提示,
-    ``Ctrl+J``/``F2`` 插入换行,组合 Enter 仅在终端透传独立事件时可用.
-    输入区还提供可聚焦的换行按钮,供快捷键被拦截时使用.编辑选择保持在提示框内.
+    输入归一化器将 Enter 映射为发送,将增强修饰键和已验证的终端兼容规则映射为换行.
+    编辑选择保持在提示框内.
     """
 
     @dataclass
@@ -396,10 +400,22 @@ class PromptInput(TextArea):
         id: str | None = None,
         enter_behavior: str = "send",
         soft_wrap: bool = True,
+        input_normalizer: TerminalInputNormalizer | None = None,
     ) -> None:
         super().__init__(soft_wrap=soft_wrap, tab_behavior="focus", id=id)
+        self.keyboard_capability = TerminalKeyboardCapability()
+        self.input_normalizer = input_normalizer or TerminalInputNormalizer.from_environment()
         self.enter_behavior = enter_behavior
         self.placeholder = placeholder
+
+    @property
+    def keyboard_help_key(self) -> str:
+        compatibility_help_key = self.input_normalizer.compatibility_help_key
+        if compatibility_help_key is not None:
+            return compatibility_help_key
+        if self.keyboard_capability.modified_enter_observed:
+            return self.keyboard_capability.help_key
+        return self.input_normalizer.help_key
 
     @property
     def value(self) -> str:
@@ -433,22 +449,6 @@ class PromptInput(TextArea):
             return Text(self.placeholder, style=theme_style(self, TEXT_PLACEHOLDER), end="")
         return super().get_line(line_index)
 
-    def _on_focus(self, event: events.Focus) -> None:
-        super()._on_focus(event)
-        self._sync_hint_visibility()
-
-    def _on_blur(self, event: events.Blur) -> None:
-        super()._on_blur(event)
-        self._sync_hint_visibility()
-
-    def _sync_hint_visibility(self) -> None:
-        """Hide the newline/command hint while this editor has focus.
-
-        用不透明度而非 display 切换,保持输入区布局不随焦点抖动."""
-
-        for hint in self.screen.query("#prompt-caption-hint"):
-            hint.set_class(self.has_focus, "hint-hidden")
-
     def action_paste_image(self) -> None:
         """Ask the app to attach the system clipboard image.
 
@@ -457,17 +457,20 @@ class PromptInput(TextArea):
         self.post_message(self.ImagePasteRequested(self))
 
     async def _on_key(self, event: events.Key) -> None:
-        if event.key == "enter":
+        self.keyboard_capability.observe(event.key)
+        action = self.input_normalizer.normalize(event.key, event.character)
+        if action is TerminalInputAction.NEWLINE:
+            event.prevent_default().stop()
+            self.insert_prompt_newline()
+            return
+        if action is TerminalInputAction.SEND:
             event.prevent_default().stop()
             if self.enter_behavior == "newline":
                 self.insert_prompt_newline()
             elif not self.disabled and not self.read_only:
                 self.post_message(self.Submitted(self, self.text))
             return
-        if event.key in {"shift+enter", "alt+enter", "ctrl+j", "f2"}:
-            event.prevent_default().stop()
-            self.insert_prompt_newline()
-            return
+        # PASS_THROUGH intentionally reaches TextArea's standard key handling.
         if event.key == "ctrl+a":
             event.prevent_default().stop()
             self.action_select_all()
@@ -489,12 +492,15 @@ class PromptInput(TextArea):
         event.prevent_default().stop()
 
     def sync_content_height(self) -> None:
-        """Fit short prompts and scroll longer prompts without moving the layout.
+        """Fit the draft while reserving most of a short terminal for reading.
 
-        短提示自动适配高度,长提示在固定上限内滚动,不改变整体布局.
+        输入区按草稿增高,在矮终端保留主阅读区;超长草稿在输入区内滚动.
         """
 
-        visible_lines = max(1, min(self.wrapped_document.height, _PROMPT_MAX_VISIBLE_LINES))
+        viewport_limit = max(2, self.screen.size.height // 4)
+        visible_lines = max(
+            1, min(self.wrapped_document.height, _PROMPT_MAX_VISIBLE_LINES, viewport_limit)
+        )
         self.styles.height = visible_lines
         if self.parent is not None:
             self.parent.styles.height = visible_lines + self.parent.styles.gutter.height

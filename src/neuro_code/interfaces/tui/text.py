@@ -11,11 +11,11 @@ from neuro_code.shared.ui_language import UiLanguage
 _ENGLISH: Final[dict[str, str]] = {
     "subtitle": "Terminal coding agent",
     "prompt.placeholder": "What shall we work on next?",
-    "prompt.hint": "Ctrl+J / F2 newline · / commands",
-    "prompt.newline": "Newline",
-    "prompt.newline.help": "Insert a newline: Ctrl+J / F2, or focus this button with Tab and press Enter.",
     "prompt.send": "Send ↑",
     "shortcuts": "^C Cancel  ^Q Quit  F8 Copy  Shift+Tab Mode  ^P Model  ^E Effort  ^R Sessions  ^, Settings  ^L Clear",
+    "keyboard.confirmed": "Keyboard: distinct Shift+Enter observed on this input path.",
+    "keyboard.unconfirmed": "Keyboard: distinct Shift+Enter not yet confirmed. Enter sends; Ctrl+J / F2 inserts a newline.",
+    "keyboard.konsole-25.12": "Keyboard: Konsole 25.12 compatibility is active. Shift+Return inserts a newline; physical keypad Enter does too. Ctrl+J / F2 remain available.",
     "runtime.help": "F1 help",
     "transcript_copy.title": "Copy transcript",
     "transcript_copy.help": "Drag or use Shift+Arrow to select; Ctrl+A selects all; Ctrl+C copies; Esc closes.",
@@ -96,7 +96,6 @@ _ENGLISH: Final[dict[str, str]] = {
     "settings.detail.notifications": "Separate terminal bell alerts for turn completion and failure.",
     "settings.detail.wake-limits": "Bound wakes per session and cooldown; wake policy must also be enabled.",
     "settings.detail.preferences-overview": "Inspect startup preferences, saved values, and override sources.",
-    "prompt.hint.newline": "Enter newline · Tab to Send button · / commands",
     "settings.scope.user": "User: all projects",
     "settings.scope.project": "Current project",
     "settings.scope.default": "Configuration default",
@@ -115,7 +114,7 @@ _ENGLISH: Final[dict[str, str]] = {
     "settings.overview.command_set": "Configured",
     "settings.overview.command_default": "Configuration default",
     "settings.option.enter_behavior": "Enter behavior",
-    "settings.option.enter_behavior.help": "Send submits with Enter. Newline inserts a line; use the Send button to submit. Ctrl+J, F2, and the newline button remain available.",
+    "settings.option.enter_behavior.help": "Send submits with Enter. Newline inserts a line; use the Send button to submit. Ctrl+J and F2 remain available; see F1 Help.",
     "settings.option.prompt_soft_wrap": "Input soft wrapping",
     "settings.option.prompt_soft_wrap.help": "Only changes visual wrapping in the editor; does not alter text line breaks. Enabled by default.",
     "settings.option.notify_completed": "Turn completion alert",
@@ -490,8 +489,7 @@ _ENGLISH: Final[dict[str, str]] = {
     "runtime.mode_help.plan": "Plan: only read-only exploration is allowed; side-effecting requests are denied.",
     "runtime.mode_help.auto": "Auto (limited): reads and edits run automatically; commands and network effects still require approval until a safety classifier is implemented.",
     "runtime.mode_help_auto_unrestricted": "Auto was explicitly authorized by --always-approve. Explicit deny rules and the configured process sandbox still apply; no safety classifier is active yet.",
-    "startup.resumed": "Resumed session {session_id} · {provider}/{model} · {cwd}",
-    "startup.ready": "Ready · {provider}/{model} · {cwd}",
+    "startup.resumed": "Resumed session {session_id}",
     "session.stuck_recoverable": "The previous turn entered a repeated loop and was stopped safely. You can continue with a new instruction.",
     "session.budget_limited_recoverable": "The previous turn reached its execution budget and was stopped safely. You can continue with a new instruction.",
     "session.recovery.safe": "Interrupted turn {turn_id} is safely retryable before model output. Use /recover retry {turn_id} or /recover abandon {turn_id}.",
@@ -637,7 +635,7 @@ _ENGLISH: Final[dict[str, str]] = {
     "command.tasks_arguments": "/tasks does not accept arguments.",
     "command.arguments": "/{command} does not accept arguments.",
     "command.help": (
-        "Command reference:"
+        "{keyboard_status}\n\nKeyboard: Enter sends by default; Shift+Enter inserts a newline only when the terminal reports a distinct modified key. Ctrl+J / F2 insert a newline on legacy terminals. Tab reaches Send.\n\nCommand reference:"
         "\n  /help — Show this command reference"
         "\n  /status — Provider, context, mode, and session overview"
         "\n"
@@ -861,11 +859,11 @@ _ENGLISH: Final[dict[str, str]] = {
 _CHINESE: Final[dict[str, str]] = {
     "subtitle": "终端编程智能体",
     "prompt.placeholder": "下一步，想做什么？",
-    "prompt.hint": "Ctrl+J / F2 换行 · / 命令",
-    "prompt.newline": "换行",
-    "prompt.newline.help": "插入换行：Ctrl+J / F2，或用 Tab 聚焦此按钮后按 Enter。",
     "prompt.send": "发送 ↑",
     "shortcuts": "^C 取消  ^Q 退出  F8 复制  Shift+Tab 模式  ^P 模型  ^E 强度  ^R 会话  ^, 设置  ^L 清屏",
+    "keyboard.confirmed": "键盘：当前输入链路已收到独立的 Shift+Enter 事件。",
+    "keyboard.unconfirmed": "键盘：尚未确认独立 Shift+Enter。Enter 发送；Ctrl+J / F2 换行。",
+    "keyboard.konsole-25.12": "键盘：已启用 Konsole 25.12 兼容规则。Shift+Return 换行；物理小键盘 Enter 也会换行。仍可用 Ctrl+J / F2。",
     "runtime.help": "F1 帮助",
     "transcript_copy.title": "复制会话记录",
     "transcript_copy.help": "拖动鼠标或使用 Shift+方向键选择；Ctrl+A 全选；Ctrl+C 复制；Esc 关闭。",
@@ -946,7 +944,6 @@ _CHINESE: Final[dict[str, str]] = {
     "settings.detail.notifications": "分别控制轮次结束和失败时的终端铃声。",
     "settings.detail.wake-limits": "设置每会话唤醒次数与冷却间隔；仍需先启用后台唤醒。",
     "settings.detail.preferences-overview": "查看启动时加载的偏好、已保存值及覆盖来源。",
-    "prompt.hint.newline": "Enter 换行 · Tab 选择发送按钮 · / 命令",
     "settings.scope.user": "用户：所有项目",
     "settings.scope.project": "当前项目",
     "settings.scope.default": "配置默认值",
@@ -965,7 +962,7 @@ _CHINESE: Final[dict[str, str]] = {
     "settings.overview.command_set": "已设置",
     "settings.overview.command_default": "配置默认值",
     "settings.option.enter_behavior": "Enter 行为",
-    "settings.option.enter_behavior.help": "发送：Enter 提交；换行：Enter 插入新行，使用“发送”按钮提交。Ctrl+J、F2 和换行按钮仍可用。",
+    "settings.option.enter_behavior.help": "发送：Enter 提交；换行：Enter 插入新行，使用“发送”按钮提交。Ctrl+J 和 F2 仍可用；详见 F1 帮助。",
     "settings.option.prompt_soft_wrap": "输入框自动折行",
     "settings.option.prompt_soft_wrap.help": "仅影响输入框的显示折行，不修改文本中的实际换行。默认启用。",
     "settings.option.notify_completed": "轮次结束提醒",
@@ -1340,8 +1337,7 @@ _CHINESE: Final[dict[str, str]] = {
     "runtime.mode_help.plan": "Plan：只允许只读探索；所有带副作用的请求都会被拒绝。",
     "runtime.mode_help.auto": "Auto（受限预览）：读取和编辑自动运行；安全分类器实现前，命令和网络操作仍需授权。",
     "runtime.mode_help_auto_unrestricted": "本次 Auto 由 --always-approve 显式授权。显式 deny 规则和进程沙箱仍然有效；安全分类器尚未实现。",
-    "startup.resumed": "已恢复会话 {session_id} · {provider}/{model} · {cwd}",
-    "startup.ready": "已就绪 · {provider}/{model} · {cwd}",
+    "startup.resumed": "已恢复会话 {session_id}",
     "session.stuck_recoverable": "上一次任务陷入重复循环，已安全暂停。你可以继续输入新的指令。",
     "session.budget_limited_recoverable": "上一次任务达到执行预算，已安全暂停。你可以继续输入新的指令。",
     "session.recovery.safe": "中断回合 {turn_id} 在模型输出前停止，可以安全重试。请使用 /recover retry {turn_id} 或 /recover abandon {turn_id}。",
@@ -1487,7 +1483,7 @@ _CHINESE: Final[dict[str, str]] = {
     "command.tasks_arguments": "/tasks 不接受参数。",
     "command.arguments": "/{command} 不接受参数。",
     "command.help": (
-        "命令参考："
+        "{keyboard_status}\n\n输入：默认 Enter 发送；终端能上报独立修饰键时 Shift+Enter 换行。旧终端可用 Ctrl+J / F2 换行；Tab 可聚焦发送。\n\n命令参考："
         "\n  /help —— 显示本命令参考"
         "\n  /status —— 供应商、上下文、模式与会话概览"
         "\n"

@@ -2,7 +2,7 @@
 
 在 `/settings` → **外观主题** 中选择。方向键上下移动即可预览，Enter 或点击选项应用并保存，Esc / 返回恢复进入选择器时的主题。Tab 可在列表和返回按钮之间导航；长列表支持滚动。预览不写入偏好，也不会提交草稿。
 
-输入区不显示额外标题，编辑区下方放置换行提示和发送按钮。Enter 与发送按钮共用已有提交流程；Ctrl+J 或 F2 换行，也可点击「换行」按钮，或用 Tab 聚焦该按钮后按 Enter。Alt+Enter / Shift+Enter 仅在终端能透传独立按键事件时可用，不能保证所有终端都支持。输入区随终端宽度展开，多行高度有界。Graphite 和 Porcelain 使用克制的主题表面区分输入区和历史用户消息；System 在可靠取得 RGB 且输出为 TrueColor/ANSI256 时，从终端默认色派生细微表面，unknown palette 则保留默认填充并使用可见 ANSI 细线、dim 文字和反色选中态。Composer 细线复用已有顶部留白，焦点时改用 accent；用户消息左侧保留细线。占位文本、操作提示、光标与文字选区也使用更清晰的对比色。
+输入区无额外标题；编辑器与发送按钮共用一行，不再常驻快捷键说明。Enter 与发送按钮共用已有提交流程。Ctrl+J / F2 换行，在 F1 / `/help` 中说明。Shift+Enter 只在 Textual 收到独立修饰键事件时可用；不把 SS3 keypad Enter 猜成 Shift。多行高度有界，V1A palette / V1B typography 语义保持不变。System 在终端 RGB 可靠时使用自适应表面；键盘能力与主题无关。
 
 共有 13 个选项。`porcelain` 为暖瓷白；`graphite` 保留已有曜石黑的存储标识；`matrix` 是 Neuro Code 自行设计的黑底绿字配色。首次启动仍默认暖瓷白，已有选择保持不变。
 

@@ -60,8 +60,10 @@ async def capture_snapshot(
     with patch.object(NeuroCodeApp, "_update_clock", fixed_clock):
         async with app.run_test(size=viewport) as pilot:
             populate_fixture(app, fixture)
-            if fixture == "multiline-composer":
+            if fixture in {"single-line-composer", "multiline-composer", "long-composer"}:
                 app.query_one("#prompt", PromptInput).focus()
+            elif fixture == "idle-composer":
+                app.query_one("#prompt", PromptInput).blur()
             show_fixture_screen(app, fixture, theme)
             # Let Textual complete a layout pass. No timers, provider calls, or
             # animation-driven states are part of these fixtures.

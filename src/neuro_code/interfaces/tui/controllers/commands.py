@@ -297,7 +297,7 @@ class CommandControllerMixin(TuiAppControllerMixin):
         elif command == "clear":
             self.action_clear_transcript()
         elif command == "help":
-            self._write_ui_entry("system", "command.help")
+            self.action_show_help()
         elif command == "status":
             session_id = self._runner.session_id or ui_text(self._language, "command.not_created")
             profile = (
@@ -671,7 +671,12 @@ class CommandControllerMixin(TuiAppControllerMixin):
 
         if isinstance(self.screen, ModalScreen):
             return
-        self._write_ui_entry("system", "command.help")
+        prompt = self._main_screen_query_one("#prompt", PromptInput)
+        self._write_ui_entry(
+            "system",
+            "command.help",
+            keyboard_status=ui_text(self._language, prompt.keyboard_help_key),
+        )
 
     def action_copy_prompt(self) -> None:
         """Copy selected prompt text or open the transcript selection view.
