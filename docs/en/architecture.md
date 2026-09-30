@@ -921,18 +921,29 @@ field; missing/invalid values fall back to Porcelain. Obsidian keeps the `graphi
 identifier. Startup and first-run provider setup restore the same choice. Switching
 preserves message widgets, drafts and cursor position. Conversation and composer
 use the terminal width with small insets. The composer has no extra title; its editor
-and action row are separate. Send reuses the existing submission pipeline. Ctrl+J, F2 and a focusable Newline
-button share selection-aware insertion without submitting; disabled/read-only
-editors are not modified. Modified Enter keys depend on terminal forwarding
-and are not universally guaranteed. Dedicated
-theme tokens distinguish composer and user-message fills from ordinary panels, with
-top/left rules for boundaries and readable placeholder, cursor and selection colors.
+and action row are separate. Default Enter sends through the existing submission
+pipeline. Shift+Enter, Ctrl+J, F2 and the focusable Newline button share
+selection-aware insertion without submitting; disabled/read-only editors are not
+modified. Modified Enter keys depend on terminal forwarding; Ctrl+J, F2 and the
+button remain available when they are not distinct. Dedicated theme tokens
+distinguish composer and user-message fills from ordinary panels, with readable
+placeholder, cursor and selection colors.
 System makes one bounded OSC 10/11 default-color query before Textual owns input; it
 derives subtle surfaces when RGB and TrueColor/ANSI256 are available, then fails soft
 to default fills, visible ANSI borders, dim secondary text and ANSI focus. Composer
 uses its adaptive surface and focus treatment without moving its contents. Narrow/short terminals
-compact the chrome with bounded multiline height. Permissions, execution and session
-contracts remain unchanged.
+compact the chrome with bounded multiline height. V1C makes the Header one row,
+keeps the status in one bottom row, and sizes the prompt surface to the draft.
+The editor respects both an eight-line limit and the terminal-height budget;
+the empty shell returns the released rows to a genuinely empty, top-anchored
+transcript instead of repeating model and workspace metadata there. A resume
+notice keeps its session identity only; the bottom bar owns model, mode,
+effort, context usage, and workspace. The prompt and bottom metadata share a
+reading axis. The shortcut hint stays visible in the existing action row and
+lists reliable newline fallbacks before the button tooltip's conditional
+Shift+Enter guidance. See
+[ADR 0186](adr/0186-tui-composer-and-shell-layout-v1c.md). Permissions, execution
+and session contracts remain unchanged.
 
 The scrollback is a vertical conversation of stable message widgets rather
 than a pre-rendered log plus a temporary streaming surface. User prompts and

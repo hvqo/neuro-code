@@ -213,14 +213,14 @@ async def test_system_composer_has_no_top_rule_and_keeps_geometry_when_focused(
         surface = app.query_one("#prompt-surface")
         focused_surface_region = tuple(surface.region)
         focused_prompt_region = tuple(prompt.region)
-        assert surface.styles.padding.top == 1
+        assert surface.styles.padding.top == 0
         assert not surface.styles.border_top[0]
 
         prompt.blur()
         await pilot.pause()
         idle_surface_region = tuple(surface.region)
         idle_prompt_region = tuple(prompt.region)
-        assert surface.styles.padding.top == 1
+        assert surface.styles.padding.top == 0
         assert not surface.styles.border_top[0]
 
         prompt.focus()

@@ -6,6 +6,9 @@ Fixtures pin the clock, provider/model labels, workspace path, and trace IDs. Th
 V0 baselines covered 9 fixtures × 3 viewports × 3 themes = 81 screenshots.
 V1B adds a mixed Chinese/English long answer for a 10-fixture, 90-screenshot
 matrix, plus the six deterministic System terminal-palette screenshots.
+V1C adds focused single-line, idle single-line, and long Composer fixtures for
+a 13-fixture, 117-screenshot matrix, plus the same six System palette
+screenshots (123 total).
 Whitespace-only line-end padding from the SVG serializer is normalized; rendered
 text and geometry remain unchanged.
 
@@ -110,6 +113,26 @@ is still needed for System ANSI palettes and long Chinese/English paragraphs.
 The gallery removes Rich SVG's fixed `textLength` from embedded images so
 browser CJK fallback glyphs do not overlap; committed snapshot bytes and their
 exact regression comparison remain unchanged.
+
+For V1B-before/V1C-after shell review, run:
+
+```bash
+uv run python tests/visual/render_gallery.py \
+  --before-ref 3a9abd3cc8a60d38e6ff4ec0872df2d52f52f8ff \
+  --after-label V1C \
+  --fixtures empty-conversation single-line-composer idle-composer multiline-composer long-composer long-markdown tool-activity permission \
+  --output /tmp/neuro-code-tui-v1c-shell-compare.html
+```
+
+Open `/tmp/neuro-code-tui-v1c-shell-compare.html` to compare Header, reading
+area, Composer, and bottom status at 120×40, 100×32, and 80×24. The three new
+Composer fixtures have no V1B cards. In a real terminal,
+type a short draft, several lines, and a draft longer than the editor cap;
+check the surface remains locatable and the status stays at the bottom. Confirm
+`Enter` sends, `Shift+Enter` inserts a newline if the terminal reports it as a
+distinct key, and `Ctrl+J` / `F2` or the Newline button provide a usable
+fallback. Test a dark and light System terminal palette as well as one RGB
+theme; SVG screenshots alone cannot verify terminal key reporting.
 
 To update only those six palette samples after an intentional visual change:
 

@@ -289,8 +289,8 @@ class NeuroCodeApp(
 
     #header {
         width: 100%;
-        height: 3;
-        padding: $space-1 $space-4 $space-0 $space-4;
+        height: 1;
+        padding: 0 $space-3;
         background: $background;
     }
 
@@ -395,7 +395,7 @@ class NeuroCodeApp(
 
     #composer {
         height: auto;
-        padding: $space-0 $space-3 $space-1 $space-3;
+        padding: 0 $space-3;
         background: $background;
     }
 
@@ -433,7 +433,7 @@ class NeuroCodeApp(
         color: $text-secondary;
         text-style: $text-secondary-intensity;
         align-vertical: middle;
-        margin-top: 1;
+        margin-top: 0;
     }
 
     #runtime-primary,
@@ -455,9 +455,9 @@ class NeuroCodeApp(
     #prompt-surface {
         width: 100%;
         height: auto;
-        min-height: 6;
-        max-height: 13;
-        padding: 1;
+        min-height: 3;
+        max-height: 11;
+        padding: 0 1 1 1;
         background: $composer-surface;
         border: none;
     }
@@ -471,13 +471,9 @@ class NeuroCodeApp(
         overflow: hidden hidden;
     }
 
-    #prompt-caption-hint.hint-hidden {
-        opacity: 0;
-    }
-
     #prompt-actions {
         height: 1;
-        margin-top: 1;
+        margin-top: 0;
         background: $composer-surface;
     }
 
@@ -550,7 +546,7 @@ class NeuroCodeApp(
     }
 
     .compact-chrome #header {
-        height: 2;
+        height: 1;
         padding: 0 2;
     }
 
@@ -563,8 +559,8 @@ class NeuroCodeApp(
     }
 
     .compact-chrome #prompt-surface {
-        min-height: 4;
-        max-height: 11;
+        min-height: 2;
+        max-height: 9;
         padding: 0 1;
     }
 
@@ -1041,9 +1037,6 @@ class NeuroCodeApp(
                 "system",
                 "startup.resumed",
                 session_id=self._runner.session_id or ui_text(self._language, "value.unknown"),
-                provider=self._provider_name,
-                model=self._model_name,
-                cwd=self._cwd,
             )
             self._write_recoverable_resume_notice(self._execution_record)
             self.run_worker(
@@ -1052,14 +1045,6 @@ class NeuroCodeApp(
                 group="session",
                 exclusive=False,
                 exit_on_error=False,
-            )
-        else:
-            self._write_ui_entry(
-                "system",
-                "startup.ready",
-                provider=self._provider_name,
-                model=self._model_name,
-                cwd=self._cwd,
             )
         if self._task_controller is not None:
             self.set_interval(_TASK_POLL_SECONDS, self._poll_background_tasks)

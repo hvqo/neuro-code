@@ -433,22 +433,6 @@ class PromptInput(TextArea):
             return Text(self.placeholder, style=theme_style(self, TEXT_PLACEHOLDER), end="")
         return super().get_line(line_index)
 
-    def _on_focus(self, event: events.Focus) -> None:
-        super()._on_focus(event)
-        self._sync_hint_visibility()
-
-    def _on_blur(self, event: events.Blur) -> None:
-        super()._on_blur(event)
-        self._sync_hint_visibility()
-
-    def _sync_hint_visibility(self) -> None:
-        """Hide the newline/command hint while this editor has focus.
-
-        用不透明度而非 display 切换,保持输入区布局不随焦点抖动."""
-
-        for hint in self.screen.query("#prompt-caption-hint"):
-            hint.set_class(self.has_focus, "hint-hidden")
-
     def action_paste_image(self) -> None:
         """Ask the app to attach the system clipboard image.
 
@@ -489,12 +473,15 @@ class PromptInput(TextArea):
         event.prevent_default().stop()
 
     def sync_content_height(self) -> None:
-        """Fit short prompts and scroll longer prompts without moving the layout.
+        """Fit the draft while reserving most of a short terminal for reading.
 
-        短提示自动适配高度,长提示在固定上限内滚动,不改变整体布局.
+        输入区按草稿增高,在矮终端保留主阅读区;超长草稿在输入区内滚动.
         """
 
-        visible_lines = max(1, min(self.wrapped_document.height, _PROMPT_MAX_VISIBLE_LINES))
+        viewport_limit = max(2, self.screen.size.height // 4)
+        visible_lines = max(
+            1, min(self.wrapped_document.height, _PROMPT_MAX_VISIBLE_LINES, viewport_limit)
+        )
         self.styles.height = visible_lines
         if self.parent is not None:
             self.parent.styles.height = visible_lines + self.parent.styles.gutter.height

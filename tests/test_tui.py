@@ -2135,8 +2135,9 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(runner.prompts, ["first line\nsecond line\nthird line"])
 
     async def test_prompt_common_editing_shortcuts_select_all_and_insert_newline(self) -> None:
+        runner = TuiConversation()
         app = NeuroCodeApp(
-            TuiConversation(),
+            runner,
             provider_name="fixture",
             model_name="fixture-model",
             cwd=Path("/workspace"),
@@ -2149,11 +2150,18 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("shift+enter")
             await pilot.press("s", "e", "c", "o", "n", "d")
             self.assertEqual(prompt.value, "first line\nsecond")
+            self.assertEqual(runner.prompts, [])
 
             await pilot.press("ctrl+a")
             self.assertEqual(prompt.selected_text, "first line\nsecond")
             await pilot.press("r")
             self.assertEqual(prompt.value, "r")
+            await pilot.press("enter")
+            for _ in range(20):
+                await pilot.pause(0.01)
+                if runner.prompts:
+                    break
+            self.assertEqual(runner.prompts, ["r"])
 
     async def test_porcelain_theme_uses_readable_compact_chrome(self) -> None:
         app = NeuroCodeApp(
@@ -2237,7 +2245,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
-    async def test_prompt_hint_hides_while_the_input_is_focused(self) -> None:
+    async def test_prompt_shortcuts_stay_visible_without_changing_composer_height(self) -> None:
         app = NeuroCodeApp(
             TuiConversation(),
             provider_name="fixture",
@@ -2252,11 +2260,16 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             prompt.focus()
             await pilot.pause()
             self.assertTrue(prompt.has_focus)
-            self.assertTrue(hint.has_class("hint-hidden"))
+            self.assertIn("Ctrl+J/F2", str(hint.renderable))
+            self.assertIn("Shift+Enter", str(app.query_one("#prompt-newline", Button).tooltip))
+            self.assertFalse(hint.has_class("hint-hidden"))
+            self.assertEqual(hint.region.height, 1)
+            composer_height = app.query_one("#composer").region.height
 
             app.query_one("#prompt-send", Button).focus()
             await pilot.pause()
             self.assertFalse(hint.has_class("hint-hidden"))
+            self.assertEqual(app.query_one("#composer").region.height, composer_height)
 
     async def test_permission_approval_shows_the_model_intent_instead_of_the_policy(self) -> None:
         request = build_permission_request(
@@ -3100,7 +3113,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 "/ 命令", str(main_screen.query_one("#prompt-caption-hint", Static).renderable)
             )
             self.assertEqual(len(main_screen.query("#shortcut-bar")), 0)
-            self.assertTrue(app.entries[0].text.startswith("已就绪"))
+            self.assertEqual(app.entries[0].text, "literal model response")
             self.assertIn(
                 "literal model response",
                 [entry.text for entry in app.entries if entry.category == "assistant"],
