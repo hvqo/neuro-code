@@ -457,7 +457,7 @@ class NeuroCodeApp(
         height: auto;
         min-height: 2;
         max-height: 10;
-        padding: 0 1 1 1;
+        padding: 1 1 1 2;
         background: $composer-surface;
         border: none;
     }
@@ -532,7 +532,7 @@ class NeuroCodeApp(
     .compact-chrome #prompt-surface {
         min-height: 1;
         max-height: 8;
-        padding: 0 1;
+        padding: 0 1 0 2;
     }
 
     .compact-chrome .message-user {

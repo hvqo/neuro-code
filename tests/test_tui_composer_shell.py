@@ -35,17 +35,61 @@ async def test_empty_session_preserves_reading_space_and_a_locatable_composer(
         assert header.region.bottom == transcript.region.y
         assert transcript.region.bottom == composer.region.y
         assert composer.region.bottom == status.region.bottom == height
-        assert composer.region.height == (2 if width <= 80 else 3)
+        assert composer.region.height == (2 if width <= 80 else 4)
         assert transcript.region.height >= height * 4 // 5
         assert prompt.region.height == send.region.height == status.region.height == 1
-        assert surface.region.height >= prompt.region.height
+        assert surface.region.height == (1 if width <= 80 else 3)
         assert send.region.y == prompt.region.y
         assert not app.query("#prompt-caption-hint")
         assert not app.query("#prompt-newline")
         assert surface.styles.background == prompt.styles.background
-        assert prompt.region.x == runtime_primary.region.x
-        assert abs(prompt.region.x - brand.region.x) <= 1
-        assert prompt.region.x - transcript.styles.padding.left == 1
+        assert prompt.region.x == runtime_primary.region.x + 1
+        assert abs(prompt.region.x - brand.region.x) <= 2
+        assert prompt.region.x - transcript.styles.padding.left == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("viewport", "expected_outer_x", "expected_outer_width", "expected_height", "expected_text_x"),
+    [
+        ((120, 40), 3, 114, 3, 5),
+        ((100, 32), 3, 94, 3, 5),
+        ((80, 24), 1, 78, 1, 3),
+    ],
+)
+@pytest.mark.parametrize("theme", [UiTheme.GRAPHITE, UiTheme.PORCELAIN, UiTheme.SYSTEM])
+async def test_composer_matches_user_message_surface_and_reading_axis(
+    viewport: tuple[int, int],
+    expected_outer_x: int,
+    expected_outer_width: int,
+    expected_height: int,
+    expected_text_x: int,
+    theme: UiTheme,
+) -> None:
+    app = make_app(theme, fixture="user-assistant")
+
+    async with app.run_test(size=viewport) as pilot:
+        populate_fixture(app, "user-assistant")
+        await pilot.pause()
+
+        user_message = app.query_one(".message-user")
+        surface = app.query_one("#prompt-surface")
+        prompt = app.query_one("#prompt", PromptInput)
+        send = app.query_one("#prompt-send")
+        status = app.query_one("#runtime-bar")
+
+        assert (user_message.region.x, user_message.region.width) == (
+            expected_outer_x,
+            expected_outer_width,
+        )
+        assert (surface.region.x, surface.region.width) == (
+            expected_outer_x,
+            expected_outer_width,
+        )
+        assert user_message.region.height == surface.region.height == expected_height
+        assert user_message.content_region.x == prompt.region.x == expected_text_x
+        assert prompt.region.y == send.region.y
+        assert surface.region.bottom == status.region.y
 
 
 @pytest.mark.asyncio
@@ -92,7 +136,7 @@ async def test_long_content_keeps_shell_height_and_transcript_scrollable(
         composer = app.query_one("#composer")
 
         assert transcript.region.height >= viewport[1] * 4 // 5
-        assert composer.region.height == (2 if viewport[0] <= 80 else 3)
+        assert composer.region.height == (2 if viewport[0] <= 80 else 4)
         assert composer.region.bottom == viewport[1]
         if fixture == "long-markdown":
             # The compact shell may fit this sample at 120x40. Longer history
