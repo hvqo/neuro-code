@@ -143,7 +143,7 @@ class PlanControllerMixin(TuiAppControllerMixin):
         body = Text(overflow="fold")
         body.append(
             ui_text(self._language, "plan.heading"),
-            style=f"bold {theme_style(self, TEXT_PRIMARY)}",
+            style=theme_style(self, TEXT_PRIMARY),
         )
         if plan.explanation is not None:
             body.append("\n")

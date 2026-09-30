@@ -51,7 +51,7 @@ class ReasoningEffortScreen(ModalScreen[ReasoningEffort | None]):
     }
 
     #effort-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -147,7 +147,7 @@ class InteractionModeScreen(ModalScreen[InteractionMode | None]):
     }
 
     #interaction-mode-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -258,7 +258,7 @@ class PermissionSettingsScreen(ModalScreen[tuple[InteractionMode, bool] | None])
     }
 
     #permission-settings-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -373,7 +373,7 @@ class FullAccessConfirmScreen(ModalScreen[bool]):
     }
 
     #full-access-title {
-        text-style: bold;
+        text-style: none;
         color: $warning;
         margin-bottom: 1;
     }
@@ -462,7 +462,7 @@ class PermissionApprovalScreen(ModalScreen[PermissionApproval]):
     }
 
     #approval-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -644,7 +644,7 @@ class ProviderSelectionScreen(ModalScreen[str | None]):
     }
 
     #provider-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }
@@ -761,7 +761,7 @@ class SessionSelectionScreen(ModalScreen[str | None]):
     }
 
     #session-title {
-        text-style: bold;
+        text-style: none;
         color: $text-primary;
         margin-bottom: 1;
     }

@@ -124,12 +124,12 @@ class AgentPreferencesScreen(ModalScreen[AgentPreferencesScreenResult | None]):
         width: 92%; max-width: 100; height: 90%; padding: $space-2 $space-3;
         background: $surface; border: round $border;
     }
-    #agent-preferences-title { height: auto; text-style: bold; color: $text-primary; margin-bottom: 1; }
+    #agent-preferences-title { height: auto; text-style: none; color: $text-primary; margin-bottom: 1; }
     #agent-preferences-description { height: auto; margin-bottom: 2; color: $text-muted; }
     #agent-preferences-fields { height: 1fr; }
     .agent-preference-label {
         height: auto; margin-top: 2; margin-bottom: 1;
-        text-style: bold; color: $text-primary;
+        text-style: none; color: $text-primary;
     }
     .agent-preference-help { height: auto; color: $text-muted; margin-top: 1; margin-bottom: 1; }
     .agent-preference-source { height: auto; color: $text-secondary; margin-bottom: 1; }

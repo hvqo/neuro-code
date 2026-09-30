@@ -263,7 +263,7 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(theme.variables["text-muted-intensity"], "dim")
         self.assertEqual(theme.surface, theme.background)
         self.assertEqual(theme.variables["surface-selected"], "ansi_default")
-        self.assertEqual(theme.variables["button-focus-text-style"], "bold reverse")
+        self.assertEqual(theme.variables["button-focus-text-style"], "reverse")
 
     async def test_preview_scroll_and_escape_restore_original_without_saving(self) -> None:
         preferences = UiPreferencesFixture()

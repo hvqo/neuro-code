@@ -177,6 +177,7 @@ from neuro_code.interfaces.tui.theme import (
     TEXT_BODY,
     TEXT_DISABLED,
     TEXT_EMPHASIS,
+    TEXT_MUTED,
     TEXT_PLACEHOLDER,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
@@ -2520,10 +2521,10 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("[red]literal[/red]", plain)
             self.assertNotIn("**bold**", plain)
             # Headings and strong text use the neutral reading hierarchy;
-            # inline code keeps its separate syntax accent.
+            # inline code stays readable without a colored chip.
             self.assertIn(TEXT_PRIMARY.lower(), styled["Important"].lower())
             self.assertIn(TEXT_PRIMARY.lower(), styled["bold"].lower())
-            self.assertIn(ACCENT_CODE.lower(), styled["code"].lower())
+            self.assertIn(TEXT_EMPHASIS.lower(), styled["code"].lower())
             code_segment = next(segment for segment in segments if segment.text.strip() == "code")
             self.assertIsNone(code_segment.style.bgcolor)
 
@@ -2624,7 +2625,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(marker, str(rendered))
                     self.assertIn(accent.lower(), str(rendered.style).lower())
 
-    async def test_tool_notice_uses_semantic_weight_without_a_repeated_label(self) -> None:
+    async def test_tool_notice_keeps_metadata_quiet_without_a_repeated_label(self) -> None:
         app = NeuroCodeApp(
             TuiConversation(),
             provider_name="fixture",
@@ -2643,7 +2644,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             tool_segments = [segment for segment in segments if "read_file" in segment.text]
 
             self.assertTrue(tool_segments)
-            self.assertIn(TEXT_EMPHASIS.lower(), str(tool_segments[0].style).lower())
+            self.assertIn(TEXT_SECONDARY.lower(), str(tool_segments[0].style).lower())
             self.assertNotIn(ACCENT_CODE.lower(), str(tool_segments[0].style).lower())
             self.assertNotIn("Tool", rendered.plain)
 
@@ -6016,7 +6017,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 segment for segment in collapsed_segments if "125ms" in segment.text
             ]
             self.assertIn(ACCENT_SUCCESS.lower(), str(success_segments[0].style).lower())
-            self.assertIn(TEXT_SECONDARY.lower(), str(duration_segments[0].style).lower())
+            self.assertIn(TEXT_MUTED.lower(), str(duration_segments[0].style).lower())
 
             self.assertTrue(card_widget.can_focus)
             card_widget.focus()

@@ -56,7 +56,7 @@ class TranscriptCopyScreen(ModalScreen[None]):
     #transcript-copy-title {
         height: 1;
         color: $text-primary;
-        text-style: bold;
+        text-style: none;
     }
 
     #transcript-copy-help,

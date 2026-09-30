@@ -112,8 +112,8 @@ def test_system_uses_terminal_semantics_without_foreground_fill_collision() -> N
     assert roles["composer-border"] == "ansi_white"
     assert roles["composer-focus-border"] == "ansi_bright_blue"
     assert roles["user-message-border"] == "ansi_white"
-    assert roles["button-focus-text-style"] == "bold reverse"
-    assert roles["selected-button-text-style"] == "bold reverse"
+    assert roles["button-focus-text-style"] == "reverse"
+    assert roles["selected-button-text-style"] == "reverse"
     assert roles["input-selection-background"] == "ansi_blue"
     owner = SimpleNamespace(app=SimpleNamespace(theme=UiTheme.SYSTEM.textual_name))
     assert theme_style(owner, TEXT_SECONDARY) == "dim default"
@@ -183,6 +183,6 @@ async def test_system_settings_selection_uses_reverse_without_a_filled_surface()
         selected.focus()
         await pilot.pause()
 
-        assert selected.styles.text_style.bold
+        assert not selected.styles.text_style.bold
         assert selected.styles.text_style.reverse
         assert selected.styles.background.hex == "ansi_default"

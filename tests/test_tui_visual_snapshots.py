@@ -6,6 +6,7 @@ from tempfile import gettempdir
 from unittest.mock import patch
 
 import pytest
+from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from neuro_code.interfaces.tui.app import NeuroCodeApp
@@ -65,6 +66,13 @@ async def capture_snapshot(
             # Let Textual complete a layout pass. No timers, provider calls, or
             # animation-driven states are part of these fixtures.
             await pilot.pause()
+            if fixture == "mixed-language-long-answer":
+                # Review the opening reading hierarchy and user/assistant axis.
+                # Normal long responses may auto-follow their bottom edge.
+                app.query_one("#transcript", VerticalScroll).scroll_home(
+                    animate=False, immediate=True
+                )
+                await pilot.pause()
             return app.export_screenshot(title=_TITLE, simplify=True)
 
 
