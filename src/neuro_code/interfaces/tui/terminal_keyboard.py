@@ -14,13 +14,14 @@ class TerminalInputAction(StrEnum):
 
     SEND = "send"
     NEWLINE = "newline"
+    PASS_THROUGH = "pass_through"
 
 
 @dataclass(frozen=True, slots=True)
 class TerminalIdentity:
     """A positively identified terminal and its parsed release version."""
 
-    name: str
+    family: str
     version: tuple[int, int, int]
 
     @classmethod
@@ -51,25 +52,47 @@ class TerminalIdentity:
 
 @dataclass(frozen=True, slots=True)
 class TerminalInputRule:
-    """One bounded key-event mapping for a verified terminal release range."""
+    """Evidence-carrying key mapping for one verified terminal release range."""
 
-    terminal_name: str
+    terminal_family: str
     minimum_version: tuple[int, int, int]
     maximum_version_exclusive: tuple[int, int, int]
-    key: str
-    character: str | None
+    observed_key: str
+    observed_character: str | None
+    observed_wire_sequence: str
     action: TerminalInputAction
+    known_tradeoff: str
+    evidence: tuple[str, ...]
+    regression_coverage: tuple[str, ...]
     help_key: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.minimum_version >= self.maximum_version_exclusive:
+            raise ValueError("terminal compatibility version range must be non-empty")
+        metadata = (
+            self.terminal_family.strip(),
+            self.observed_key.strip(),
+            self.observed_wire_sequence,
+            self.known_tradeoff.strip(),
+            *self.evidence,
+            *self.regression_coverage,
+        )
+        if not all(metadata) or not self.evidence or not self.regression_coverage:
+            raise ValueError(
+                "terminal compatibility rules require input, tradeoff, evidence, and regression coverage"
+            )
 
     def applies_to_identity(self, identity: TerminalIdentity) -> bool:
         return (
-            identity.name == self.terminal_name
+            identity.family == self.terminal_family
             and self.minimum_version <= identity.version < self.maximum_version_exclusive
         )
 
     def matches(self, identity: TerminalIdentity, key: str, character: str | None) -> bool:
         return (
-            self.applies_to_identity(identity) and key == self.key and character == self.character
+            self.applies_to_identity(identity)
+            and key == self.observed_key
+            and character == self.observed_character
         )
 
 
@@ -78,12 +101,27 @@ class TerminalInputRule:
 # same action because the transport no longer carries enough information.
 _KONSOLE_25_12_RULES = tuple(
     TerminalInputRule(
-        terminal_name="Konsole",
+        terminal_family="Konsole",
         minimum_version=(25, 12, 0),
         maximum_version_exclusive=(25, 13, 0),
-        key=key,
-        character=None,
+        observed_key=key,
+        observed_character=None,
+        observed_wire_sequence="\x1bOM",
         action=TerminalInputAction.NEWLINE,
+        known_tradeoff=(
+            "Physical keypad Enter produces the same SS3 event and therefore also inserts "
+            "a newline; the transport cannot distinguish it from Shift+Return."
+        ),
+        evidence=(
+            "https://github.com/KDE/konsole/blob/v25.12.3/src/session/SessionManager.cpp#L1254-L1286",
+            "https://github.com/KDE/konsole/blob/v25.12.3/data/keyboard-layouts/default.keytab",
+            "https://github.com/Textualize/textual/blob/v1.0.0/src/textual/_xterm_parser.py",
+        ),
+        regression_coverage=(
+            "tests/test_tui_terminal_keyboard.py::test_normalizer_prefers_native_keys_then_quirk_then_fallbacks",
+            "tests/test_tui_terminal_keyboard.py::test_real_driver_negotiates_restores_and_delivers_prompt_input",
+            "tests/test_tui_terminal_keyboard.py::test_konsole_compatibility_rule_records_its_evidence_and_tradeoff",
+        ),
         help_key="keyboard.konsole-25.12",
     )
     for key in ("enter", "keypad_enter")
@@ -95,6 +133,12 @@ class TerminalInputCompatibilityRegistry:
 
     def __init__(self, rules: Iterable[TerminalInputRule] = ()) -> None:
         self._rules = tuple(rules)
+
+    @property
+    def rules(self) -> tuple[TerminalInputRule, ...]:
+        """Expose the immutable rule catalogue for diagnostics and audits."""
+
+        return self._rules
 
     def resolve(
         self,
@@ -153,8 +197,8 @@ class TerminalInputNormalizer:
     def compatibility_help_key(self) -> str | None:
         return self.registry.help_key_for(self.identity)
 
-    def normalize(self, key: str, character: str | None = None) -> TerminalInputAction | None:
-        """Map a Textual-normalized event while retaining its character evidence."""
+    def normalize(self, key: str, character: str | None = None) -> TerminalInputAction:
+        """Return a prompt action; unrelated editing keys pass to Textual unchanged."""
 
         # Native modified-key reports always outrank emulator compatibility rules.
         if key == "shift+enter":
@@ -168,7 +212,7 @@ class TerminalInputNormalizer:
             return TerminalInputAction.NEWLINE
         if key in {"enter", "keypad_enter"}:
             return TerminalInputAction.SEND
-        return None
+        return TerminalInputAction.PASS_THROUGH
 
 
 @dataclass(slots=True)

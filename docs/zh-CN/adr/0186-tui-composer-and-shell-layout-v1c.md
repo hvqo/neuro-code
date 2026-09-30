@@ -39,7 +39,9 @@ Composer 由有界的输入表面和底部单行运行状态栏组成。空输�
 Textual 1.x 负责终端输入、POSIX 的 Kitty 消歧启用 (`CSI >1u`)、CSI-u `13;2u`
 到 `shift+enter` 的规范化，以及粘贴、编辑和退出恢复。`TerminalInputNormalizer`
 按固定顺序处理输入：原生修饰键事件、`TerminalInputCompatibilityRegistry` 中按终端
-身份/版本限定的规则、最后是 Ctrl+J / F2 备用键。其他 Enter 事件保持既有发送语义。
+身份/版本限定的规则、最后是 Ctrl+J / F2 备用键。归一化器始终返回一个动作：`SEND`、
+`NEWLINE` 或 `PASS_THROUGH`；最后一种让 Textual 继续处理普通文本输入和编辑。
+其他 Enter 事件保持既有发送语义。
 `TerminalKeyboardCapability` 仍只记录实际观察到的原生修饰 Enter，不根据终端品牌推断。
 `KONSOLE_VERSION` 只用于识别这条有版本范围的兼容规则，不代表终端普遍支持增强键盘上报。
 
@@ -51,6 +53,10 @@ Return 则为 `key="enter", character="\\r"`。兼容注册表只在已验证的
 25.12.0 至 25.12.x 的严格六位编码，不从 `$TERM` 推断。标记缺失/格式错误、已知
 multiplexer 或 SSH 环境一律失败关闭。以后可以只向注册表增加终端规则，无需在
 `PromptInput` 中加入终端名称分支。
+
+每条注册规则都是可审查的数据，记录终端系列、含下限/不含上限的版本范围、Textual
+观察到的 key/character、对应的原始 wire 序列、结果动作、已知取舍、证据链接和回归测试
+引用。原始序列仅作为规则证据；运行时仍由 Textual 唯一解析，归一化器只匹配其规范化事件。
 
 SS3 序列不包含物理按键是否为 Shift+Return 的信息。因此对匹配的 Konsole 版本，
 物理小键盘 Enter 也会插入换行；应用无法区分这两者。Help 会说明这一代价。本规则

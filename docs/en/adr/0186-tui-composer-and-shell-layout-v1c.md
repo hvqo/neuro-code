@@ -53,9 +53,11 @@ Textual 1.x owns terminal input and Kitty disambiguation on POSIX (`CSI >1u`),
 normalizes CSI-u `13;2u` to `shift+enter`, and owns paste, editing and teardown.
 `TerminalInputNormalizer` applies a fixed order: a native modified-key event,
 then a version-scoped rule from `TerminalInputCompatibilityRegistry`, then the
-Ctrl+J / F2 legacy fallback. Other Enter events keep the existing submit
-behavior. `TerminalKeyboardCapability` continues to record only an observed
-native modified Enter; it is not inferred from terminal branding. The
+Ctrl+J / F2 legacy fallback. It always returns one action: `SEND`, `NEWLINE`, or
+`PASS_THROUGH`; the last leaves ordinary TextArea input and editing to Textual.
+Other Enter events keep the existing submit behavior. `TerminalKeyboardCapability`
+continues to record only an observed native modified Enter; it is not inferred
+from terminal branding. The
 `KONSOLE_VERSION` marker identifies only this versioned compatibility rule, not
 general enhanced-key support.
 
@@ -70,6 +72,12 @@ six-digit encoding for 25.12.0 through 25.12.x. It does not infer identity from
 `$TERM`. Missing/malformed markers, and known multiplexer or SSH environments,
 fail closed. New terminal rules can be added to the registry without adding
 terminal-name branches to `PromptInput`.
+
+Each registry rule is reviewable data: terminal family, inclusive minimum and
+exclusive maximum version, observed Textual key/character, observed wire
+sequence, resulting action, known tradeoff, evidence links, and regression-test
+references. The raw sequence is evidence for the rule; Textual remains the one
+runtime parser, and the normalizer matches its normalized event.
 
 The SS3 sequence does not encode whether the physical key was Shift+Return or
 keypad Enter. On the matched Konsole release, both therefore insert a newline;

@@ -200,6 +200,8 @@ def test_known_multiplexer_markers_fail_closed(marker: str) -> None:
 
 
 def test_normalizer_prefers_native_keys_then_quirk_then_fallbacks() -> None:
+    from dataclasses import replace
+
     normalizer = TerminalInputNormalizer.from_environment({"KONSOLE_VERSION": "251203"})
 
     assert normalizer.normalize("enter", "\r") is TerminalInputAction.SEND
@@ -208,7 +210,55 @@ def test_normalizer_prefers_native_keys_then_quirk_then_fallbacks() -> None:
     assert normalizer.normalize("shift+enter") is TerminalInputAction.NEWLINE
     assert normalizer.normalize("ctrl+j") is TerminalInputAction.NEWLINE
     assert normalizer.normalize("f2") is TerminalInputAction.NEWLINE
-    assert normalizer.normalize("alt+enter") is None
+    assert normalizer.normalize("alt+enter") is TerminalInputAction.PASS_THROUGH
+    assert normalizer.normalize("x") is TerminalInputAction.PASS_THROUGH
+
+    verified_rule = normalizer.registry.rules[0]
+    native_conflict = replace(
+        verified_rule, observed_key="shift+enter", action=TerminalInputAction.SEND
+    )
+    fallback_conflict = replace(
+        verified_rule, observed_key="ctrl+j", action=TerminalInputAction.SEND
+    )
+    conflicting_registry = TerminalInputNormalizer(
+        identity=normalizer.identity,
+        registry=TerminalInputCompatibilityRegistry((native_conflict, fallback_conflict)),
+    )
+    assert conflicting_registry.normalize("shift+enter") is TerminalInputAction.NEWLINE
+    assert conflicting_registry.normalize("ctrl+j") is TerminalInputAction.SEND
+
+
+def test_konsole_compatibility_rule_records_its_evidence_and_tradeoff() -> None:
+    rule = next(
+        rule
+        for rule in TerminalInputNormalizer.from_environment(
+            {"KONSOLE_VERSION": "251203"}
+        ).registry.rules
+        if rule.observed_key == "keypad_enter"
+    )
+
+    assert rule.terminal_family == "Konsole"
+    assert rule.minimum_version == (25, 12, 0)
+    assert rule.maximum_version_exclusive == (25, 13, 0)
+    assert rule.observed_character is None
+    assert rule.observed_wire_sequence == "\x1bOM"
+    assert rule.action is TerminalInputAction.NEWLINE
+    assert "Physical keypad Enter" in rule.known_tradeoff
+    assert rule.evidence
+    assert rule.regression_coverage
+
+
+def test_registry_rule_requires_a_bounded_range_evidence_and_regression_reference() -> None:
+    from dataclasses import replace
+
+    rule = TerminalInputNormalizer.from_environment({"KONSOLE_VERSION": "251203"}).registry.rules[0]
+
+    with pytest.raises(ValueError, match="version range"):
+        replace(rule, maximum_version_exclusive=rule.minimum_version)
+    with pytest.raises(ValueError, match="evidence"):
+        replace(rule, evidence=())
+    with pytest.raises(ValueError, match="evidence"):
+        replace(rule, regression_coverage=())
 
 
 def test_unidentified_keypad_enter_does_not_apply_konsole_rule() -> None:
@@ -219,14 +269,26 @@ def test_unidentified_keypad_enter_does_not_apply_konsole_rule() -> None:
     assert normalizer.normalize("keypad_enter", None) is TerminalInputAction.SEND
 
 
+def test_other_terminal_identity_does_not_apply_konsole_rule() -> None:
+    normalizer = TerminalInputNormalizer(identity=TerminalIdentity("OtherTerminal", (25, 12, 3)))
+
+    assert normalizer.normalize("keypad_enter", None) is TerminalInputAction.SEND
+
+
 def test_registry_accepts_future_compatibility_rules_without_composer_terminal_branches() -> None:
     future_rule = TerminalInputRule(
-        terminal_name="ExampleTerminal",
+        terminal_family="ExampleTerminal",
         minimum_version=(1, 4, 0),
         maximum_version_exclusive=(1, 5, 0),
-        key="enter",
-        character=None,
+        observed_key="enter",
+        observed_character=None,
+        observed_wire_sequence="example-key-sequence",
         action=TerminalInputAction.NEWLINE,
+        known_tradeoff="This test rule is scoped to its explicit fixture only.",
+        evidence=("test fixture",),
+        regression_coverage=(
+            "tests/test_tui_terminal_keyboard.py::test_registry_accepts_future_compatibility_rules_without_composer_terminal_branches",
+        ),
     )
     normalizer = TerminalInputNormalizer(
         identity=TerminalIdentity("ExampleTerminal", (1, 4, 2)),
@@ -239,20 +301,31 @@ def test_registry_accepts_future_compatibility_rules_without_composer_terminal_b
 
 @pytest.mark.asyncio
 async def test_prompt_input_consumes_registry_rule_without_terminal_specific_logic() -> None:
+    import inspect
+
     from textual.app import App, ComposeResult
 
     rule = TerminalInputRule(
-        terminal_name="ExampleTerminal",
+        terminal_family="ExampleTerminal",
         minimum_version=(1, 0, 0),
         maximum_version_exclusive=(2, 0, 0),
-        key="enter",
-        character=None,
+        observed_key="enter",
+        observed_character=None,
+        observed_wire_sequence="example-key-sequence",
         action=TerminalInputAction.NEWLINE,
+        known_tradeoff="This test rule is scoped to its explicit fixture only.",
+        evidence=("test fixture",),
+        regression_coverage=(
+            "tests/test_tui_terminal_keyboard.py::test_prompt_input_consumes_registry_rule_without_terminal_specific_logic",
+        ),
     )
     normalizer = TerminalInputNormalizer(
         identity=TerminalIdentity("ExampleTerminal", (1, 2, 3)),
         registry=TerminalInputCompatibilityRegistry((rule,)),
     )
+    source = inspect.getsource(PromptInput)
+    assert "Konsole" not in source
+    assert "KONSOLE_VERSION" not in source
 
     class InputHarness(App[None]):
         def compose(self) -> ComposeResult:
@@ -269,6 +342,23 @@ async def test_prompt_input_consumes_registry_rule_without_terminal_specific_log
 
         assert prompt.value == "draft\n"
         assert prompt.keyboard_help_key == "keyboard.unconfirmed"
+
+
+@pytest.mark.asyncio
+async def test_pass_through_action_preserves_textarea_character_input() -> None:
+    from textual.app import App, ComposeResult
+
+    class InputHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            yield PromptInput(id="prompt")
+
+    app = InputHarness()
+    async with app.run_test() as pilot:
+        prompt = app.query_one(PromptInput)
+        prompt.focus()
+        await pilot.press("x")
+        assert prompt.input_normalizer.normalize("x") is TerminalInputAction.PASS_THROUGH
+        assert prompt.value == "x"
 
 
 @pytest.mark.asyncio
@@ -337,6 +427,7 @@ async def test_read_only_prompt_preserves_draft_on_newline(key: str) -> None:
     ("wire", "environment", "action"),
     [
         ("\r", {}, "send"),
+        ("\r", {"KONSOLE_VERSION": "251203"}, "send"),
         ("\x1bOM", {}, "send"),
         ("\x1b[13u", {}, "send"),
         ("\x1b[13;2u", {}, "newline"),

@@ -470,6 +470,7 @@ class PromptInput(TextArea):
             elif not self.disabled and not self.read_only:
                 self.post_message(self.Submitted(self, self.text))
             return
+        # PASS_THROUGH intentionally reaches TextArea's standard key handling.
         if event.key == "ctrl+a":
             event.prevent_default().stop()
             self.action_select_all()
