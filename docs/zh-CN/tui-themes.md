@@ -24,7 +24,7 @@
 
 偏好使用现有原子 JSON 存储中的 `theme` 字段；缺失或无效值回退到 `porcelain`。应用失败不会被误报为保存成功：保存失败时保留当前外观，并显示错误。切换主题会更新 CSS、Rich Markdown、代码与既有消息组件，保留草稿、光标和会话内容。
 
-Graphite 和 Porcelain 使用中性阅读层级：正文优先，次要与弱化文字逐级降低，画布、面板和选中表面克制区分，普通边框可见，焦点边框更醒目。普通文字与关键边界有 RGB 对比度回归保护。一个主强调色用于链接和交互；成功、警告、错误色仅表达状态。Markdown 标题与工具活动遵循中性会话层级。代码语法（包括语法高亮色）仍有独立配色，不改变消息内容。其他已保存主题标识继续兼容；V1A 的 RGB 数值门禁只覆盖 Graphite 和 Porcelain。参见 [ADR 0184](adr/0184-tui-color-system-and-contrast-v1a.md)。
+Graphite 和 Porcelain 使用中性阅读层级：正文优先，次要与弱化文字逐级降低，画布、面板和选中表面克制区分，普通边框可见，焦点边框更醒目。普通文字与关键边界有 RGB 对比度回归保护。一个主强调色用于链接和交互；成功、警告、错误色仅表达状态。工具活动保持中性会话层级；V2B 的 H1/H2 使用已有 UI accent，较低标题使用 primary/emphasis/secondary 角色。代码语法（包括语法高亮色）仍有独立配色，不改变消息内容。其他已保存主题标识继续兼容；V1A 的 RGB 数值门禁只覆盖 Graphite 和 Porcelain。参见 [ADR 0184](adr/0184-tui-color-system-and-contrast-v1a.md)。
 
 ## 独立语法主题
 
@@ -43,3 +43,12 @@ System 使用既有终端 palette；可靠 RGB 走同样的适配，未知/ANSI1
 foreground 与少量 ANSI token 色。保存的选择保持不变。实际 ANSI 对比度需要真实
 终端验收。详见 [ADR 0187](adr/0187-independent-tui-syntax-theme-v2a.md) 以及
 `tests/visual/README.md` 中的语法 gallery 与人工清单。
+
+## Assistant Markdown 阅读节奏
+
+V2B 让 Assistant Markdown 标题使用 UI 语义角色：H1 accent + bold、H2 accent、
+H3 primary emphasis、H4 primary、H5 emphasis、H6 secondary。仅相邻顶层正文段落
+在已有非 compact Shell 中额外增加一行空白；compact 保持一行空白。自动换行以及
+heading/list/code/quote/table transition 保留原间距。render-time Shell policy callback
+让 resize 与 streaming 重排而不累加 spacer、不修改原文。详见
+[ADR 0188](adr/0188-assistant-markdown-semantic-reading-rhythm-v2b.md)。

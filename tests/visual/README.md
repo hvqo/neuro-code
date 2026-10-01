@@ -239,3 +239,31 @@ uv run python tests/visual/render_gallery.py
 Review the gallery and `git diff --stat` before accepting regenerated files. Run
 the normal regression suite again without the environment variable to verify the
 new baseline. Snapshot updates are explicit; tests never rewrite them by default.
+
+## V2B Assistant Markdown reading rhythm
+
+Variant C is adopted in production (2026-10-01). The A/B/C experiment renderer,
+variant branches and experimental tests are removed. Eleven source-only reading
+fixtures are now part of the official harness: Chinese/English/mixed paragraphs,
+H1–H6, lists/nesting, prose/code, quotes, tables, long answer and streaming final state.
+As of this update, 33 fixtures × 3 themes × 3 viewports give 297 screenshots;
+15 System palette cases and 21 syntax-choice cases bring the total to 333.
+
+H1/H2 use UI accent, H1 bold; H3 primary emphasis, H4 primary, H5 emphasis, H6 secondary.
+Syntax Theme does not control headings. Consecutive top-level prose paragraphs have
+2 blank rows outside compact mode and retain 1 blank row in compact mode. The main
+shell's existing responsive state decides; wrapped lines and all other transitions
+are unchanged. Production widget tests cover resize and streaming without manually
+replacing/refreshing the renderer. Native incomplete-Markdown reparse remains.
+
+```bash
+NEURO_TUI_UPDATE_SNAPSHOTS=1 uv run pytest tests/test_tui_visual_snapshots.py -q
+uv run pytest tests/test_tui_visual_snapshots.py tests/test_tui_markdown.py -q
+uv run python tests/visual/render_gallery.py --before-ref f7dc55cb067ee6ea53504deb5d1dee7780fb522b --after-label V2B --fixtures long-markdown mixed-language-long-answer markdown-chinese-paragraphs markdown-headings markdown-long-answer --output /tmp/neuro-code-tui-v2b-gallery.html
+xdg-open /tmp/neuro-code-tui-v2b-gallery.html
+```
+
+Final terminal acceptance: compare Graphite/Porcelain/System; scan H1–H6; read long
+Chinese/English prose at 120×40 / 100×32 / 80×24; resize between them while a response
+streams; verify list/quote/table/code spacing, inline-code foreground-only styling
+and Syntax Theme switching. Confirm Composer/input and source-copy behavior stay intact.

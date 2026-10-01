@@ -2534,9 +2534,9 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("code", plain)
             self.assertIn("[red]literal[/red]", plain)
             self.assertNotIn("**bold**", plain)
-            # Headings and strong text use the neutral reading hierarchy;
-            # inline code stays readable without a colored chip.
-            self.assertIn(TEXT_PRIMARY.lower(), styled["Important"].lower())
+            # H2 uses UI accent; strong prose keeps the neutral hierarchy.
+            # Inline code stays readable without a colored chip.
+            self.assertIn(ACCENT.lower(), styled["Important"].lower())
             self.assertIn(TEXT_PRIMARY.lower(), styled["bold"].lower())
             self.assertIn(TEXT_EMPHASIS.lower(), styled["code"].lower())
             code_segment = next(segment for segment in segments if segment.text.strip() == "code")

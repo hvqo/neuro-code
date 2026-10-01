@@ -207,6 +207,10 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
             return theme_style(self, ERROR_TEXT_STYLE)
         return None
 
+    def _markdown_compact_viewport(self) -> bool:
+        """Reuse the main shell's responsive state even while a modal is open."""
+        return bool(self.screen_stack and self.screen_stack[0].has_class("compact-chrome"))
+
     def _render_entry(
         self,
         category: str,
@@ -223,6 +227,7 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
                 code_theme=_markdown_code_theme(self),
                 style=theme_style(self, ASSISTANT_TEXT_STYLE),
                 hyperlinks=False,
+                compact=self._markdown_compact_viewport,
             )
 
         labels = {

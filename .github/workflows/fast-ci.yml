@@ -40,6 +40,7 @@ jobs:
           tests/test_provider_failure_conformance.py
           tests/test_redaction.py
           tests/test_project_memory.py
+          tests/test_tui_markdown.py
           --durations=25
 
   terminal-smoke:

@@ -77,8 +77,10 @@ async def capture_snapshot(
             # Let Textual complete a layout pass. No timers, provider calls, or
             # animation-driven states are part of these fixtures.
             await pilot.pause()
-            if fixture == "mixed-language-long-answer" or (
-                fixture.startswith("syntax-") and fixture != "syntax-settings"
+            if (
+                fixture == "mixed-language-long-answer"
+                or fixture.startswith("markdown-")
+                or (fixture.startswith("syntax-") and fixture != "syntax-settings")
             ):
                 # Review the opening reading hierarchy and user/assistant axis.
                 # Normal long responses may auto-follow their bottom edge.

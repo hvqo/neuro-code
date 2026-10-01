@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 from uuid import UUID
 
+from tests.visual.markdown_fixtures import READING_FIXTURES
 from tests.visual.syntax_fixtures import SYNTAX_FIXTURES
 
 from neuro_code.application.permissions.contracts import PermissionRequest
@@ -42,6 +43,7 @@ VISUAL_FIXTURES = (
     "settings",
     "trace",
     *SYNTAX_FIXTURES,
+    *READING_FIXTURES,
     "syntax-settings",
 )
 
@@ -163,6 +165,10 @@ def make_app(
 def populate_fixture(app: NeuroCodeApp, fixture: str) -> None:
     """Add deterministic presentation state after the app has mounted."""
 
+    if fixture in READING_FIXTURES:
+        app._write_entry("user", "请审查下面的内容 / Review the following evidence.")
+        app._write_entry("assistant", READING_FIXTURES[fixture])
+        return
     if fixture in SYNTAX_FIXTURES:
         app._write_entry("assistant", SYNTAX_FIXTURES[fixture])
         return
