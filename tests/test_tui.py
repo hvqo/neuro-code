@@ -162,13 +162,11 @@ from neuro_code.interfaces.tui.state import TUI_RELOAD_PROVIDER_SETTINGS, Collap
 from neuro_code.interfaces.tui.text import ui_text
 from neuro_code.interfaces.tui.theme import (
     ACCENT,
-    ACCENT_BLUE,
     ACCENT_CODE,
     ACCENT_ERROR,
     ACCENT_LINK,
     ACCENT_NUMBER,
     ACCENT_SUCCESS,
-    ACCENT_VIOLET,
     ACCENT_WARNING,
     BACKGROUND,
     BORDER_FOCUS,
@@ -194,6 +192,7 @@ from neuro_code.interfaces.tui.widgets import (
     TranscriptScroll,
 )
 from neuro_code.shared.errors import ConfigurationError, ProviderError
+from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
 
@@ -902,6 +901,7 @@ class UnknownTerminalMetadataTuiConversation:
 class UiPreferencesFixture:
     def __init__(self) -> None:
         self.saved_themes: list[UiTheme] = []
+        self.saved_syntax_themes: list[SyntaxTheme] = []
         self.saved: list[UiLanguage] = []
         self.saved_efforts: list[ReasoningEffort] = []
         self.saved_modes: list[InteractionMode] = []
@@ -914,6 +914,12 @@ class UiPreferencesFixture:
 
     async def save_theme(self, theme: UiTheme) -> None:
         self.saved_themes.append(theme)
+
+    async def load_syntax_theme(self) -> SyntaxTheme:
+        return SyntaxTheme.AUTO
+
+    async def save_syntax_theme(self, theme: SyntaxTheme) -> None:
+        self.saved_syntax_themes.append(theme)
 
     async def load_language(self) -> UiLanguage:
         return UiLanguage.ENGLISH
@@ -2576,22 +2582,11 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 for segment in app.console.render(rendered, app.console.options.update(width=80))
             )
             self.assertIn("Sample", plain)
-            self.assertIn(
-                ACCENT_VIOLET.lower(),
-                str(MONO_SYNTAX_THEME.get_style_for_token(Keyword)).lower(),
-            )
-            self.assertIn(
-                ACCENT_BLUE.lower(),
-                str(MONO_SYNTAX_THEME.get_style_for_token(Name.Function)).lower(),
-            )
-            self.assertIn(
-                ACCENT_SUCCESS.lower(),
-                str(MONO_SYNTAX_THEME.get_style_for_token(String)).lower(),
-            )
-            self.assertIn(
-                ACCENT_NUMBER.lower(),
-                str(MONO_SYNTAX_THEME.get_style_for_token(Number)).lower(),
-            )
+            colors = {
+                MONO_SYNTAX_THEME.get_style_for_token(token).color
+                for token in (Keyword, Name.Function, String, Number)
+            }
+            self.assertEqual(len(colors), 4)
 
     async def test_markdown_prose_remains_neutral_gray(self) -> None:
         app = NeuroCodeApp(

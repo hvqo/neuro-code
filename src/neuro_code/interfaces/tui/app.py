@@ -139,6 +139,7 @@ from neuro_code.interfaces.tui.widgets import (
     PromptInput,
     TranscriptScroll,
 )
+from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
 
@@ -645,6 +646,7 @@ class NeuroCodeApp(
         managed_provider_settings: ManagedProviderSettings | None = None,
         language: UiLanguage = UiLanguage.ENGLISH,
         ui_theme: UiTheme = UiTheme.PORCELAIN,
+        syntax_theme: SyntaxTheme = SyntaxTheme.AUTO,
         initial_items: Sequence[SessionItem] = (),
         execution_record: SessionExecutionRecord | None = None,
         tool_output_artifact_service: SessionToolOutputArtifactApplicationService | None = None,
@@ -671,6 +673,7 @@ class NeuroCodeApp(
         if context_window_tokens is not None and context_window_tokens <= 0:
             raise ValueError("context window tokens must be positive")
         super().__init__()
+        self._syntax_theme = syntax_theme
         self.terminal_palette = terminal_palette or TerminalPalette()
         for choice, palette in TEXTUAL_THEMES.items():
             self.register_theme(

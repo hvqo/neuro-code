@@ -10,9 +10,10 @@
 
 | 能力 | 目标 | 状态 | 证据 / 备注 |
 |---|---|---|---|
-| Semantic text accents | TUI | intentionally-different | 13 个主题分别映射 Markdown、语法高亮、工具与 diff 的语义色；仅渲染与静态检查，未运行测试套件。 |
+| Semantic text accents | TUI | intentionally-different | 13 个 UI 主题映射正文、工具与状态的语义色；围栏代码/diff token 使用下述独立 Syntax Theme 契约。主题、排版和视觉回归保护表现层边界。 |
 | TUI 排版与阅读层级 | TUI | intentionally-different | V1B 使普通正文、用户文字、工具/状态摘要及界面标题保持 regular。H1 与显式 Markdown 强调保留 bold；路径、耗时和计数作为元数据退让。行内代码没有背景标签，各主题共享排版角色且不修改几何。确定性快照和中英文混排 fixture 约束阅读契约。详见 [ADR 0185](adr/0185-tui-typography-and-reading-hierarchy-v1b.md)。 |
 | TUI Composer 与外壳布局 | TUI | intentionally-different | V1C 让 Header 与底部状态栏各占 1 行，Composer 随草稿增高且受视口预算约束，将空输入释放的行交回不重复展示模型/工作区的主阅读区。默认 Enter 发送；终端能区分修饰键时组合 Enter 换行，Ctrl+J/F2 移至 Help；键盘能力按独立事件确认；编辑器与发送按钮共用一行，无常驻提示。三个尺寸的快照、几何与键盘测试约束外壳。详见 [ADR 0186](adr/0186-tui-composer-and-shell-layout-v1c.md)。 |
+| 独立语法主题 | TUI | intentionally-different | V2A 提供 Auto 与六种成熟 Pygments 配色、独立 `syntax_theme` 偏好及即时 Python 预览/保存/取消。UI 拥有代码 surface；token 前景适配 RGB 对比度，System 未知 palette 回退 default/ANSI，未知语言普通渲染。正文/行内代码及 V1A/V1B/V1C 契约不变。详见 [ADR 0187](adr/0187-independent-tui-syntax-theme-v2a.md)。 |
 | Settings visual hierarchy | TUI | intentionally-different | 宽屏优先展示外观；分组底色、条目分隔与有效值表单。设置 UI 回归测试及完整仓库门禁覆盖界面和行为。 |
 | Scoped interactive preferences | TUI | intentionally-different | Agent 偏好支持用户和工作区范围、有效值来源、CLI 优先级、启动快照查看，并在现有 version-1 JSON 格式中增量保存可选字段。持久化与设置测试覆盖继承和范围覆盖。 |
 | Persistent TUI agent settings | TUI | intentionally-different | 运行时偏好会重建 composition 并恢复同一 Session；纯界面偏好即时生效。保留显式 CLI 优先级、权限与沙箱所有权。 |

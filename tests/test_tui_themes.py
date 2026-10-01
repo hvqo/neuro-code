@@ -149,9 +149,9 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     for segment in app.console.render(markdown)
                     if segment.style is not None and segment.style.color is not None
                 }
-                # The re-render must use the selected palette: the success
-                # accent and the foreground of strong text both come from it.
-                self.assertIn(palette.success.lower(), colors)
+                # Code uses the independently resolved syntax foreground;
+                # strong prose still uses the selected UI foreground.
+                self.assertIn(syntax.get_style_for_token(String).color.get_truecolor().hex, colors)
                 self.assertIn(palette.variables["fg-primary"].lower(), colors)
             self.assertEqual(preferences.saved_themes, [UiTheme.GRAPHITE, UiTheme.PORCELAIN])
             await pilot.press("escape")

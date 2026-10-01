@@ -5,11 +5,13 @@ TUI 界面拥有的 Textual 组件.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
+from markdown_it.token import Token
 from rich.console import JustifyMethod, RenderableType
-from rich.markdown import Heading, Markdown, MarkdownElement
+from rich.markdown import CodeBlock, Heading, Markdown, MarkdownElement
 from rich.table import Table
 from rich.text import Text
 from textual import events
@@ -109,6 +111,15 @@ class _ReadingHeading(Heading):
     LEVEL_ALIGN: ClassVar[dict[str, JustifyMethod]] = {**Heading.LEVEL_ALIGN, "h1": "left"}
 
 
+class _FencedCodeBlock(CodeBlock):
+    """Pass only the language identifier to Rich's existing lexer resolver."""
+
+    @classmethod
+    def create(cls, markdown: Markdown, token: Token) -> _FencedCodeBlock:
+        language = re.split(r"[\s,]+", (token.info or "").strip(), maxsplit=1)[0]
+        return cls(language.lower() or "text", markdown.code_theme)
+
+
 class AssistantMarkdown(Markdown):
     """Safe model Markdown whose string form remains useful in diagnostics.
 
@@ -117,6 +128,8 @@ class AssistantMarkdown(Markdown):
     elements: ClassVar[dict[str, type[MarkdownElement]]] = {
         **Markdown.elements,
         "heading_open": _ReadingHeading,
+        "fence": _FencedCodeBlock,
+        "code_block": _FencedCodeBlock,
     }
 
     def __str__(self) -> str:

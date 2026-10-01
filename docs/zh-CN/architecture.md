@@ -659,8 +659,8 @@ screen 定位 Conversation widget，而不是在当前 Modal 内查找；运行�
 [ADR 0029](adr/0029-auditable-in-place-tool-cards.md)，以及表现层细化
 [ADR 0108](adr/0108-editorial-tui-presentation.md)。
 
-TUI 表现层通过统一语义主题注册表提供 13 个外观选项。CSS、Rich Markdown 和代码
-高亮从同一主题解析颜色，应用之间不共享可变调色板。设置 → 外观主题支持可滚动列表、
+TUI 表现层通过统一语义主题注册表提供 13 个外观选项。CSS 与 Rich Markdown 正文
+从 UI 主题解析颜色，应用之间不共享可变调色板。设置 → 外观主题支持可滚动列表、
 方向键预览、Enter 应用保存和 Esc 恢复；预览与偏好持久化分离。`system` 使用终端
 默认颜色与 ANSI 调色板，其他主题使用明确的 RGB 值。详见 [TUI 外观主题](tui-themes.md)。
 V1B 排版契约让普通对话及界面文字保持 regular：Assistant 正文处于主阅读层，
@@ -668,6 +668,14 @@ V1B 排版契约让普通对话及界面文字保持 regular：Assistant 正文�
 首级标题使用 bold；语义状态由颜色和边界表达。行内代码仍只使用前景色，围栏代码
 保留独立表面。切换主题不改变这些阅读角色与几何结构。详见
 [ADR 0185](adr/0185-tui-typography-and-reading-hierarchy-v1b.md)。
+
+V2A 通过独立 `SyntaxTheme` 注册表解析围栏代码 token，复用成熟 Pygments 配色。
+Appearance Settings 提供独立语法选择、即时 Python 预览及保存/取消。可选
+`syntax_theme` 偏好对旧配置使用 Auto。Auto 根据真实代码 surface 选择深浅兼容
+配色；显式选择只适配前景对比度，不改写保存标识或 UI 所有的 surface。System
+复用已有终端 palette，RGB 未知时回退 default/ANSI token 前景。行内代码仍无
+背景标签；UI 几何、runtime、prompt/context 和键盘行为不变。详见
+[ADR 0187](adr/0187-independent-tui-syntax-theme-v2a.md)。
 
 现有原子 UI 偏好端口通过共享 `UiTheme` 保存 `theme` 字段，缺失或非法值回退暖瓷白；
 曜石黑保持 `graphite` 标识。启动与首次供应商配置均恢复所选主题。切换保留消息组件、

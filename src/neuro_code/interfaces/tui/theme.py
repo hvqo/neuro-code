@@ -12,32 +12,19 @@ import re
 from collections.abc import Mapping
 from dataclasses import replace
 from functools import lru_cache
-from typing import ClassVar, Protocol
+from typing import Protocol
 
-from pygments.style import Style as PygmentsStyle
-from pygments.token import (
-    Comment,
-    Error,
-    Generic,
-    Keyword,
-    Name,
-    Number,
-    Operator,
-    String,
-    Text,
-    Whitespace,
-    _TokenType,
-)
-from rich.style import Style
-from rich.syntax import PygmentsSyntaxTheme, SyntaxTheme, TokenType
+from rich.syntax import SyntaxTheme
 from rich.theme import Theme as RichTheme
 from textual.theme import Theme
 
+from neuro_code.interfaces.tui.syntax import resolve_syntax_theme
 from neuro_code.interfaces.tui.terminal_palette import (
     ResolvedSystemPalette,
     TerminalPalette,
     resolve_system_palette,
 )
+from neuro_code.shared.syntax_theme import SyntaxTheme as SyntaxThemeChoice
 from neuro_code.shared.ui_theme import UiTheme
 
 BG_0 = "#F6F5F2"
@@ -226,39 +213,9 @@ MARKDOWN_THEME = RichTheme(
 )
 
 
-class _MonochromePygmentsStyle(PygmentsStyle):
-    """Pygments token styles for fenced Markdown code blocks.
-
-    用于 Markdown 围栏代码块的 Pygments 令牌样式."""
-
-    background_color: ClassVar[str] = SURFACE
-    styles: ClassVar[Mapping[_TokenType, str]] = {
-        Text: TEXT_BODY,
-        Whitespace: TEXT_BODY,
-        Comment: f"italic {TEXT_MUTED}",
-        Keyword: ACCENT_VIOLET,
-        Keyword.Type: ACCENT_CODE,
-        Operator: SYNTAX_OPERATOR,
-        Operator.Word: SYNTAX_OPERATOR,
-        Name: TEXT_BODY,
-        Name.Builtin: ACCENT_CODE,
-        Name.Function: ACCENT_BLUE,
-        Name.Class: ACCENT_WARNING,
-        Name.Decorator: ACCENT_ORANGE,
-        String: ACCENT_SUCCESS,
-        Number: ACCENT_NUMBER,
-        Generic.Deleted: ACCENT_ERROR,
-        Generic.Inserted: ACCENT_SUCCESS,
-        Generic.Heading: TEXT_PRIMARY,
-        Generic.Subheading: ACCENT_CODE,
-        Error: ACCENT_ERROR,
-    }
-
-
-MONO_SYNTAX_THEME = PygmentsSyntaxTheme(_MonochromePygmentsStyle)
-
-# Shared semantic pairs: CSS, Rich text and Pygments resolve through the same
-# palette. Resolution is app-local; no global palette is mutated on a switch.
+# Shared UI semantic pairs: CSS and Rich prose resolve through the same
+# palette. Code token colors live in the independent syntax resolver.
+# Resolution is app-local; no global palette is mutated on a switch.
 _DARK_COLORS = {
     BG_0: "#171717",
     BG_1: "#202020",
@@ -690,19 +647,6 @@ def textual_theme_for(
     )
 
 
-class _PaletteSyntaxTheme(SyntaxTheme):
-    def __init__(self, colors: Mapping[str, str]) -> None:
-        self.colors = colors
-
-    def get_style_for_token(self, token_type: TokenType) -> Style:
-        return Style.parse(
-            _translate(str(MONO_SYNTAX_THEME.get_style_for_token(token_type)), self.colors)
-        )
-
-    def get_background_style(self) -> Style:
-        return Style(bgcolor=self.colors[SURFACE])
-
-
 TEXTUAL_THEMES = {choice: textual_theme_for(choice) for choice in UiTheme}
 _MARKDOWN_THEMES = {
     choice: MARKDOWN_THEME
@@ -715,14 +659,13 @@ _MARKDOWN_THEMES = {
     )
     for choice, colors in _PALETTES.items()
 }
-_SYNTAX_THEMES: dict[UiTheme, SyntaxTheme] = {
-    choice: MONO_SYNTAX_THEME if choice is UiTheme.PORCELAIN else _PaletteSyntaxTheme(colors)
-    for choice, colors in _PALETTES.items()
-}
-# Preserve public aliases and the saved Graphite identifier.
+# Compatibility aliases expose independent Auto selections, not another registry.
+MONO_SYNTAX_THEME = resolve_syntax_theme(SyntaxThemeChoice.AUTO, SURFACE, TEXT_BODY)
 GRAPHITE_THEME = TEXTUAL_THEMES[UiTheme.GRAPHITE]
 GRAPHITE_MARKDOWN_THEME = _MARKDOWN_THEMES[UiTheme.GRAPHITE]
-GRAPHITE_SYNTAX_THEME = _SYNTAX_THEMES[UiTheme.GRAPHITE]
+GRAPHITE_SYNTAX_THEME = resolve_syntax_theme(
+    SyntaxThemeChoice.AUTO, _DARK_COLORS[SURFACE], _DARK_COLORS[TEXT_BODY]
+)
 
 
 class _ThemeHost(Protocol):
@@ -758,9 +701,12 @@ def markdown_theme(owner: _ThemeOwner) -> RichTheme:
 
 def syntax_theme(owner: _ThemeOwner) -> SyntaxTheme:
     choice = UiTheme.from_textual_name(owner.app.theme)
-    if choice is not UiTheme.SYSTEM:
-        return _SYNTAX_THEMES[choice]
-    return _PaletteSyntaxTheme(_theme_colors(choice, getattr(owner.app, "terminal_palette", None)))
+    colors = _theme_colors(choice, getattr(owner.app, "terminal_palette", None))
+    return resolve_syntax_theme(
+        getattr(owner.app, "_syntax_theme", SyntaxThemeChoice.AUTO),
+        colors.get(SURFACE, SURFACE),
+        colors.get(TEXT_BODY, TEXT_BODY),
+    )
 
 
 EFFORT_STYLES = {

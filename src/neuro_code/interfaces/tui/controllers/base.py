@@ -100,6 +100,7 @@ if TYPE_CHECKING:
         _ActiveToolInspector,
     )
     from neuro_code.interfaces.tui.widgets import ConversationMessage
+    from neuro_code.shared.syntax_theme import SyntaxTheme
     from neuro_code.shared.ui_language import UiLanguage
 
 
@@ -134,6 +135,7 @@ class TuiAppControllerMixin:
         _plan_scheduling_service: PlanSchedulingService | None
         _queued_plan_execution_service: QueuedPlanExecutionService | None
         _ui_preferences: UiPreferencesStore | None
+        _syntax_theme: SyntaxTheme
         _provider_settings_store: ProviderSettingsStore | None
         _provider_catalog: ProviderCatalog | None
         _managed_provider_settings: ManagedProviderSettings | None

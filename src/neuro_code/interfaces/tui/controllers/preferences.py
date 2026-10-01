@@ -22,6 +22,7 @@ from neuro_code.interfaces.tui.screens import (
     ProviderSettingsScreen,
     ReasoningEffortScreen,
     SettingsScreen,
+    SyntaxThemeSettingsScreen,
     ThemeSettingsScreen,
 )
 from neuro_code.interfaces.tui.screens.agent_preferences import (
@@ -37,6 +38,7 @@ from neuro_code.interfaces.tui.state import (
 )
 from neuro_code.interfaces.tui.text import language_name
 from neuro_code.interfaces.tui.theme import markdown_theme
+from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
 
@@ -83,6 +85,7 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                     auto_unrestricted=self._auto_mode_unrestricted,
                 ),
                 ui_theme=UiTheme.from_textual_name(self.theme),
+                syntax_theme=self._syntax_theme,
                 initial_category=self._settings_last_category,
                 provider_settings=self._managed_provider_settings,
                 preference_resolution=self._agent_preference_resolution,
@@ -152,6 +155,15 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
                     original, language=self._language, preview=self._apply_ui_theme
                 ),
                 partial(self._theme_settings_selected, original=original),
+            )
+            return
+        if category == "syntax-theme":
+            original_syntax = self._syntax_theme
+            self.push_screen(
+                SyntaxThemeSettingsScreen(
+                    original_syntax, language=self._language, preview=self._apply_syntax_theme
+                ),
+                partial(self._syntax_settings_selected, original=original_syntax),
             )
             return
         if category == "language":
@@ -297,6 +309,33 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
             except Exception as error:
                 self._write_ui_entry(
                     "error", "settings.theme.save_failed", error=f"{type(error).__name__}: {error}"
+                )
+        await self.action_open_settings()
+
+    def _apply_syntax_theme(self, selected: SyntaxTheme) -> None:
+        if selected is self._syntax_theme:
+            return
+        self._syntax_theme = selected
+        # Refresh only model prose's presentation; entries and UI tokens do not
+        # change. Pending streaming prose follows the same rendering route.
+        for entry, widget in zip(self._entries, self._entry_widgets, strict=True):
+            if entry.category == "assistant":
+                widget.update(self._render_entry("assistant", entry.text))
+        if self._pending_assistant is not None and self._assistant_parts:
+            self._pending_assistant.update(
+                self._render_entry("assistant", "".join(self._assistant_parts))
+            )
+
+    async def _syntax_settings_selected(
+        self, selected: SyntaxTheme | None, *, original: SyntaxTheme
+    ) -> None:
+        self._apply_syntax_theme(original if selected is None else selected)
+        if selected is not None and self._ui_preferences is not None:
+            try:
+                await self._ui_preferences.save_syntax_theme(selected)
+            except Exception as error:
+                self._write_ui_entry(
+                    "error", "settings.syntax.save_failed", error=f"{type(error).__name__}: {error}"
                 )
         await self.action_open_settings()
 

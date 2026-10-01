@@ -1445,6 +1445,7 @@ def test_canonical_shared_modules_are_the_only_shared_implementations() -> None:
         "neuro_code.shared.redaction",
         "neuro_code.shared.ui_language",
         "neuro_code.shared.ui_theme",
+        "neuro_code.shared.syntax_theme",
     }
     assert {
         module for module in modules if module.startswith("neuro_code.shared")
