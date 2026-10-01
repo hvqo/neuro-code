@@ -109,6 +109,7 @@ from neuro_code.interfaces.tui.controllers.tool_activity.presentation import (
 )
 from neuro_code.interfaces.tui.controllers.transcript import TranscriptControllerMixin
 from neuro_code.interfaces.tui.controllers.turns import TurnControllerMixin
+from neuro_code.interfaces.tui.empty_state import EmptyStateIdentity
 from neuro_code.interfaces.tui.interaction import TuiUserInteraction
 from neuro_code.interfaces.tui.screens import PermissionApprovalScreen
 from neuro_code.interfaces.tui.state import (
@@ -967,6 +968,18 @@ class NeuroCodeApp(
                     id="runtime-bar",
                 )
 
+        yield EmptyStateIdentity()
+
+    @on(TranscriptScroll.ViewportChanged)
+    def _identity_viewport_changed(self) -> None:
+        self.call_after_refresh(self._sync_empty_identity)
+
+    def _sync_empty_identity(self) -> None:
+        symbol = self._main_screen_query_optional("#empty-state-identity", EmptyStateIdentity)
+        transcript = self._main_screen_query_optional("#transcript", TranscriptScroll)
+        if symbol is not None and transcript is not None:
+            symbol.arrange(transcript.content_region, (self.size.width, self.size.height))
+
     @on(Button.Pressed, "#prompt-send")
     def _send_composer_message(self, event: Button.Pressed) -> None:
         event.stop()
@@ -981,6 +994,8 @@ class NeuroCodeApp(
                 event.size.width < 80 or event.size.height < 28,
                 "compact-chrome",
             )
+
+        self.call_after_refresh(self._sync_empty_identity)
 
     def watch_theme(self, theme_name: str) -> None:
         """Keep the System-only border treatment scoped to that palette."""
@@ -1022,6 +1037,7 @@ class NeuroCodeApp(
         prompt = self._main_screen_query_one("#prompt", PromptInput)
         prompt.sync_content_height()
         prompt.focus()
+        self.call_after_refresh(self._sync_empty_identity)
 
     def _synchronize_terminal_size(self) -> None:
         """Recover when a terminal drops its normal resize notification.

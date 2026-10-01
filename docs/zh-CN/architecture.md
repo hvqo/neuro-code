@@ -684,6 +684,12 @@ heading/list/code/quote/table transition 保留原间距。render-time Shell pol
 让 resize 与 streaming 重排而不累加 spacer、不修改原文。详见
 [ADR 0188](adr/0188-assistant-markdown-semantic-reading-rhythm-v2b.md)。
 
+V2C-A 为真正空会话 viewport 提供 dim 语义色的静态中央六片图形，去掉六边形外框。
+覆盖层不参与布局，响应 viewport resize，首条内容 / 历史恢复立即隐藏；响应式有界图形在空间不足
+时隐藏。运行时不读取图片，不增加动画或规范 transcript 数据。详见
+[ADR 0189](adr/0189-static-empty-state-identity-v2c-a.md)。
+
+
 现有原子 UI 偏好端口通过共享 `UiTheme` 保存 `theme` 字段，缺失或非法值回退暖瓷白；
 曜石黑保持 `graphite` 标识。启动与首次供应商配置均恢复所选主题。切换保留消息组件、
 草稿和光标。对话与输入区使用可用终端宽度，仅留少量边距；输入区不显示额外标题，编辑器与发送按钮共用一行。

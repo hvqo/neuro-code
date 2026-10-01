@@ -14,6 +14,7 @@ from tests.visual.syntax_fixtures import SYNTAX_FIXTURES
 from neuro_code.application.permissions.contracts import PermissionRequest
 from neuro_code.application.trace.collector import TraceCollector
 from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
+from neuro_code.domain.conversation.messages import Message, Role
 from neuro_code.interfaces.tui.app import NeuroCodeApp
 from neuro_code.interfaces.tui.screens import (
     PermissionApprovalScreen,
@@ -30,6 +31,8 @@ from neuro_code.shared.ui_theme import UiTheme
 
 VISUAL_FIXTURES = (
     "empty-conversation",
+    "empty-first-message",
+    "empty-restored-history",
     "user-assistant",
     "long-markdown",
     "mixed-language-long-answer",
@@ -173,6 +176,17 @@ def populate_fixture(app: NeuroCodeApp, fixture: str) -> None:
         app._write_entry("assistant", SYNTAX_FIXTURES[fixture])
         return
     if fixture in {"empty-conversation", "syntax-settings"}:
+        return
+    if fixture == "empty-first-message":
+        app._write_entry("user", "Review this repository. / 请审查这个项目。")
+        return
+    if fixture == "empty-restored-history":
+        app._replace_transcript(
+            (
+                Message(Role.USER, "请继续之前的审查。"),
+                Message(Role.ASSISTANT, "Restored conversation evidence is visible."),
+            )
+        )
         return
     if fixture == "user-assistant":
         app._write_entry("user", "Summarize the current review findings.")

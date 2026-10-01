@@ -935,6 +935,14 @@ transitions keep their prior spacing. A render-time shell-policy callback makes
 resize and streaming reflow without accumulated spacers or source edits. See
 [ADR 0188](adr/0188-assistant-markdown-semantic-reading-rhythm-v2b.md).
 
+V2C-A prepares a static, dim identity only for the empty conversation viewport;
+the corrected-source core mark is selected without the hexagonal outline.
+A non-layout overlay follows viewport resize and disappears on first content or
+restored history; bounded responsive assets hide when space is insufficient. No
+image is loaded at runtime, and no motion or canonical transcript data is added.
+See [ADR 0189](adr/0189-static-empty-state-identity-v2c-a.md).
+
+
 The existing atomic UI preferences port saves the shared `UiTheme` in the `theme`
 field; missing/invalid values fall back to Porcelain. Obsidian keeps the `graphite`
 identifier. Startup and first-run provider setup restore the same choice. Switching

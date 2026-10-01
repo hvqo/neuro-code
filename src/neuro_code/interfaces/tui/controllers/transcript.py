@@ -12,6 +12,7 @@ from neuro_code.domain.conversation.interaction_mode import InteractionMode
 from neuro_code.domain.conversation.messages import Message, Role, SessionItem
 from neuro_code.domain.conversation.reasoning import ReasoningEffort
 from neuro_code.interfaces.tui.controllers.base import TuiAppControllerMixin
+from neuro_code.interfaces.tui.empty_state import EmptyStateIdentity
 from neuro_code.interfaces.tui.screens import TranscriptCopyScreen
 from neuro_code.interfaces.tui.state import (
     _ERROR_MARK,
@@ -140,6 +141,9 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
         )
 
     def _replace_transcript(self, items: Sequence[SessionItem]) -> None:
+        identity = self._main_screen_query_optional("#empty-state-identity", EmptyStateIdentity)
+        if identity is not None:
+            identity.reset()
         transcript = self._main_screen_query_one("#transcript", VerticalScroll)
         transcript.remove_children()
         self._entries.clear()
@@ -172,6 +176,12 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
                 self._write_ui_entry("tool", "restore.request", names=names)
         if self._plan is not None:
             self._upsert_plan_entry(self._plan, self._plan_comments)
+        if identity is not None:
+            self.call_after_refresh(
+                lambda: identity.arrange(
+                    transcript.content_region, (self.size.width, self.size.height)
+                )
+            )
 
     def _bounded_restored_text(self, content: str) -> str:
         if len(content) <= _RESTORED_MESSAGE_LIMIT:
@@ -297,6 +307,10 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
         ui_values: tuple[tuple[str, object], ...] = (),
         tool_state: ToolFeedbackState | None = None,
     ) -> None:
+        if content and category in {"user", "assistant", "tool", "error"}:
+            identity = self._main_screen_query_optional("#empty-state-identity", EmptyStateIdentity)
+            if identity is not None:
+                identity.consume()
         if category != "tool" or tool_state is None:
             self._active_tool_activity_group = None
         entry = TranscriptEntry(
@@ -372,6 +386,10 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
         transcript.scroll_end(animate=False)
 
     def _update_pending_assistant(self, content: str) -> None:
+        if content:
+            identity = self._main_screen_query_optional("#empty-state-identity", EmptyStateIdentity)
+            if identity is not None:
+                identity.consume()
         if self._pending_assistant is None:
             self._begin_pending_assistant()
         pending = self._pending_assistant
