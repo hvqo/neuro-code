@@ -59,3 +59,12 @@ V1A 的首要目标是恢复语义角色对比，并改进 System 主题适配�
 
 使用 `uv run pytest tests/test_tui_visual_snapshots.py -q` 运行定向测试。
 基线更新和画廊查看步骤见 `tests/visual/README.md`。本 ADR 不授权生产界面改动。
+
+## V2B 阅读契约演进
+
+V2B 让 Assistant Markdown 标题使用 UI 语义角色：H1 accent + bold、H2 accent、
+H3 primary emphasis、H4 primary、H5 emphasis、H6 secondary。仅相邻顶层正文段落
+在已有非 compact Shell 中额外增加一行空白；compact 保持一行空白。自动换行以及
+heading/list/code/quote/table transition 保留原间距。render-time Shell policy callback
+让 resize 与 streaming 重排而不累加 spacer、不修改原文。详见
+[ADR 0188](0188-assistant-markdown-semantic-reading-rhythm-v2b.md)。

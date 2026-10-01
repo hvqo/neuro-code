@@ -79,3 +79,13 @@ is semantic-role contrast and improved System theme adaptation.
 Run the focused suite with `uv run pytest tests/test_tui_visual_snapshots.py -q`.
 See `tests/visual/README.md` for deterministic baseline regeneration and gallery
 inspection instructions. This ADR does not authorize production visual changes.
+
+## V2B reading contract evolution
+
+V2B gives Assistant Markdown UI-owned heading roles (H1 accent + bold, H2 accent,
+H3 primary emphasis, H4 primary, H5 emphasis, H6 secondary). Only adjacent top-level
+prose paragraphs gain one extra blank row outside the existing compact shell mode;
+compact keeps one blank row. Wrapped lines and heading/list/code/quote/table
+transitions keep their prior spacing. A render-time shell-policy callback makes
+resize and streaming reflow without accumulated spacers or source edits. See
+[ADR 0188](0188-assistant-markdown-semantic-reading-rhythm-v2b.md).

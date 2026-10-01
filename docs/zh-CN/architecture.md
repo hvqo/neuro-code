@@ -677,6 +677,13 @@ Appearance Settings 提供独立语法选择、即时 Python 预览及保存/取
 背景标签；UI 几何、runtime、prompt/context 和键盘行为不变。详见
 [ADR 0187](adr/0187-independent-tui-syntax-theme-v2a.md)。
 
+V2B 让 Assistant Markdown 标题使用 UI 语义角色：H1 accent + bold、H2 accent、
+H3 primary emphasis、H4 primary、H5 emphasis、H6 secondary。仅相邻顶层正文段落
+在已有非 compact Shell 中额外增加一行空白；compact 保持一行空白。自动换行以及
+heading/list/code/quote/table transition 保留原间距。render-time Shell policy callback
+让 resize 与 streaming 重排而不累加 spacer、不修改原文。详见
+[ADR 0188](adr/0188-assistant-markdown-semantic-reading-rhythm-v2b.md)。
+
 现有原子 UI 偏好端口通过共享 `UiTheme` 保存 `theme` 字段，缺失或非法值回退暖瓷白；
 曜石黑保持 `graphite` 标识。启动与首次供应商配置均恢复所选主题。切换保留消息组件、
 草稿和光标。对话与输入区使用可用终端宽度，仅留少量边距；输入区不显示额外标题，编辑器与发送按钮共用一行。

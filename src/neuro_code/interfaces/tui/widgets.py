@@ -6,12 +6,16 @@ TUI 界面拥有的 Textual 组件.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
 from markdown_it.token import Token
-from rich.console import JustifyMethod, RenderableType
-from rich.markdown import CodeBlock, Heading, Markdown, MarkdownElement
+from rich.console import Console, ConsoleOptions, JustifyMethod, RenderableType
+from rich.console import RenderResult as RichRenderResult
+from rich.markdown import CodeBlock, Heading, Markdown, MarkdownElement, Paragraph
+from rich.segment import Segment
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 from textual import events
@@ -120,6 +124,25 @@ class _FencedCodeBlock(CodeBlock):
         return cls(language.lower() or "text", markdown.code_theme)
 
 
+class _ReadingParagraph(Paragraph):
+    """Add one semantic block gap, never wrapped-line or nested-list spacing."""
+
+    extra_gap: bool = False
+
+    @classmethod
+    def create(cls, markdown: Markdown, token: Token) -> _ReadingParagraph:
+        element = cls(markdown.justify or "left")
+        element.extra_gap = isinstance(markdown, AssistantMarkdown) and markdown.has_paragraph_gap(
+            token
+        )
+        return element
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RichRenderResult:
+        if self.extra_gap:
+            yield Segment.line()
+        yield from super().__rich_console__(console, options)
+
+
 class AssistantMarkdown(Markdown):
     """Safe model Markdown whose string form remains useful in diagnostics.
 
@@ -128,9 +151,44 @@ class AssistantMarkdown(Markdown):
     elements: ClassVar[dict[str, type[MarkdownElement]]] = {
         **Markdown.elements,
         "heading_open": _ReadingHeading,
+        "paragraph_open": _ReadingParagraph,
         "fence": _FencedCodeBlock,
         "code_block": _FencedCodeBlock,
     }
+
+    def __init__(
+        self,
+        markup: str,
+        code_theme: str = "monokai",
+        justify: JustifyMethod | None = None,
+        style: str | Style = "none",
+        hyperlinks: bool = True,
+        inline_code_lexer: str | None = None,
+        inline_code_theme: str | None = None,
+        *,
+        compact: Callable[[], bool] | None = None,
+    ) -> None:
+        super().__init__(
+            markup, code_theme, justify, style, hyperlinks, inline_code_lexer, inline_code_theme
+        )
+        self._compact = compact
+        previous: Token | None = None
+        gaps: set[int] = set()
+        for token in self.parsed:
+            if token.level != 0:
+                continue
+            if (
+                token.type == "paragraph_open"
+                and previous is not None
+                and previous.type == "paragraph_close"
+            ):
+                gaps.add(id(token))
+            previous = token
+        self._paragraph_gaps = frozenset(gaps)
+
+    def has_paragraph_gap(self, token: Token) -> bool:
+        """Resolve current shell policy at render time; no retained spacers."""
+        return id(token) in self._paragraph_gaps and not (self._compact and self._compact())
 
     def __str__(self) -> str:
         return self.markup

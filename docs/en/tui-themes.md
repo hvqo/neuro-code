@@ -24,7 +24,7 @@ The themes below use upstream color values with independently designed mappings 
 
 Preferences use the `theme` field in the existing atomic JSON store. Missing or invalid values fall back to `porcelain`. A save failure keeps the applied appearance and reports an error. Theme switches refresh CSS, Rich Markdown, syntax and existing message widgets while preserving drafts, cursor position and conversation content.
 
-Graphite and Porcelain use a neutral reading hierarchy: primary prose, quieter secondary and muted text, restrained canvas/panel/selected surfaces, and a visible normal border and stronger focus border. Their ordinary text and meaningful UI boundaries have contrast regression guards. One accent marks links and interaction; success, warning, and error are reserved for state. Markdown headings and Tool Activity use the conversation's neutral hierarchy. Code syntax retains its independent palette (including syntax colors), without changing message content. The other saved theme identifiers remain compatible; V1A's measured RGB guards cover Graphite and Porcelain. See [ADR 0184](adr/0184-tui-color-system-and-contrast-v1a.md).
+Graphite and Porcelain use a neutral reading hierarchy: primary prose, quieter secondary and muted text, restrained canvas/panel/selected surfaces, and a visible normal border and stronger focus border. Their ordinary text and meaningful UI boundaries have contrast regression guards. One accent marks links and interaction; success, warning, and error are reserved for state. Tool Activity retains the conversation's neutral hierarchy; V2B H1/H2 use the existing UI accent, with lower headings using primary/emphasis/secondary roles. Code syntax retains its independent palette (including syntax colors), without changing message content. The other saved theme identifiers remain compatible; V1A's measured RGB guards cover Graphite and Porcelain. See [ADR 0184](adr/0184-tui-color-system-and-contrast-v1a.md).
 
 ## Independent Syntax Theme
 
@@ -48,3 +48,13 @@ terminal palette; reliable RGB enables the same adaptation, while unknown/ANSI16
 uses default foreground and limited ANSI syntax colors. Your saved choice stays
 intact. Actual ANSI contrast needs real-terminal review. See [ADR 0187](adr/0187-independent-tui-syntax-theme-v2a.md)
 and the syntax gallery/manual checklist in `tests/visual/README.md`.
+
+## Assistant Markdown reading rhythm
+
+V2B gives Assistant Markdown UI-owned heading roles (H1 accent + bold, H2 accent,
+H3 primary emphasis, H4 primary, H5 emphasis, H6 secondary). Only adjacent top-level
+prose paragraphs gain one extra blank row outside the existing compact shell mode;
+compact keeps one blank row. Wrapped lines and heading/list/code/quote/table
+transitions keep their prior spacing. A render-time shell-policy callback makes
+resize and streaming reflow without accumulated spacers or source edits. See
+[ADR 0188](adr/0188-assistant-markdown-semantic-reading-rhythm-v2b.md).

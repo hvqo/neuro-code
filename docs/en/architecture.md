@@ -927,6 +927,14 @@ when RGB is unknown. Inline code stays foreground-only; UI geometry, runtime,
 prompt/context and keyboard behavior are unaffected. See
 [ADR 0187](adr/0187-independent-tui-syntax-theme-v2a.md).
 
+V2B gives Assistant Markdown UI-owned heading roles (H1 accent + bold, H2 accent,
+H3 primary emphasis, H4 primary, H5 emphasis, H6 secondary). Only adjacent top-level
+prose paragraphs gain one extra blank row outside the existing compact shell mode;
+compact keeps one blank row. Wrapped lines and heading/list/code/quote/table
+transitions keep their prior spacing. A render-time shell-policy callback makes
+resize and streaming reflow without accumulated spacers or source edits. See
+[ADR 0188](adr/0188-assistant-markdown-semantic-reading-rhythm-v2b.md).
+
 The existing atomic UI preferences port saves the shared `UiTheme` in the `theme`
 field; missing/invalid values fall back to Porcelain. Obsidian keeps the `graphite`
 identifier. Startup and first-run provider setup restore the same choice. Switching
