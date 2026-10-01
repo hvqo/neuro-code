@@ -267,3 +267,43 @@ Final terminal acceptance: compare Graphite/Porcelain/System; scan H1–H6; read
 Chinese/English prose at 120×40 / 100×32 / 80×24; resize between them while a response
 streams; verify list/quote/table/code spacing, inline-code foreground-only styling
 and Syntax Theme switching. Confirm Composer/input and source-copy behavior stay intact.
+
+## V2C-A Empty State Identity: corrected-source borderless core
+
+The previous source was incorrect. Its terminal rows/masks are removed, and its
+logo snapshot changes are withdrawn to main. Lifecycle, centering, resize, draft
+geometry and first-content/history gates remain. The user selected the central
+six-blade core without the hexagonal border; production rows are in
+`empty_state_logo.py`. The official baseline has
+351 SVGs (333 existing cards + 18 first-message/restored-history cards).
+Empty/draft cards are explicitly updated to the selected core; the A/B/C gallery
+remains an exploration record, not three production variants.
+
+Correct source: 212×212 RGBA, SHA256
+`8334fe13506ca923f09b16933c6c7e5713346d349ada6eb0675ef97021398a6e`.
+The new exploration stores fixed Braille rows: A full badge, B core mark, C core
+plus sparse weak outline. Original background is excluded; aspect ratio retained.
+Resting uses TEXT_DIM + dim. Activated peak is secondary without dim, only a static
+gallery preview; no timer, reveal, input binding or continuous motion is shipped.
+
+```bash
+uv run pytest tests/test_tui_empty_identity.py tests/test_tui_visual_snapshots.py -q
+uv run python -m tests.visual.empty_identity.render_gallery --output /tmp/neuro-code-v2c-a-corrected-logo
+```
+
+The corrected gallery has 162 static state screenshots and 27 resize frames;
+formal snapshots are never written by this script. Sizes remain 32×16 / 24×12 /
+16×8 at 120×40 / 100×32 / 80×24, hiding below 70×22 or insufficient space.
+
+Optional offline regeneration requires Pillow in a separate system Python (not
+an application dependency); it rereads and hashes the source rather than trusting
+its filename. CI consumes the checked-in rows, never the desktop PNG:
+
+```bash
+python3 tests/visual/empty_identity/convert_reference.py /path/to/neuro-code-logo.png
+```
+
+Real Konsole acceptance must check Graphite/Porcelain/System across all sizes;
+compare contour recognition, quiet Resting and controlled peak, focus, Chinese
+multiline/paste, first send, restored history and large→compact→large resize.
+SVG/ANSI cannot prove actual terminal glyph strokes, font width or palette.

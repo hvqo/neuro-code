@@ -270,6 +270,12 @@ class TranscriptScroll(VerticalScroll):
     只隐藏视觉组件; 滚动动作与现有会话跟随逻辑保持不变.
     """
 
+    class ViewportChanged(TextualMessage):
+        """Notify presentation overlays after conversation space changes."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.post_message(self.ViewportChanged())
+
     SCROLLBAR_HIDE_DELAY_SECONDS = 0.8
 
     def __init__(
