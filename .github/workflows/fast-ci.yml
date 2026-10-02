@@ -41,6 +41,8 @@ jobs:
           tests/test_redaction.py
           tests/test_project_memory.py
           tests/test_tui_markdown.py
+          tests/test_tui_empty_identity.py
+          tests/test_tui_empty_reveal.py
           --durations=25
 
   terminal-smoke:

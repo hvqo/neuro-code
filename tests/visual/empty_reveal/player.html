@@ -1,0 +1,23 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Neuro Code · Production Torsion Lock</title>
+<style>
+body{background:#181818;color:#ddd;margin:24px;font:14px system-ui}h1{font-size:20px;font-weight:500}
+.controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:18px 0}button,select{background:#333;color:#eee;border:1px solid #666;padding:6px 10px}
+img{width:100%;max-width:1100px;display:block}#status{font:13px monospace;margin:12px 0}.keys{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.keys img{width:100%}figure{margin:0}figcaption{margin:8px 0;color:#aaa}
+</style><h1>Empty State Reveal · Torsion Lock · Production</h1>
+<p>真实 Textual widget 帧截图；默认静止，Play once 主动触发，播放中重复点击忽略。当前时序 6 秒。浏览器用于观察结构；Konsole 字体与 repaint 仍需实机验收。</p>
+<div class="controls"><label>Theme <select id="theme"><option>system</option><option>graphite</option><option>porcelain</option></select></label><label>Viewport <select id="viewport"><option>120x40</option><option>100x32</option><option>80x24</option></select></label><label>Speed <select id="speed"><option value="1">1×</option><option value="0.5">0.5×</option><option value="2">2×</option></select></label><button id="play">Play once</button><button id="stop">Resting</button><label><input id="repeat" type="checkbox">Repeat（仅预览）</label></div>
+<img id="screen" alt="production terminal frame"><div id="status"></div><div class="keys" id="keys"></div>
+<script id="frames" type="application/json">__FRAME_DATA__</script><script>
+const data=JSON.parse(document.querySelector('#frames').textContent),screen=document.querySelector('#screen'),status=document.querySelector('#status');
+let timer=null,running=false,started=0,frame=0,log=[];
+const key=()=>document.querySelector('#theme').value+'-'+document.querySelector('#viewport').value;
+function show(i){frame=i;screen.src=data.captures[key()][i];status.textContent=`Frame ${i+1}/12 · ${data.durations[i]}ms · ${running?'Playing':'Resting'} · `+log.join(', ')}
+function stop(){clearTimeout(timer);timer=null;running=false;log=[];show(0)}
+function tick(){const elapsed=(performance.now()-started)*Number(document.querySelector('#speed').value);let end=0,index=0;for(;index<12;index++){end+=data.durations[index];if(elapsed<end)break}if(index===12){running=false;timer=null;show(11);if(document.querySelector('#repeat').checked)timer=setTimeout(play,1100);return}if(frame!==index||!log.length)log.push(`${index+1}@${Math.round(elapsed)}`);show(index);timer=setTimeout(tick,Math.max(1,(end-elapsed)/Number(document.querySelector('#speed').value)))}
+function play(){if(running)return;clearTimeout(timer);running=true;started=performance.now();log=[];tick()}
+function keys(){document.querySelector('#keys').innerHTML=[['Resting',0],['Pre-torsion',2],['Max torsion',5],['Lock / Peak',9],['Rebound',7],['Returned resting',11]].map(([name,i])=>`<figure><figcaption>${name} · ${i+1}</figcaption><img src="${data.captures[key()][i]}" alt="${name}"></figure>`).join('')}
+document.querySelector('#play').onclick=play;document.querySelector('#stop').onclick=stop;
+for(const id of ['theme','viewport','speed'])document.querySelector('#'+id).onchange=()=>{stop();keys()};
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stop()});window.addEventListener('pagehide',stop);stop();keys();
+</script></html>

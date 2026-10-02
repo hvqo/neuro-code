@@ -942,6 +942,15 @@ restored history; bounded responsive assets hide when space is insufficient. No
 image is loaded at runtime, and no motion or canonical transcript data is added.
 See [ADR 0189](adr/0189-static-empty-state-identity-v2c-a.md).
 
+### Empty State Reveal V2C-B
+
+The optional click-triggered Torsion Lock belongs entirely to `EmptyStateIdentity`.
+Twelve precomputed geometry frames keep the accepted bounding box and exact resting
+endpoints. The click-only sequence lasts six seconds; resting blends the existing
+dim semantic foreground toward canvas at 28% alpha plus dim (ANSI defaults use dim). One monotonic, generation-fenced one-shot timer repaints only the logo;
+content, size/theme change and teardown cancel it. Composer focus, Agent pulse and
+Runtime are unchanged. Low capability and headless snapshots stay static.
+See [ADR 0190](adr/0190-empty-state-torsion-lock-reveal-v2c-b.md).
 
 The existing atomic UI preferences port saves the shared `UiTheme` in the `theme`
 field; missing/invalid values fall back to Porcelain. Obsidian keeps the `graphite`

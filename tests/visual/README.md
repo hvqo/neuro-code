@@ -307,3 +307,30 @@ Real Konsole acceptance must check Graphite/Porcelain/System across all sizes;
 compare contour recognition, quiet Resting and controlled peak, focus, Chinese
 multiline/paste, first send, restored history and large→compact→large resize.
 SVG/ANSI cannot prove actual terminal glyph strokes, font width or palette.
+
+## V2C-B — production Empty State Reveal
+
+The selected E Torsion Lock ships 12 immutable Braille frames with the user-revised
+non-uniform 6000ms timing. Default snapshots remain static; the reveal harness
+freezes the production clock to capture six states, without changing application
+behavior: Resting, pre-torsion, max torsion, lock/peak, rebound, returned Resting.
+Graphite/Porcelain/System × 120×40/100×32/80×24 adds 54 SVG baselines.
+The unchanged static geometry now rests at semantic text-dim 28% alpha + dim;
+RGB palettes blend toward canvas, while unknown ANSI defaults retain terminal dim.
+Existing empty-state baselines are intentionally updated for this quieter contrast.
+
+```bash
+NEURO_TUI_UPDATE_SNAPSHOTS=1 uv run pytest tests/test_tui_empty_reveal_snapshots.py -q
+uv run python tests/visual/render_gallery.py --output /tmp/neuro-reveal-gallery.html
+uv run python -m tests.visual.empty_reveal.render_preview --output /tmp/neuro-reveal.html
+uv run python -m tests.visual.empty_reveal.render_preview --terminal --theme system
+```
+
+The HTML player contains actual production Textual frame captures, with Play once,
+preview-only Repeat/speed and key frames. The native provider-free preview runs the
+real click/timer path. Repeat/speed controls are never production behavior.
+Konsole manual checks: no autoplay; first/repeated click; Composer focus and CJK/paste
+while playing; Enter cancellation; size-class changes and theme switch; static
+NO_COLOR fallback; quiet resting after return. Inspect all three themes and sizes.
+Snapshots cannot prove actual Braille font shape, ANSI palette, terminal repaint cost
+or real scheduler cadence. See bilingual ADR 0190 for lifecycle/capability rules.
