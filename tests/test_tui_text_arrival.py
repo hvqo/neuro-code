@@ -641,14 +641,14 @@ async def test_history_page_up_intent_wins_before_scroll_animation_moves():
         pending = await begin(app, pilot)
         text = "中文 English history.\n\n" * 100
         app._update_pending_assistant(text)
-        await pilot.pause()
         transcript = app.query_one("#transcript", TranscriptScroll)
+        await wait_for_committed_view(pending, transcript, pilot)
         assert transcript.is_vertical_scroll_end
         transcript.action_page_up()
         assert transcript._stream_follow_paused
         app._update_pending_assistant(text + "More whole delta. " * 100)
         await pilot.wait_for_scheduled_animations()
-        await pilot.pause()
+        await wait_for_committed_view(pending, transcript, pilot)
         assert not transcript.is_vertical_scroll_end
         assert not transcript._stream_follow_pending
         assert pending.content.endswith("More whole delta. " * 100)
