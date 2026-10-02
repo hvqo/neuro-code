@@ -175,6 +175,53 @@ async def begin(app, pilot):
     return pending
 
 
+async def wait_for_committed_view(pending, transcript, pilot):
+    # Pilot.pause() drains queued messages, not a future view deadline. Wait
+    # for that deadline and its layout callback before asserting scroll state.
+    # Do not wait for is_vertical_scroll_end: a broken follow must still fail.
+    for _ in range(40):
+        await pilot.pause(0.05)
+        if (
+            not pending._stream_dirty
+            and pending._stream_view_timer is None
+            and not transcript._stream_follow_pending
+        ):
+            assert pending.renderable.markup == pending.content
+            return
+    raise AssertionError("stream view deadline or follow callback did not settle")
+
+
+@pytest.mark.asyncio
+async def test_message_idle_is_not_a_future_view_commit_barrier(clock, monkeypatch):
+    from unittest.mock import Mock
+
+    from neuro_code.interfaces.tui.widgets import TranscriptScroll
+
+    app = make_app(UiTheme.GRAPHITE, fixture="empty-conversation")
+    app._agent_preferences = replace(app._agent_preferences, text_arrival_animation=False)
+    async with app.run_test(size=(80, 24)) as pilot:
+        pending = await begin(app, pilot)
+        transcript = app.query_one("#transcript", TranscriptScroll)
+        app._update_pending_assistant("first")
+        callbacks = []
+
+        def hold_deadline(delay, callback, **kwargs):
+            assert kwargs["name"] == "stream-view-commit"
+            callbacks.append(callback)
+            return Mock()
+
+        monkeypatch.setattr(pending, "set_timer", hold_deadline)
+        app._update_pending_assistant("first\n\n" + "完整中文 tail. " * 100)
+        await pilot.pause()
+        assert pending._stream_dirty
+        assert pending.renderable.markup != pending.content
+        assert len(callbacks) == 1
+        app.set_timer(0.01, callbacks[0])
+        await wait_for_committed_view(pending, transcript, pilot)
+        assert transcript.is_vertical_scroll_end
+        assert pending._stream_view_timer is None
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", [UiTheme.GRAPHITE, UiTheme.PORCELAIN, UiTheme.SYSTEM])
 async def test_whole_delta_immediate_tick_no_parse_and_exact_settle(theme, clock, monkeypatch):
@@ -523,8 +570,8 @@ async def test_growing_tail_follows_layout_but_manual_history_scroll_is_preserve
             text += f"第 {index} 段中文和 English 连续正文。" * 3 + "\n\n"
             app._update_pending_assistant(text)
             await asyncio.sleep(0.003)
-        await pilot.pause()
         transcript = app.query_one("#transcript", TranscriptScroll)
+        await wait_for_committed_view(pending, transcript, pilot)
         assert transcript.max_scroll_y > 0
         assert transcript.is_vertical_scroll_end
         transcript.scroll_to(y=0, animate=False, immediate=True)
@@ -535,14 +582,14 @@ async def test_growing_tail_follows_layout_but_manual_history_scroll_is_preserve
             text += f"补充第 {index} 段正文。" * 3 + "\n\n"
             app._update_pending_assistant(text)
             await asyncio.sleep(0.003)
-        await pilot.pause()
+        await wait_for_committed_view(pending, transcript, pilot)
         assert transcript.scroll_y == y
         assert not transcript._stream_follow_pending
         transcript.scroll_end(animate=False, immediate=True)
         await pilot.pause()
         text += "恢复主动跟随后继续输出。" * 100
         app._update_pending_assistant(text)
-        await pilot.pause()
+        await wait_for_committed_view(pending, transcript, pilot)
         assert transcript.is_vertical_scroll_end
         app._replace_transcript([])
         assert transcript._stream_follow_y is None
