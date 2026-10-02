@@ -329,14 +329,43 @@ async def test_capability_policy_static_fallback(level: TerminalColorLevel, no_c
         symbol = app.query_one(EmptyStateIdentity)
         assert not symbol.activate()  # deterministic headless policy
         app.no_color = no_color
-        with patch.object(
-            NeuroCodeApp, "is_headless", new_callable=PropertyMock, return_value=False
+        with (
+            patch.object(
+                NeuroCodeApp, "is_headless", new_callable=PropertyMock, return_value=False
+            ),
+            patch.object(
+                type(app.console), "color_system", new_callable=PropertyMock, return_value=None
+            ),
         ):
             allowed = not no_color and level in {
                 TerminalColorLevel.TRUECOLOR,
                 TerminalColorLevel.ANSI256,
             }
             assert symbol.activate() == allowed
+            symbol.cancel_animation()
+
+
+@pytest.mark.parametrize("color_system", ["truecolor", "256", "standard", None])
+async def test_native_output_capability_is_independent_of_palette_detection(
+    color_system: str | None,
+) -> None:
+    app = make_app(UiTheme.SYSTEM, fixture="empty-conversation")
+    async with app.run_test(size=VIEWPORTS[0]) as pilot:
+        await settle(pilot)
+        app.no_color = False
+        symbol = app.query_one(EmptyStateIdentity)
+        with (
+            patch.object(
+                NeuroCodeApp, "is_headless", new_callable=PropertyMock, return_value=False
+            ),
+            patch.object(
+                type(app.console),
+                "color_system",
+                new_callable=PropertyMock,
+                return_value=color_system,
+            ),
+        ):
+            assert symbol.activate() == (color_system in {"truecolor", "256"})
             symbol.cancel_animation()
 
 
