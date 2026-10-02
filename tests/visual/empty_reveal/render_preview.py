@@ -14,25 +14,36 @@ import re
 from pathlib import Path
 from tempfile import gettempdir
 
-from tests.visual.empty_reveal.preview import capture_frames
+from tests.visual.empty_reveal.preview import KEY_FRAMES, capture_frames, capture_player
 from tests.visual.showcases import make_app
 
-from neuro_code.interfaces.tui.empty_state_reveal import TORSION_LOCK
+from neuro_code.interfaces.tui.empty_state_reveal import VORTEX_FRAMES
 from neuro_code.interfaces.tui.terminal_palette import probe_terminal_palette
 from neuro_code.shared.ui_theme import UiTheme
 
 
 async def render(output: Path) -> None:
-    captures: dict[str, list[str]] = {}
+    captures: dict[str, object] = {}
+    shells: dict[str, object] = {}
     for theme in (UiTheme.SYSTEM, UiTheme.GRAPHITE, UiTheme.PORCELAIN):
         for viewport in ((120, 40), (100, 32), (80, 24)):
-            captures[f"{theme.value}-{viewport[0]}x{viewport[1]}"] = [
-                "data:image/svg+xml;base64,"
+            key = f"{theme.value}-{viewport[0]}x{viewport[1]}"
+            shells[key] = await capture_player(theme, viewport)
+            captures[key] = {
+                index: "data:image/svg+xml;base64,"
                 + base64.b64encode(re.sub(rb' textLength="[0-9.]+"', b"", svg.encode())).decode()
-                for svg in await capture_frames(theme, viewport)
-            ]
+                for index, svg in (await capture_frames(theme, viewport)).items()
+            }
     data = json.dumps(
-        {"captures": captures, "durations": [f.duration_ms for f in TORSION_LOCK]},
+        {
+            "captures": captures,
+            "shells": shells,
+            "frames": [
+                {size: [f.rows[size], f.levels[size]] for size in f.rows} for f in VORTEX_FRAMES
+            ],
+            "durations": [f.duration_ms for f in VORTEX_FRAMES],
+            "keyframes": KEY_FRAMES,
+        },
         ensure_ascii=False,
     )
     template = Path(__file__).with_name("player.html").read_text(encoding="utf-8")

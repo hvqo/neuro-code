@@ -6,7 +6,9 @@ No original image, terminal probe or session data is read at runtime.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Mapping
+from itertools import groupby
 from time import monotonic
 from typing import ClassVar
 
@@ -14,13 +16,14 @@ from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.app import RenderResult
+from textual.color import Color
 from textual.geometry import Offset, Region
 from textual.message import Message
 from textual.timer import Timer
 from textual.widgets import Static
 
 from neuro_code.interfaces.tui.empty_state_logo import LOGO_ROWS
-from neuro_code.interfaces.tui.empty_state_reveal import TORSION_LOCK, RevealTone
+from neuro_code.interfaces.tui.empty_state_reveal import FRAME_DEADLINES, VORTEX_FRAMES
 from neuro_code.interfaces.tui.terminal_palette import TerminalColorLevel, TerminalPalette
 
 # Core-only artwork stays within the accepted empty-state geometry.
@@ -79,6 +82,7 @@ class EmptyStateIdentity(Static):
         self._timer: Timer | None = None
         self._started_at = 0.0
         self._animation_generation = 0
+        self._frame_styles: tuple[Style, ...] | None = None
 
     @property
     def animation_running(self) -> bool:
@@ -131,20 +135,18 @@ class EmptyStateIdentity(Static):
             self.cancel_animation()
             return
         elapsed_ms = (monotonic() - self._started_at) * 1000
-        deadline_ms = 0
-        for index, frame in enumerate(TORSION_LOCK):
-            deadline_ms += frame.duration_ms
-            if elapsed_ms < deadline_ms:
-                if self._frame_index != index:
-                    self._frame_index = index
-                    self.refresh(layout=False)
-                self._timer = self.set_timer(
-                    max(0.001, (deadline_ms - elapsed_ms) / 1000),
-                    lambda: self._advance_animation(generation),
-                    name="empty-state-torsion-lock",
-                )
-                return
-        self.cancel_animation()
+        index = bisect_right(FRAME_DEADLINES, elapsed_ms)
+        if index >= len(VORTEX_FRAMES) - 1:
+            self.cancel_animation()
+            return
+        if self._frame_index != index:
+            self._frame_index = index
+            self.refresh(layout=False)
+        self._timer = self.set_timer(
+            max(0.001, (FRAME_DEADLINES[index] - elapsed_ms) / 1000),
+            lambda: self._advance_animation(generation),
+            name="empty-state-vortex",
+        )
 
     def cancel_animation(self) -> None:
         """Release the one-shot timer and return to the canonical static render."""
@@ -154,6 +156,7 @@ class EmptyStateIdentity(Static):
             self._timer = None
         was_running = self.animation_running
         self._frame_index = None
+        self._frame_styles = None
         if was_running:
             self.refresh(layout=False)
 
@@ -166,13 +169,44 @@ class EmptyStateIdentity(Static):
     def render(self) -> RenderResult:
         if self._frame_index is None or self.asset_size is None:
             return super().render()
-        frame = TORSION_LOCK[self._frame_index]
-        if frame.tone is RevealTone.DIM:
+        frame = VORTEX_FRAMES[self._frame_index]
+        if self._frame_index == 0:
             return super().render()
-        style = self.get_component_rich_style(f"empty-state--{frame.tone}", partial=True)
-        return Text(
-            "\n".join(frame.rows[self.asset_size]),
-            style=style + Style(dim=False),
+        if self._frame_styles is None:
+            self._frame_styles = self._resolve_frame_styles()
+        text = Text()
+        for row_index, (row, levels) in enumerate(
+            zip(frame.rows[self.asset_size], frame.levels[self.asset_size], strict=True)
+        ):
+            if row_index:
+                text.append("\n")
+            for level, cells in groupby(zip(row, levels, strict=True), key=lambda item: item[1]):
+                text.append("".join(char for char, _ in cells), self._frame_styles[int(level, 16)])
+        return text
+
+    def _resolve_frame_styles(self) -> tuple[Style, ...]:
+        """Neutral brightness follows the theme, never the reference's RGB palette."""
+        resting = self.visual_style.rich_style
+        peak = self.get_component_rich_style("empty-state--secondary", partial=True)
+        foreground, background = resting.color, self.visual_style.background
+        if (
+            foreground is None
+            or foreground.is_default
+            or peak.color is None
+            or peak.color.is_default
+            or background.ansi is not None
+        ):
+            return (resting, *(peak + Style(dim=level < 8) for level in range(1, 16)))
+        # Rich's deterministic dim representation mixes 40% toward background.
+        # Interpolate existing semantic colors, without a logo-specific palette.
+        start = Color.from_rich_color(foreground).blend(background, 0.4)
+        target = Color.from_rich_color(peak.color)
+        return (
+            resting,
+            *(
+                Style(color=start.blend(target, level / 15).rich_color, dim=False)
+                for level in range(1, 16)
+            ),
         )
 
     def consume(self) -> None:

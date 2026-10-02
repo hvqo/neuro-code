@@ -6,7 +6,6 @@ from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
 from rich.cells import cell_len
-from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.color import Color
@@ -16,7 +15,7 @@ from neuro_code.domain.conversation.messages import Message, Role
 from neuro_code.interfaces.tui.app import NeuroCodeApp
 from neuro_code.interfaces.tui.empty_state import LOGO_SIZES, EmptyStateIdentity
 from neuro_code.interfaces.tui.empty_state_logo import LOGO_ROWS
-from neuro_code.interfaces.tui.empty_state_reveal import TORSION_LOCK, TOTAL_DURATION_MS
+from neuro_code.interfaces.tui.empty_state_reveal import TOTAL_DURATION_MS, VORTEX_FRAMES
 from neuro_code.interfaces.tui.terminal_palette import TerminalColorLevel, TerminalPalette
 from neuro_code.interfaces.tui.widgets import PromptInput
 from neuro_code.shared.ui_theme import UiTheme
@@ -67,13 +66,13 @@ async def test_quiet_resting_is_semantic_blend_and_only_click_brightens(
             assert resting.color.is_default
         clock = RevealClock(symbol, monkeypatch)
         await pilot.click(symbol)
-        clock.seek(sum(frame.duration_ms for frame in TORSION_LOCK[:9]))
+        clock.seek(TOTAL_DURATION_MS // 2)
         peak = symbol.render()
         assert isinstance(peak, Text)
-        assert isinstance(peak.style, Style)
-        assert peak.style.dim is False
+        assert symbol._frame_styles is not None
+        assert symbol._frame_styles[-1].dim is False
         assert (
-            peak.style.color
+            symbol._frame_styles[-1].color
             == symbol.get_component_rich_style("empty-state--secondary", partial=True).color
         )
         clock.seek(TOTAL_DURATION_MS)
@@ -104,34 +103,28 @@ class RevealClock:
 
 
 @pytest.mark.parametrize("size", LOGO_SIZES)
-def test_selected_e_assets_are_fixed_geometry_and_exact_resting(size: str) -> None:
-    assert len(TORSION_LOCK) == 12
+def test_vortex_assets_are_dense_samples_with_exact_resting(size: str) -> None:
+    assert len(VORTEX_FRAMES) == 145
     assert TOTAL_DURATION_MS == 6000
-    assert [f.duration_ms for f in TORSION_LOCK] == [
-        400,
-        350,
-        350,
-        450,
-        600,
-        500,
-        400,
-        350,
-        400,
-        800,
-        600,
-        800,
-    ]
+    assert sum(frame.duration_ms for frame in VORTEX_FRAMES) == TOTAL_DURATION_MS
+    assert {f.duration_ms for f in VORTEX_FRAMES[:-1]} == {41, 42}
+    assert VORTEX_FRAMES[-1].duration_ms == 0
     width, height = LOGO_SIZES[size]
-    for frame in TORSION_LOCK:
+    for frame in VORTEX_FRAMES:
         assert len(frame.rows[size]) == height
         assert all(cell_len(row) == width for row in frame.rows[size])
         assert all(
-            ch == " " or 0x2800 <= ord(ch) <= 0x28FF for row in frame.rows[size] for ch in row
+            ch in " 01" or 0x2800 <= ord(ch) <= 0x28FF for row in frame.rows[size] for ch in row
         )
-    assert TORSION_LOCK[0].rows[size] == TORSION_LOCK[-1].rows[size] == LOGO_ROWS[size]
-    assert len({frame.rows[size] for frame in TORSION_LOCK}) == 9
+    assert VORTEX_FRAMES[0].rows[size] == VORTEX_FRAMES[-1].rows[size] == LOGO_ROWS[size]
+    assert len({frame.rows[size] for frame in VORTEX_FRAMES}) > 100
+    # Cell brightness is theme-neutral metadata, with no hardcoded RGB.
+    for frame in VORTEX_FRAMES:
+        assert all(len(row) == width for row in frame.levels[size])
+        assert len(frame.levels[size]) == height
+        assert set("".join(frame.levels[size])) <= set("0123456789abcdef")
     with pytest.raises(TypeError):
-        TORSION_LOCK[1].rows[size] = ()  # type: ignore[index]
+        VORTEX_FRAMES[1].rows[size] = ()  # type: ignore[index]
 
 
 @pytest.mark.parametrize("theme", THEMES)
@@ -154,7 +147,7 @@ async def test_full_sequence_restores_exact_static_render_and_shell(
             clock = RevealClock(symbol, monkeypatch)
             assert symbol.activate()
             elapsed = 0
-            for index, frame in enumerate(TORSION_LOCK):
+            for index, frame in enumerate(VORTEX_FRAMES[:-1]):
                 clock.seek(elapsed)
                 assert symbol._frame_index == index
                 rendered = symbol.render()
@@ -402,3 +395,59 @@ async def test_frame_updates_are_widget_only_repaints(monkeypatch: pytest.Monkey
             update.assert_not_called()
             assert refresh.call_count == 2
             assert all(call.kwargs == {"layout": False} for call in refresh.call_args_list)
+
+
+async def test_delayed_callback_skips_samples_without_queueing_catch_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = make_app(UiTheme.GRAPHITE, fixture="empty-conversation")
+    async with app.run_test(size=VIEWPORTS[0]) as pilot:
+        await settle(pilot)
+        symbol = app.query_one(EmptyStateIdentity)
+        clock = RevealClock(symbol, monkeypatch)
+        assert symbol.activate()
+        with patch.object(symbol, "refresh") as refresh:
+            clock.seek(3000)
+            assert symbol._frame_index == 72
+            assert len(clock.timers) == 2
+            assert 0 < clock.timers[-1].delay <= 0.042
+            refresh.assert_called_once_with(layout=False)
+            rendered = symbol.render()
+            assert isinstance(rendered, Text)
+            cached_styles = symbol._frame_styles
+            clock.seek(3042)
+            symbol.render()
+            assert symbol._frame_styles is cached_styles
+            assert clock.timers[-2].stop.called
+        symbol.cancel_animation()
+        assert symbol._frame_styles is None
+
+
+def test_offline_vortex_projection_is_structural_and_returns_exactly() -> None:
+    from scripts.generate_empty_vortex import particles, project, sample
+
+    points = particles(LOGO_ROWS["large"])
+    assert {point[4] for point in points} == {0, 1, 2}
+    for point in points:
+        assert project(point, 0) == (point[0], point[1], 0)
+        assert project(point, 1) == (point[0], point[1], 0)
+    for size, rows in LOGO_ROWS.items():
+        for index in (0, 32, 72, 111, 136, 144):
+            generated, levels = sample(rows, index / 144)
+            assert generated == VORTEX_FRAMES[index].rows[size]
+            assert levels == VORTEX_FRAMES[index].levels[size]
+        assert sample(rows, -1)[0] == sample(rows, 2)[0] == rows
+        # Geometry genuinely changes independently of brightness metadata.
+        assert sample(rows, 0.5)[0] != rows
+
+
+async def test_player_captures_real_shell_geometry_and_semantic_palette() -> None:
+    from tests.visual.empty_reveal.preview import capture_player
+
+    player = await capture_player(UiTheme.GRAPHITE, (120, 40))
+    assert player["size"] == "large"
+    assert len(player["palette"]) == 16
+    assert len(set(player["palette"])) > 10
+    assert 'id="terminal-grid"' in player["shell"]
+    assert not any(0x2800 <= ord(ch) <= 0x28FF for ch in player["shell"])
+    assert player["origin"] == pytest.approx({"x": 536.8, "y": 264.0, "dx": 12.2, "dy": 24.4})

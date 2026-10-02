@@ -8,6 +8,7 @@ from tempfile import gettempdir
 
 import pytest
 
+from neuro_code.interfaces.tui.empty_state_reveal import VORTEX_FRAMES
 from neuro_code.shared.ui_theme import UiTheme
 from tests.test_tui_visual_snapshots import SNAPSHOT_ROOT, canonicalize_svg
 from tests.visual.empty_reveal.preview import KEY_FRAMES, capture_frames
@@ -19,7 +20,7 @@ async def test_production_reveal_key_frame_snapshots(
     theme: UiTheme, viewport: tuple[int, int]
 ) -> None:
     frames = await capture_frames(theme, viewport)
-    assert frames[0] == frames[-1]
+    assert frames[0] == frames[len(VORTEX_FRAMES) - 1]
     # Match the intentionally quieter canonical resting baseline, rather than
     # merely comparing two new frames. It also guards inherited NO_COLOR filters.
     static_baseline = SNAPSHOT_ROOT / (

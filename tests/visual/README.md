@@ -310,15 +310,14 @@ SVG/ANSI cannot prove actual terminal glyph strokes, font width or palette.
 
 ## V2C-B — production Empty State Reveal
 
-The selected E Torsion Lock ships 12 immutable Braille frames with the user-revised
-non-uniform 6000ms timing. Default snapshots remain static; the reveal harness
-freezes the production clock to capture six states, without changing application
-behavior: Resting, pre-torsion, max torsion, lock/peak, rebound, returned Resting.
-Graphite/Porcelain/System × 120×40/100×32/80×24 adds 54 SVG baselines.
-The unchanged static geometry now rests at semantic text-dim 28% alpha + dim;
-RGB palettes blend toward canvas, while unknown ANSI defaults retain terminal dim.
-Existing empty-state baselines are intentionally updated for this quieter contrast.
-
+The twelve-pose reveal was rejected after stretching it to six seconds exposed
+long frame holds. The user's vortex reference now drives counter-moving layers,
+3D tilt/perspective, trails and one outward impulse: 145 immutable samples, 24fps,
+6000ms. The offline generator uses accepted canonical dots; no runtime PNG/reference
+script is needed. Default snapshots remain static. The harness freezes six states:
+Resting, lift, max-tilt, reconstruction, settle, returned-resting.
+Graphite/Porcelain/System × 120×40/100×32/80×24 yields 54 SVG baselines.
+Static geometry and semantic text-dim 28% alpha + dim remain unchanged.
 ```bash
 NEURO_TUI_UPDATE_SNAPSHOTS=1 uv run pytest tests/test_tui_empty_reveal_snapshots.py -q
 uv run python tests/visual/render_gallery.py --output /tmp/neuro-reveal-gallery.html
@@ -326,8 +325,9 @@ uv run python -m tests.visual.empty_reveal.render_preview --output /tmp/neuro-re
 uv run python -m tests.visual.empty_reveal.render_preview --terminal --theme system
 ```
 
-The HTML player contains actual production Textual frame captures, with Play once,
-preview-only Repeat/speed and key frames. The native provider-free preview runs the
+The HTML player uses an actual Textual shell plus production geometry/style data,
+updating only logo cells at their actual coordinates, with Play once,
+preview-only Repeat/speed and complete Textual key-frame captures. The native provider-free preview runs the
 real click/timer path. Repeat/speed controls are never production behavior.
 Konsole manual checks: no autoplay; first/repeated click; Composer focus and CJK/paste
 while playing; Enter cancellation; size-class changes and theme switch; static
