@@ -43,7 +43,11 @@ marks, so sustained streaming cannot renew an old glyph indefinitely.
 ## Cache and refresh ownership
 
 `AssistantMessage` owns one bounded arrival timeline, one 50ms animation clock,
-one cancellable view deadline and one current Markdown view. The deadline is relative
+one cancellable asyncio one-shot view deadline and one current Markdown view.
+The deadline queues into the widget message pump and always delivers when overdue;
+Textual 1.x one-shot timers default to skipping late callbacks and cannot own a
+required final view commit. Generation guards cancel already-queued stale callbacks.
+The deadline is relative
 to the preceding commit; subsequent deltas do not postpone it. Animation ticks never
 flush pending content. A single pending post-layout scroll follows committed growth,
 retains end-follow intent through consecutive layouts, and is cancelled by upward
@@ -67,7 +71,8 @@ static. Off mode retains coalescing and caching but creates no animation ranges.
 ## Verification and limits
 
 Deterministic tests cover intact deltas, cache equivalence, source proof, Unicode,
-protected Markdown and custom semantic styles, per-glyph expiry, local ticks, theme,
+protected Markdown and custom semantic styles, per-glyph expiry, local ticks, overdue
+deadline delivery, explicit commit/layout barriers (message idle is not a timer barrier), theme,
 resize, completion/cancel/error/restore and preference inheritance. The retained test-only replay tools exercise the full controller/event path at the
 fixed production cadence, with animation on/off. They report commit/visible-update
 intervals, exclusive CPU, Markdown/Syntax, layout/scroll, compositor and refresh

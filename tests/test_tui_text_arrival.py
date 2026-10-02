@@ -205,12 +205,11 @@ async def test_message_idle_is_not_a_future_view_commit_barrier(clock, monkeypat
         app._update_pending_assistant("first")
         callbacks = []
 
-        def hold_deadline(delay, callback, **kwargs):
-            assert kwargs["name"] == "stream-view-commit"
-            callbacks.append(callback)
+        def hold_deadline(delay, generation):
+            callbacks.append(lambda: pending._commit_pending_view(generation))
             return Mock()
 
-        monkeypatch.setattr(pending, "set_timer", hold_deadline)
+        monkeypatch.setattr(pending, "_schedule_stream_commit", hold_deadline)
         app._update_pending_assistant("first\n\n" + "完整中文 tail. " * 100)
         await pilot.pause()
         assert pending._stream_dirty
@@ -220,6 +219,42 @@ async def test_message_idle_is_not_a_future_view_commit_barrier(clock, monkeypat
         await wait_for_committed_view(pending, transcript, pilot)
         assert transcript.is_vertical_scroll_end
         assert pending._stream_view_timer is None
+
+
+@pytest.mark.asyncio
+async def test_overdue_commit_is_delivered_once_without_another_delta(clock, monkeypatch):
+    from asyncio import get_running_loop
+    from types import SimpleNamespace
+
+    from neuro_code.interfaces.tui.widgets import TranscriptScroll
+
+    app = make_app(UiTheme.GRAPHITE, fixture="empty-conversation")
+    app._agent_preferences = replace(app._agent_preferences, text_arrival_animation=False)
+    async with app.run_test(size=(80, 24)) as pilot:
+        pending = await begin(app, pilot)
+        transcript = app.query_one("#transcript", TranscriptScroll)
+        app._update_pending_assistant("first")
+        loop = get_running_loop()
+
+        def overdue(delay, callback):
+            # An expired deadline models clock granularity / delayed scheduling
+            # without blocking the loop or changing any canonical delta.
+            return loop.call_at(loop.time() - 1, callback)
+
+        monkeypatch.setattr(
+            widgets, "get_running_loop", lambda: SimpleNamespace(call_later=overdue)
+        )
+        with patch.object(
+            pending, "_commit_stream_view", wraps=pending._commit_stream_view
+        ) as commit:
+            app._update_pending_assistant("first complete 中文 delta")
+            assert pending._stream_view_timer is not None
+            assert pending.content == "first complete 中文 delta"
+            await wait_for_committed_view(pending, transcript, pilot)
+            assert commit.call_count == 1
+            assert pending._stream_view_timer is None
+            await pilot.pause(0.1)
+            assert commit.call_count == 1
 
 
 @pytest.mark.asyncio

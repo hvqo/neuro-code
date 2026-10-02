@@ -6,6 +6,7 @@ TUI 界面拥有的 Textual 组件.
 from __future__ import annotations
 
 import re
+from asyncio import TimerHandle, get_running_loop
 from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
@@ -596,7 +597,7 @@ class AssistantMessage(ConversationMessage):
         self.tooltip = copy_hint
         self._arrival = ArrivalTimeline()
         self._arrival_timer: Timer | None = None
-        self._stream_view_timer: Timer | None = None
+        self._stream_view_timer: TimerHandle | None = None
         self._stream_generation = 0
         self._stream_renderer: Callable[[str], AssistantMarkdown] | None = None
         self._stream_dirty = False
@@ -635,21 +636,29 @@ class AssistantMessage(ConversationMessage):
             self._commit_stream_view(now)
         elif self._stream_view_timer is None:
             generation = self._stream_generation
-            self._stream_view_timer = self.set_timer(
+            self._stream_view_timer = self._schedule_stream_commit(
                 max(0, self._stream_commit_at + VIEW_COMMIT_SECONDS - now),
-                lambda: self._commit_pending_view(generation),
-                name="stream-view-commit",
+                generation,
             )
         if self._arrival_timer is None and self._arrival.arrivals:
             self._arrival_timer = self.set_interval(
                 FRAME_SECONDS, self._arrival_tick, name="measured-ink"
             )
 
+    def _schedule_stream_commit(self, delay: float, generation: int) -> TimerHandle:
+        # Textual's one-shot Timer defaults to skip=True and may discard its
+        # only callback when a short deadline is already overdue. A view commit
+        # must be delivered even under coarse clocks or event-loop pressure.
+        # Queue into this widget's message pump; never parse in a timer callback.
+        return get_running_loop().call_later(
+            delay, lambda: self.call_next(self._commit_pending_view, generation)
+        )
+
     def _cancel_view_timer(self) -> None:
         self._stream_generation += 1
         timer, self._stream_view_timer = self._stream_view_timer, None
         if timer is not None:
-            timer.stop()
+            timer.cancel()
 
     def _commit_pending_view(self, generation: int) -> None:
         if generation != self._stream_generation:

@@ -33,8 +33,10 @@ source code-point 索引与 terminal cell 分离，完整安全 Latin/Han graphe
 
 ## 缓存与刷新所有权
 
-`AssistantMessage` 持有有界 arrival timeline、50ms animation clock、一个可取消的 view
-截止时间和当前 Markdown view。截止时间相对上次 commit，新 delta 不会不断推迟截止时间，
+`AssistantMessage` 持有有界 arrival timeline、50ms animation clock、一个可取消的 asyncio
+one-shot view deadline 和当前 Markdown view。deadline 到期后进入 widget message pump；
+迟到也必须执行。Textual 1.x one-shot 默认跳过迟到 callback，不能用于保证最终正文提交；
+generation guard 同时失效已入队的旧 callback。截止时间相对上次 commit，新 delta 不会不断推迟截止时间，
 animation tick 不 flush pending content。committed growth 只保留一个 post-layout scroll，
 连续布局之间保留末尾跟随意图；向上阅读历史或替换 transcript 时取消。现有固定单行状态槽
 更新文字只 repaint，不要求 layout；显隐与真实 geometry 变化仍由 Textual 正常处理布局。
@@ -54,7 +56,8 @@ unmount 均停止两种 timer、失效旧 callback 并清理 arrival。正文自
 ## 验证与限制
 
 确定性回归覆盖整块 delta、cache 等价、source proof、Unicode、受保护 Markdown、自定义
-语义样式、glyph 到期、局部 tick、主题/resize、完成/取消/错误/restore、配置继承。
+语义样式、glyph 到期、局部 tick、过期 deadline 必达、显式 commit/layout 屏障
+（message idle 不等于 timer 完成）、主题/resize、完成/取消/错误/restore、配置继承。
 保留的测试专用 replay 通过完整 controller/event 路径，在固定 Production cadence 下
 比较 animation off/on，记录 commit/可见更新分布、exclusive CPU、Markdown/Syntax、
 layout/scroll、compositor 与 refresh 次数。synthetic stress tape 显式标记；可选 JSONL
