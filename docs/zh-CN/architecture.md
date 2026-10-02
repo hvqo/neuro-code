@@ -689,6 +689,15 @@ V2C-A 为真正空会话 viewport 提供 dim 语义色的静态中央六片图�
 时隐藏。运行时不读取图片，不增加动画或规范 transcript 数据。详见
 [ADR 0189](adr/0189-static-empty-state-identity-v2c-a.md)。
 
+### Empty State Reveal V2C-B
+
+可选的点击 Vortex Reveal 完全属于 `EmptyStateIdentity`。离线从 canonical dots 生成
+145 个固定 box 轨迹采样，24fps / 六秒，分层反向扭转、倾斜透视、拖尾与一次外扩冲击。
+不可变 package data 代替 runtime 粒子运算。既有 resting / secondary semantic colors
+解析中性强度；Resting 保留 28% alpha + dim。单个 monotonic / generation-fenced timer
+只重绘 Logo，延迟时跳过旧帧；内容、size/theme 与卸载取消。Composer / Agent pulse / Runtime
+不变，低能力 / headless 静态。见 [ADR 0190](adr/0190-empty-state-torsion-lock-reveal-v2c-b.md)。
+
 
 现有原子 UI 偏好端口通过共享 `UiTheme` 保存 `theme` 字段，缺失或非法值回退暖瓷白；
 曜石黑保持 `graphite` 标识。启动与首次供应商配置均恢复所选主题。切换保留消息组件、

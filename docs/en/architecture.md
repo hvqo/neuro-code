@@ -942,6 +942,17 @@ restored history; bounded responsive assets hide when space is insufficient. No
 image is loaded at runtime, and no motion or canonical transcript data is added.
 See [ADR 0189](adr/0189-static-empty-state-identity-v2c-a.md).
 
+### Empty State Reveal V2C-B
+
+The optional click-triggered Vortex Reveal belongs entirely to `EmptyStateIdentity`.
+An offline generator samples canonical dots into 145 fixed-box trajectory frames,
+24fps / six seconds, with counter-moving layers, tilt/perspective, trails and one
+outward impulse. Immutable package data replaces runtime particle work. Existing
+resting/secondary semantic colors resolve neutral intensity; resting uses 28% alpha
+plus dim. One monotonic, generation-fenced timer repaints only the logo and skips
+late samples. Content, size/theme changes and teardown cancel. Composer focus,
+Agent pulse and Runtime remain unchanged; low capability/headless stays static.
+See [ADR 0190](adr/0190-empty-state-torsion-lock-reveal-v2c-b.md).
 
 The existing atomic UI preferences port saves the shared `UiTheme` in the `theme`
 field; missing/invalid values fall back to Porcelain. Obsidian keeps the `graphite`

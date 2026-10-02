@@ -980,6 +980,10 @@ class NeuroCodeApp(
         if symbol is not None and transcript is not None:
             symbol.arrange(transcript.content_region, (self.size.width, self.size.height))
 
+    @on(EmptyStateIdentity.FocusComposer)
+    def _empty_identity_focus_composer(self) -> None:
+        self._main_screen_query_one("#prompt", PromptInput).focus()
+
     @on(Button.Pressed, "#prompt-send")
     def _send_composer_message(self, event: Button.Pressed) -> None:
         event.stop()
@@ -1001,6 +1005,9 @@ class NeuroCodeApp(
         """Keep the System-only border treatment scoped to that palette."""
 
         self.set_class(UiTheme.from_textual_name(theme_name) is UiTheme.SYSTEM, "system-theme")
+        symbol = self._main_screen_query_optional("#empty-state-identity", EmptyStateIdentity)
+        if symbol is not None:
+            symbol.cancel_animation()
 
     def on_mount(self) -> None:
         self.console.push_theme(markdown_theme(self))

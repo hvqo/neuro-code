@@ -131,7 +131,15 @@ async def test_tui_visual_snapshot(
 
 @pytest.mark.parametrize(("palette_name", "terminal_palette"), SYSTEM_PALETTE_FIXTURES)
 @pytest.mark.parametrize(
-    "fixture", ["user-assistant", "settings", "syntax-python", "syntax-diff", "syntax-settings"]
+    "fixture",
+    [
+        "empty-conversation",
+        "user-assistant",
+        "settings",
+        "syntax-python",
+        "syntax-diff",
+        "syntax-settings",
+    ],
 )
 @pytest.mark.asyncio
 async def test_tui_system_terminal_palette_snapshot(

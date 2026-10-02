@@ -307,3 +307,30 @@ Real Konsole acceptance must check Graphite/Porcelain/System across all sizes;
 compare contour recognition, quiet Resting and controlled peak, focus, Chinese
 multiline/paste, first send, restored history and large→compact→large resize.
 SVG/ANSI cannot prove actual terminal glyph strokes, font width or palette.
+
+## V2C-B — production Empty State Reveal
+
+The twelve-pose reveal was rejected after stretching it to six seconds exposed
+long frame holds. The user's vortex reference now drives counter-moving layers,
+3D tilt/perspective, trails and one outward impulse: 145 immutable samples, 24fps,
+6000ms. The offline generator uses accepted canonical dots; no runtime PNG/reference
+script is needed. Default snapshots remain static. The harness freezes six states:
+Resting, lift, max-tilt, reconstruction, settle, returned-resting.
+Graphite/Porcelain/System × 120×40/100×32/80×24 yields 54 SVG baselines.
+Static geometry and semantic text-dim 28% alpha + dim remain unchanged.
+```bash
+NEURO_TUI_UPDATE_SNAPSHOTS=1 uv run pytest tests/test_tui_empty_reveal_snapshots.py -q
+uv run python tests/visual/render_gallery.py --output /tmp/neuro-reveal-gallery.html
+uv run python -m tests.visual.empty_reveal.render_preview --output /tmp/neuro-reveal.html
+uv run python -m tests.visual.empty_reveal.render_preview --terminal --theme system
+```
+
+The HTML player uses an actual Textual shell plus production geometry/style data,
+updating only logo cells at their actual coordinates, with Play once,
+preview-only Repeat/speed and complete Textual key-frame captures. The native provider-free preview runs the
+real click/timer path. Repeat/speed controls are never production behavior.
+Konsole manual checks: no autoplay; first/repeated click; Composer focus and CJK/paste
+while playing; Enter cancellation; size-class changes and theme switch; static
+NO_COLOR fallback; quiet resting after return. Inspect all three themes and sizes.
+Snapshots cannot prove actual Braille font shape, ANSI palette, terminal repaint cost
+or real scheduler cadence. See bilingual ADR 0190 for lifecycle/capability rules.
