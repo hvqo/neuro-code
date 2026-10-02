@@ -38,6 +38,7 @@ from neuro_code.interfaces.tui.state import (
 )
 from neuro_code.interfaces.tui.text import language_name
 from neuro_code.interfaces.tui.theme import markdown_theme
+from neuro_code.interfaces.tui.widgets import AssistantMessage
 from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_language import UiLanguage
 from neuro_code.shared.ui_theme import UiTheme
@@ -245,6 +246,10 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
             prompt = self.query_one("#prompt", PromptInput)
             prompt.enter_behavior = self._agent_preferences.enter_behavior or "send"
             prompt.soft_wrap = self._agent_preferences.prompt_soft_wrap is not False
+            if self._agent_preferences.text_arrival_animation is False:
+                pending = self._pending_assistant
+                if isinstance(pending, AssistantMessage):
+                    pending.stop_arrival()
 
     async def _agent_preferences_closed(
         self,
@@ -321,7 +326,14 @@ class PreferencesControllerMixin(TuiAppControllerMixin):
         for entry, widget in zip(self._entries, self._entry_widgets, strict=True):
             if entry.category == "assistant":
                 widget.update(self._render_entry("assistant", entry.text))
-        if self._pending_assistant is not None and self._assistant_parts:
+        if (
+            isinstance(self._pending_assistant, AssistantMessage)
+            and self._pending_assistant.content
+        ):
+            self._pending_assistant.update(
+                self._render_entry("assistant", self._pending_assistant.content)
+            )
+        elif self._pending_assistant is not None and self._assistant_parts:
             self._pending_assistant.update(
                 self._render_entry("assistant", "".join(self._assistant_parts))
             )

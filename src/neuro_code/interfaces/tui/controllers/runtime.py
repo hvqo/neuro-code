@@ -36,7 +36,7 @@ from neuro_code.interfaces.tui.theme import (
 from neuro_code.interfaces.tui.tool_activity import (
     ToolDisclosureLevel,
 )
-from neuro_code.interfaces.tui.widgets import PromptInput
+from neuro_code.interfaces.tui.widgets import AssistantMessage, PromptInput
 
 
 class RuntimeControllerMixin(TuiAppControllerMixin):
@@ -122,7 +122,8 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         rendered.append("  ")
         rendered.append(label, style=theme_style(self, TEXT_SECONDARY))
         rendered.append(f"  ·  {elapsed:>7}", style=theme_style(self, TEXT_DIM))
-        activity.update(rendered)
+        if activity.renderable != rendered:
+            activity.update(rendered)
         activity.display = True
 
     def _apply_language_to_chrome(self) -> None:
@@ -411,7 +412,14 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
             )
         for group in self._tool_activity_groups:
             self._refresh_tool_activity_group(group)
-        if self._pending_assistant is not None and self._assistant_parts:
+        if (
+            isinstance(self._pending_assistant, AssistantMessage)
+            and self._pending_assistant.content
+        ):
+            self._pending_assistant.update(
+                self._render_entry("assistant", self._pending_assistant.content)
+            )
+        elif self._pending_assistant is not None and self._assistant_parts:
             self._pending_assistant.update(
                 self._render_entry("assistant", "".join(self._assistant_parts))
             )

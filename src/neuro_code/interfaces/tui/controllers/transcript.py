@@ -52,6 +52,7 @@ from neuro_code.interfaces.tui.widgets import (
     AssistantMessage,
     ConversationMessage,
     ToolFeedbackMessage,
+    TranscriptScroll,
 )
 
 
@@ -145,7 +146,11 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
         if identity is not None:
             identity.reset()
         transcript = self._main_screen_query_one("#transcript", VerticalScroll)
+        if isinstance(transcript, TranscriptScroll):
+            transcript.cancel_stream_follow()
         transcript.remove_children()
+        if isinstance(self._pending_assistant, AssistantMessage):
+            self._pending_assistant.stop_arrival(flush=False)
         self._entries.clear()
         self._entry_widgets.clear()
         self._tool_feedback_by_call.clear()
@@ -395,14 +400,19 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
         pending = self._pending_assistant
         assert pending is not None
         transcript = self._main_screen_query_one("#transcript", VerticalScroll)
-        follow = transcript.is_vertical_scroll_end
         pending.set_pending(False)
         pending.display = True
         if isinstance(pending, AssistantMessage):
-            pending.set_content(content)
-        pending.update(self._render_entry("assistant", content))
-        if follow:
-            transcript.scroll_end(animate=False)
+            pending.stream_content(
+                content,
+                lambda text: cast(AssistantMarkdown, self._render_entry("assistant", text)),
+                animate=self._agent_preferences.text_arrival_animation is not False,
+            )
+        else:
+            follow = transcript.is_vertical_scroll_end
+            pending.update(self._render_entry("assistant", content))
+            if follow:
+                transcript.scroll_end(animate=False)
 
     def _seal_pending_assistant(self) -> bool:
         """Commit streamed text for the current model step without ending the turn.
@@ -469,6 +479,8 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
 
     async def _discard_pending_assistant(self) -> None:
         pending = self._pending_assistant
+        if isinstance(pending, AssistantMessage):
+            pending.stop_arrival(flush=False)
         self._pending_assistant = None
         self._assistant_parts.clear()
         self._stop_model_loading()

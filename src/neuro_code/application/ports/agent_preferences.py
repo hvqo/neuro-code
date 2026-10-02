@@ -22,6 +22,7 @@ class AgentPreferences:
 
     enter_behavior: str | None = None
     prompt_soft_wrap: bool | None = None
+    text_arrival_animation: bool | None = None
     notify_completed: bool | None = None
     notify_failed: bool | None = None
     wake_max_per_session: int | None = None
@@ -57,6 +58,7 @@ class AgentPreferences:
             "failover",
             "lsp_enabled",
             "prompt_soft_wrap",
+            "text_arrival_animation",
             "notify_completed",
             "notify_failed",
             "show_tool_intent",
