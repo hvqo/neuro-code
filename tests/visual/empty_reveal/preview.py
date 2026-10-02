@@ -53,6 +53,10 @@ async def capture_frames(theme: UiTheme, viewport: tuple[int, int]) -> dict[int,
     ):
         async with app.run_test(size=viewport) as pilot:
             await pilot.pause()
+            # ViewportChanged positions the overlay through call_after_refresh.
+            # An idle screen does not prove that follow-up layout finished (Windows).
+            app._sync_empty_identity()
+            await pilot.pause()
             symbol = app.query_one(EmptyStateIdentity)
             await pilot.click(symbol)
             captures = {}
@@ -72,6 +76,10 @@ async def capture_player(theme: UiTheme, viewport: tuple[int, int]) -> dict[str,
         app = make_app(theme, fixture="empty-conversation")
     with patch.object(NeuroCodeApp, "_update_clock", fixed_clock):
         async with app.run_test(size=viewport) as pilot:
+            await pilot.pause()
+            # ViewportChanged positions the overlay through call_after_refresh.
+            # An idle screen does not prove that follow-up layout finished (Windows).
+            app._sync_empty_identity()
             await pilot.pause()
             symbol = app.query_one(EmptyStateIdentity)
             svg = app.export_screenshot(title="Neuro Code visual baseline", simplify=True)
