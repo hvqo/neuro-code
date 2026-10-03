@@ -156,3 +156,10 @@
 私有命名空间扩展 `_neuro-code/session/artifacts` 已实现,可有界地列出/读取与会话关联的本地脱敏工具输出
 artifact.它不会作为标准 ACP capability 宣告;其他有界私有扩展由各自 owner ADR 说明,超出已接受扩展
 边界的方法仍不支持.
+
+### 闭合代码围栏渲染复用
+
+Assistant 回复保留完整 Markdown 解析。消息私有的有界 LRU 仅复用显式闭合顶层围栏，
+且 syntax/theme/render key 必须一致。Open 与无法证明安全的嵌套围栏照常渲染。
+宽度、样式、主题变化安全 miss；disposal 释放 entries。Runtime、正文 cadence、arrival
+motion 和滚动行为不变。参见 [ADR 0192](adr/0192-message-local-closed-fence-render-cache.md)。

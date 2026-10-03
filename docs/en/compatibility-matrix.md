@@ -159,3 +159,11 @@ implemented for bounded, session-associated list/read access to redacted local
 tool-output artifacts. It is not advertised as a standard ACP capability;
 other bounded private extensions are documented by their owning ADRs, while
 methods outside the accepted extension boundaries remain unsupported.
+
+### Closed fenced-code render reuse
+
+Assistant replies retain full Markdown parsing. A message-local bounded LRU reuses
+only explicitly closed top-level fence Segments with identical syntax/theme/render
+keys. Open and unproven nested fences render normally. Width/style/theme changes
+miss safely; disposal releases entries. Runtime, body cadence, arrival motion and
+scroll behavior are unchanged. See [ADR 0192](adr/0192-message-local-closed-fence-render-cache.md).
