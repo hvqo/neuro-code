@@ -18,6 +18,7 @@ from neuro_code.interfaces.tui.widgets import PromptInput
 from neuro_code.shared.ui_theme import UiTheme
 from tests.test_tui_visual_snapshots import canonicalize_svg
 from tests.visual.empty_identity.exploration import ASSETS, VARIANTS, IdentityExplorationApp
+from tests.visual.readiness import wait_for_screenshot_readiness
 from tests.visual.showcases import make_app
 
 VIEWPORTS = ((120, 40), (100, 32), (80, 24))
@@ -29,8 +30,7 @@ def fixed_clock(app: NeuroCodeApp) -> None:
 
 
 async def settle(pilot: Pilot[NeuroCodeApp]) -> None:
-    await pilot.pause()
-    await pilot.pause()
+    await wait_for_screenshot_readiness(pilot.app)
 
 
 @pytest.mark.parametrize("size", ["large", "medium", "small"])
