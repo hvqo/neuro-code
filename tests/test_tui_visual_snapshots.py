@@ -66,7 +66,12 @@ async def capture_snapshot(
         )
 
     def fixed_clock(instance: NeuroCodeApp) -> None:
-        instance.query_one("#clock", Static).update("13:37")
+        # Header refresh callbacks may still be queued while run_test tears down
+        # the base screen. Match the production clock updater's teardown-safe
+        # query so a late callback cannot turn cleanup into a snapshot failure.
+        clock = instance._main_screen_query_optional("#clock", Static)
+        if clock is not None:
+            clock.update("13:37")
 
     with patch.object(NeuroCodeApp, "_update_clock", fixed_clock):
         async with app.run_test(size=viewport):
