@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from neuro_code.infrastructure.sandbox.windows_conpty import WindowsPseudoConsoleSession
+from tests.terminal_assertions import terminal_mode_signature
 
 pytestmark = pytest.mark.terminal
 
@@ -204,7 +205,9 @@ def test_production_cli_ctrl_q_restores_the_native_terminal() -> None:
         rendered = bytes(output)
         assert quit_sent, rendered.decode("utf-8", errors="replace")
         assert exit_code == 0, rendered.decode("utf-8", errors="replace")
-        assert terminal_after == terminal_before
+        assert terminal_mode_signature(terminal_after, termios) == terminal_mode_signature(
+            terminal_before, termios
+        )
         for enabled, disabled in (
             (b"\x1b[?1049h", b"\x1b[?1049l"),
             (b"\x1b[?25l", b"\x1b[?25h"),
