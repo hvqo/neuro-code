@@ -558,6 +558,7 @@ def _agent_preference_defaults(
     return AgentPreferences(
         enter_behavior="send",
         prompt_soft_wrap=True,
+        text_arrival_animation=True,
         notify_completed=False,
         notify_failed=False,
         wake_max_per_session=wake_limits.max_wakes_per_session,

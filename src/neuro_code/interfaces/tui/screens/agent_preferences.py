@@ -33,7 +33,7 @@ from neuro_code.interfaces.tui.text import ui_text
 from neuro_code.shared.ui_language import UiLanguage
 
 PREFERENCE_GROUPS: dict[str, tuple[str, ...]] = {
-    "input": ("enter_behavior", "prompt_soft_wrap"),
+    "input": ("enter_behavior", "prompt_soft_wrap", "text_arrival_animation"),
     "context": ("compaction_recent_items", "compaction_summary_tokens"),
     "notifications": ("notify_completed", "notify_failed"),
     "wake-limits": ("wake_max_per_session", "wake_cooldown_seconds"),
@@ -49,6 +49,7 @@ PREFERENCE_GROUPS: dict[str, tuple[str, ...]] = {
 CHOICES: dict[str, tuple[str, ...]] = {
     "enter_behavior": ("send", "newline"),
     "prompt_soft_wrap": ("enabled", "disabled"),
+    "text_arrival_animation": ("enabled", "disabled"),
     "notify_completed": ("enabled", "disabled"),
     "notify_failed": ("enabled", "disabled"),
     "execution_profile": ("normal", "deep"),
@@ -69,6 +70,7 @@ BOOLEAN_FIELDS = frozenset(
         "failover",
         "lsp_enabled",
         "prompt_soft_wrap",
+        "text_arrival_animation",
         "notify_completed",
         "notify_failed",
         "show_tool_intent",
@@ -194,7 +196,12 @@ class AgentPreferencesScreen(ModalScreen[AgentPreferencesScreenResult | None]):
         return self.web_capabilities.search_providers
 
     def _effective(self) -> AgentPreferences:
-        return self.resolution.effective(scope=self._scope_value)
+        effective = self.resolution.effective(scope=self._scope_value)
+        return (
+            replace(effective, text_arrival_animation=True)
+            if effective.text_arrival_animation is None
+            else effective
+        )
 
     def _target(self) -> AgentPreferences:
         return self.resolution.project if self._scope_value == "project" else self.resolution.user

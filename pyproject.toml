@@ -26,6 +26,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "mcp>=1.28.1,<2",
   "pydantic>=2.10,<3",
+  "regex>=2024.11.6,<2027",
   "textual>=1.0,<2",
   "websockets>=13,<16",
 ]
@@ -42,6 +43,7 @@ dev = [
   "ruff>=0.9",
   "textual>=1.0,<2",
   "types-Pygments>=2.19",
+  "types-regex>=2026.9.10.20260911",
 ]
 
 [project.scripts]

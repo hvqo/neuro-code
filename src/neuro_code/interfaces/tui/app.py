@@ -135,10 +135,12 @@ from neuro_code.interfaces.tui.theme import (
     theme_style,
 )
 from neuro_code.interfaces.tui.widgets import (
+    AssistantMessage,
     AttachedTerminalPanel,
     ConversationMessage,
     PromptInput,
     TranscriptScroll,
+    WorkloadStatus,
 )
 from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_language import UiLanguage
@@ -765,6 +767,7 @@ class NeuroCodeApp(
             defaults=AgentPreferences(
                 enter_behavior="send",
                 prompt_soft_wrap=True,
+                text_arrival_animation=True,
                 execution_profile="normal",
                 max_steps=24,
                 failover=True,
@@ -952,7 +955,7 @@ class NeuroCodeApp(
             yield AttachedTerminalPanel(id="attached-terminal-panel")
             with Vertical(id="composer"):
                 yield Horizontal(id="attachment-tray")
-                yield Static(id="turn-activity")
+                yield WorkloadStatus(id="turn-activity")
                 with Vertical(id="prompt-surface"), Horizontal(id="prompt-row"):
                     yield PromptInput(
                         placeholder=ui_text(self._language, "prompt.placeholder"),
@@ -993,6 +996,9 @@ class NeuroCodeApp(
         prompt.focus()
 
     def on_resize(self, event: events.Resize) -> None:
+        pending = getattr(self, "_pending_assistant", None)
+        if isinstance(pending, AssistantMessage):
+            pending.invalidate_stream_view()
         if self.screen_stack:
             self.screen_stack[0].set_class(
                 event.size.width < 80 or event.size.height < 28,
@@ -1008,6 +1014,9 @@ class NeuroCodeApp(
         symbol = self._main_screen_query_optional("#empty-state-identity", EmptyStateIdentity)
         if symbol is not None:
             symbol.cancel_animation()
+        pending = getattr(self, "_pending_assistant", None)
+        if isinstance(pending, AssistantMessage):
+            pending.invalidate_stream_view()
 
     def on_mount(self) -> None:
         self.console.push_theme(markdown_theme(self))

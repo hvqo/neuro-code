@@ -6,8 +6,10 @@ TUI 界面拥有的 Textual 组件.
 from __future__ import annotations
 
 import re
+from asyncio import TimerHandle, get_running_loop
 from collections.abc import Callable
 from dataclasses import dataclass
+from time import monotonic
 from typing import ClassVar, Literal
 
 from markdown_it.token import Token
@@ -22,8 +24,11 @@ from textual import events
 from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical, VerticalScroll
+from textual.geometry import Region, Size
 from textual.message import Message as TextualMessage
+from textual.strip import Strip
 from textual.timer import Timer
+from textual.visual import SupportsVisual, visualize
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -37,8 +42,19 @@ from neuro_code.interfaces.tui.terminal_keyboard import (
     TerminalInputNormalizer,
     TerminalKeyboardCapability,
 )
+from neuro_code.interfaces.tui.text_arrival import (
+    ARRIVAL_META,
+    FRAME_SECONDS,
+    GLYPH_LIMIT,
+    SOURCE_WINDOW,
+    ArrivalTimeline,
+    ink_style,
+    paragraph_sources,
+    tag_paragraph,
+)
 from neuro_code.interfaces.tui.theme import (
     ACCENT_CODE,
+    ASSISTANT_TEXT_STYLE,
     TEXT_DISABLED,
     TEXT_PLACEHOLDER,
     TEXT_PRIMARY,
@@ -46,6 +62,26 @@ from neuro_code.interfaces.tui.theme import (
     TOOL_COMPLETE_STYLE,
     theme_style,
 )
+
+# Content presentation cadence is independent of Measured Ink's 20fps clock.
+# Fixed production budget; animation-off uses the same commit clock.
+VIEW_COMMIT_SECONDS = 1 / 40
+
+
+class WorkloadStatus(Static):
+    """Repaint the existing fixed-height status slot without transcript reflow.
+
+    Its one-row geometry remains TCSS-owned. Show/hide, resizing and stylesheet
+    changes still use Textual's normal layout invalidation; content updates only
+    invalidate the visual, with the same rendering as Static.update.
+
+    状态文字只重绘既有单行槽位; 显隐、尺寸和样式变化仍由 Textual 处理布局.
+    """
+
+    def update(self, content: RenderableType | SupportsVisual = "") -> None:
+        self._content = content
+        self._visual = visualize(self, content)
+        self.refresh()
 
 
 class MenuOptionButton(Button):
@@ -128,6 +164,8 @@ class _ReadingParagraph(Paragraph):
     """Add one semantic block gap, never wrapped-line or nested-list spacing."""
 
     extra_gap: bool = False
+    source: tuple[int, str] | None = None
+    source_floor: int = 0
 
     @classmethod
     def create(cls, markdown: Markdown, token: Token) -> _ReadingParagraph:
@@ -135,12 +173,28 @@ class _ReadingParagraph(Paragraph):
         element.extra_gap = isinstance(markdown, AssistantMarkdown) and markdown.has_paragraph_gap(
             token
         )
+        if isinstance(markdown, AssistantMarkdown):
+            element.source = markdown._arrival_sources.get(id(token))
+            element.source_floor = markdown._arrival_floor
         return element
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RichRenderResult:
         if self.extra_gap:
             yield Segment.line()
-        yield from super().__rich_console__(console, options)
+        text = self.text.copy() if self.source is not None else self.text
+        text.justify = self.justify
+        tag_paragraph(text, self.source, self.source_floor)
+        yield text
+
+
+class _MarkdownBody:
+    """Render the existing parser once, without recursing through its cache."""
+
+    def __init__(self, markdown: AssistantMarkdown) -> None:
+        self.markdown = markdown
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RichRenderResult:
+        yield from super(AssistantMarkdown, self.markdown).__rich_console__(console, options)
 
 
 class AssistantMarkdown(Markdown):
@@ -185,6 +239,57 @@ class AssistantMarkdown(Markdown):
                 gaps.add(id(token))
             previous = token
         self._paragraph_gaps = frozenset(gaps)
+        self._arrival_sources: dict[int, tuple[int, str]] = {}
+        self._arrival_floor = 0
+        self._view_cached = False
+        self._view_key: tuple[object, ...] | None = None
+        self.cached_lines: list[list[Segment]] = []
+        self.cached_sources: tuple[tuple[int, int], ...] = ()
+
+    def cache_stream_view(self, *, animate: bool) -> None:
+        self._view_cached = True
+        self._arrival_floor = max(0, len(self.markup) - SOURCE_WINDOW)
+        self._arrival_sources = paragraph_sources(self.markup, self.parsed) if animate else {}
+
+    def invalidate_view(self) -> None:
+        self._view_key = None
+        self.cached_lines = []
+        self.cached_sources = ()
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RichRenderResult:
+        if not self._view_cached:
+            yield from super().__rich_console__(console, options)
+            return
+        # Content/revision is immutable per renderable. One cache entry, never a
+        # history of replies. Width, compact policy and resolved theme/syntax
+        # styles determine line layout and colors; motion age is NOT a key.
+        key = (
+            options.max_width,
+            bool(self._compact and self._compact()),
+            console.color_system,
+            self.style,
+            self.code_theme,
+            tuple(console.get_style(name, default="none") for name in MARKDOWN_STYLE_KEYS),
+        )
+        if self._view_key != key:
+            self.cached_lines = console.render_lines(
+                _MarkdownBody(self), options.update(height=None), pad=False
+            )
+            self.cached_sources = tuple(
+                sorted(
+                    {
+                        tuple(segment.style.meta[ARRIVAL_META])
+                        for line in self.cached_lines
+                        for segment in line
+                        if segment.style and ARRIVAL_META in segment.style.meta
+                    },
+                    reverse=True,
+                )
+            )
+            self._view_key = key
+        for line in self.cached_lines:
+            yield from line
+            yield Segment.line()
 
     def has_paragraph_gap(self, token: Token) -> bool:
         """Resolve current shell policy at render time; no retained spacers."""
@@ -192,6 +297,27 @@ class AssistantMarkdown(Markdown):
 
     def __str__(self) -> str:
         return self.markup
+
+
+MARKDOWN_STYLE_KEYS = (
+    "markdown.paragraph",
+    "markdown.h1",
+    "markdown.h2",
+    "markdown.h3",
+    "markdown.h4",
+    "markdown.h5",
+    "markdown.h6",
+    "markdown.code",
+    "markdown.code_block",
+    "markdown.link",
+    "markdown.link_url",
+    "markdown.strong",
+    "markdown.em",
+    "markdown.block_quote",
+    "markdown.item",
+    "markdown.bullet",
+    "markdown.hr",
+)
 
 
 class AttachedTerminalPanel(Vertical):
@@ -274,6 +400,8 @@ class TranscriptScroll(VerticalScroll):
         """Notify presentation overlays after conversation space changes."""
 
     def on_resize(self, event: events.Resize) -> None:
+        if self._stream_follow_y is not None:
+            self.follow_stream_growth()
         self.post_message(self.ViewportChanged())
 
     SCROLLBAR_HIDE_DELAY_SECONDS = 0.8
@@ -291,6 +419,11 @@ class TranscriptScroll(VerticalScroll):
     ) -> None:
         self._scrollbar_hide_timer: Timer | None = None
         self._scrollbar_visible = False
+        self._stream_follow_paused = False
+        self._stream_follow_pending = False
+        self._stream_follow_anchor = 0.0
+        self._stream_follow_y: float | None = None
+        self._stream_follow_generation = 0
         super().__init__(
             *children,
             name=name,
@@ -303,6 +436,7 @@ class TranscriptScroll(VerticalScroll):
         )
 
     def on_unmount(self) -> None:
+        self.cancel_stream_follow()
         timer = self._scrollbar_hide_timer
         self._scrollbar_hide_timer = None
         if timer is not None:
@@ -310,8 +444,58 @@ class TranscriptScroll(VerticalScroll):
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
+        if new_value != old_value and self.is_vertical_scroll_end and new_value >= old_value:
+            self._stream_follow_paused = False
+        elif new_value < old_value and not self.is_vertical_scroll_end:
+            self.pause_stream_follow()
         if old_value != new_value:
             self._show_scrollbar_temporarily()
+
+    def watch_virtual_size(self, old_value: Size, new_value: Size) -> None:
+        if old_value != new_value and self._stream_follow_y is not None:
+            self.follow_stream_growth()
+
+    def cancel_stream_follow(self) -> None:
+        self._stream_follow_generation += 1
+        self._stream_follow_pending = False
+        self._stream_follow_y = None
+        self._stream_follow_paused = False
+
+    def pause_stream_follow(self) -> None:
+        self.cancel_stream_follow()
+        self._stream_follow_paused = True
+
+    def follow_stream_growth(self) -> None:
+        """One post-layout follow, preserving intent across consecutive commits.
+
+        An unfinished layout can temporarily make an end-following viewport look
+        off-end. That is not user scroll intent. A real upward scroll cancels
+        the pending follow; ordinary history browsing remains untouched.
+        """
+        if (
+            self._stream_follow_paused
+            or self.is_vertical_scrollbar_grabbed
+            or self.scroll_target_y < self.scroll_y
+            or self._stream_follow_pending
+            or (not self.is_vertical_scroll_end and self.scroll_y != self._stream_follow_y)
+        ):
+            return
+        self._stream_follow_pending = True
+        self._stream_follow_anchor = self.scroll_y
+        self._stream_follow_y = self.scroll_y
+        generation = self._stream_follow_generation
+        self.call_after_refresh(lambda: self._finish_stream_follow(generation))
+
+    def _finish_stream_follow(self, generation: int) -> None:
+        if generation != self._stream_follow_generation or not self._stream_follow_pending:
+            return
+        self._stream_follow_pending = False
+        if not self.is_mounted:
+            return
+        if self.scroll_y < self._stream_follow_anchor and not self.is_vertical_scroll_end:
+            return
+        self.scroll_end(animate=False, immediate=True)
+        self._stream_follow_y = self.scroll_y
 
     def _refresh_scrollbars(self) -> None:
         super()._refresh_scrollbars()
@@ -344,6 +528,7 @@ class TranscriptScroll(VerticalScroll):
             self._vertical_scrollbar.display = False
 
     def action_scroll_up(self) -> None:
+        self.pause_stream_follow()
         self._show_scrollbar_temporarily()
         super().action_scroll_up()
 
@@ -352,6 +537,7 @@ class TranscriptScroll(VerticalScroll):
         super().action_scroll_down()
 
     def action_page_up(self) -> None:
+        self.pause_stream_follow()
         self._show_scrollbar_temporarily()
         super().action_page_up()
 
@@ -409,9 +595,190 @@ class AssistantMessage(ConversationMessage):
         super().__init__("assistant", rendered, pending=pending)
         self.content = content
         self.tooltip = copy_hint
+        self._arrival = ArrivalTimeline()
+        self._arrival_timer: Timer | None = None
+        self._stream_view_timer: TimerHandle | None = None
+        self._stream_generation = 0
+        self._stream_renderer: Callable[[str], AssistantMarkdown] | None = None
+        self._stream_dirty = False
+        self._stream_commit_at = -1.0
+        self._arrival_enabled = False
+        self._arrival_rows: set[int] = set()
+        self._arrival_view_width: int | None = None
 
     def set_content(self, content: str) -> None:
         self.content = content
+
+    def _motion_allowed(self) -> bool:
+        return (
+            not self.app.is_headless
+            and not self.app.no_color
+            and self.app.console.color_system in {"truecolor", "256"}
+        )
+
+    def stream_content(
+        self, content: str, renderer: Callable[[str], AssistantMarkdown], *, animate: bool
+    ) -> None:
+        now = monotonic()
+        previous = self.content
+        appended = content.startswith(previous)
+        enabled = animate and self._motion_allowed() and self.screen is self.app.screen
+        if not appended or enabled != self._arrival_enabled:
+            self.stop_arrival(flush=False)
+        self.content = content  # Canonical source is always immediate and whole.
+        self._stream_renderer = renderer
+        self._arrival_enabled = enabled
+        if enabled:
+            self._arrival.receive(len(previous) if appended else 0, len(content), now)
+        self._stream_dirty = True
+        if self._stream_commit_at < 0 or now - self._stream_commit_at >= VIEW_COMMIT_SECONDS:
+            self._cancel_view_timer()
+            self._commit_stream_view(now)
+        elif self._stream_view_timer is None:
+            generation = self._stream_generation
+            self._stream_view_timer = self._schedule_stream_commit(
+                max(0, self._stream_commit_at + VIEW_COMMIT_SECONDS - now),
+                generation,
+            )
+        if self._arrival_timer is None and self._arrival.arrivals:
+            self._arrival_timer = self.set_interval(
+                FRAME_SECONDS, self._arrival_tick, name="measured-ink"
+            )
+
+    def _schedule_stream_commit(self, delay: float, generation: int) -> TimerHandle:
+        # Textual's one-shot Timer defaults to skip=True and may discard its
+        # only callback when a short deadline is already overdue. A view commit
+        # must be delivered even under coarse clocks or event-loop pressure.
+        # Queue into this widget's message pump; never parse in a timer callback.
+        return get_running_loop().call_later(
+            delay, lambda: self.call_next(self._commit_pending_view, generation)
+        )
+
+    def _cancel_view_timer(self) -> None:
+        self._stream_generation += 1
+        timer, self._stream_view_timer = self._stream_view_timer, None
+        if timer is not None:
+            timer.cancel()
+
+    def _commit_pending_view(self, generation: int) -> None:
+        if generation != self._stream_generation:
+            return
+        self._stream_view_timer = None
+        if not self.is_mounted:
+            self.stop_arrival(flush=False)
+            return
+        if self._stream_dirty:
+            self._commit_stream_view(monotonic())
+
+    def _commit_stream_view(self, now: float) -> None:
+        if self._stream_renderer is None:
+            return
+        markdown = self._stream_renderer(self.content)
+        canonical_body = self.app.console.get_style(theme_style(self, ASSISTANT_TEXT_STYLE))
+        markdown.cache_stream_view(
+            animate=self._arrival_enabled
+            and self.app.console.get_style(markdown.style) == canonical_body
+        )
+        if isinstance(self.parent, TranscriptScroll):
+            self.parent.follow_stream_growth()
+        super().update(markdown)
+        self._stream_dirty = False
+        self._stream_commit_at = now
+        self._arrival_rows.clear()
+        # Preserve the existing transcript follow policy, including delayed view
+        # commits. Never force a user who scrolled up back to the bottom.
+        if (
+            isinstance(self.parent, VerticalScroll)
+            and not isinstance(self.parent, TranscriptScroll)
+            and self.parent.is_vertical_scroll_end
+        ):
+            self.parent.scroll_end(animate=False)
+
+    def _arrival_tick(self) -> None:
+        if not self.is_mounted or not self.display or self.screen is not self.app.screen:
+            self.stop_arrival()
+            return
+        now = monotonic()
+        self._arrival.prune(now)
+        for row in self._arrival_rows:
+            self.refresh(Region(0, row, self.size.width, 1))
+        if not self._arrival.arrivals:
+            self._stop_motion()
+
+    def _stop_motion(self) -> None:
+        timer, self._arrival_timer = self._arrival_timer, None
+        if timer is not None:
+            timer.stop()
+        self._arrival.clear()
+        for row in self._arrival_rows:
+            self.refresh(Region(0, row, self.size.width, 1))
+        self._arrival_rows.clear()
+
+    def stop_arrival(self, *, flush: bool = True) -> None:
+        self._cancel_view_timer()
+        self._stop_motion()
+        if flush and self._stream_dirty:
+            self._commit_stream_view(monotonic())
+        self._stream_dirty = False
+
+    def update(self, content: RenderableType | SupportsVisual = "") -> None:
+        # Existing finalization, theme/syntax changes and restored replies use
+        # this canonical path; they cannot inherit a streaming clock or range.
+        self.stop_arrival(flush=False)
+        self._stream_renderer = None
+        self._stream_commit_at = -1.0
+        super().update(content)
+
+    def on_resize(self, event: events.Resize) -> None:
+        previous, self._arrival_view_width = self._arrival_view_width, event.size.width
+        # Content growth changes height during normal streaming; that is not a
+        # viewport change and must not cancel each newly arrived line.
+        if previous is not None and previous != event.size.width:
+            self.invalidate_stream_view()
+
+    def invalidate_stream_view(self) -> None:
+        self.stop_arrival()
+        if isinstance(self.renderable, AssistantMarkdown):
+            self.renderable.invalidate_view()
+            self.refresh(layout=True)
+
+    def on_hide(self) -> None:
+        self.stop_arrival()
+
+    def on_unmount(self) -> None:
+        self.stop_arrival(flush=False)
+        self._stream_renderer = None
+
+    def render_lines(self, crop: Region) -> list[Strip]:
+        strips = super().render_lines(crop)
+        if not self._arrival_enabled or not self._arrival.arrivals:
+            return strips
+        now = monotonic()
+        markdown = self.renderable
+        if not isinstance(markdown, AssistantMarkdown):
+            return strips
+        sources = [
+            source
+            for source in markdown.cached_sources
+            if self._arrival.age(source, now) is not None
+        ]
+        ranks = {source: rank for rank, source in enumerate(sources)}
+        primary, secondary = theme_style(self, TEXT_PRIMARY), theme_style(self, TEXT_SECONDARY)
+        output: list[Strip] = []
+        for y, strip in enumerate(strips, crop.y):
+            segments: list[Segment] = []
+            for segment in strip:
+                style = segment.style
+                if style and ARRIVAL_META in style.meta:
+                    source = tuple(style.meta[ARRIVAL_META])
+                    age = self._arrival.age(source, now)
+                    if age is not None and source in ranks and ranks[source] < GLYPH_LIMIT:
+                        self._arrival_rows.add(y)
+                        style = ink_style(style, age, ranks[source], primary, secondary)
+                        segment = Segment(segment.text, style, segment.control)
+                segments.append(segment)
+            output.append(Strip(segments, strip.cell_length))
+        return output
 
     async def _on_click(self, event: events.Click) -> None:
         if event.chain < 2 or not self.content:
