@@ -105,6 +105,43 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause(0.05)
                 self.fail(f"theme choice {choice.value} was not applied and persisted")
 
+            async def wait_for_settings_theme_entry() -> Button:
+                stable_state: tuple[object, ...] | None = None
+                stable_passes = 0
+                for _ in range(100):
+                    screen = app.screen
+                    if isinstance(screen, SettingsScreen):
+                        entry = next(iter(screen.query("#settings-category-theme")), None)
+                        hit_test_ready = False
+                        if entry is not None and entry.region.width > 0 and entry.region.height > 0:
+                            center_x = entry.region.x + entry.region.width // 2
+                            center_y = entry.region.y + entry.region.height // 2
+                            if screen.region.contains(center_x, center_y):
+                                hit_test_ready = app.get_widget_at(center_x, center_y)[0] is entry
+                        if (
+                            screen._settings_view_ready
+                            and isinstance(entry, Button)
+                            and entry.is_mounted
+                            and entry.visible
+                            and hit_test_ready
+                        ):
+                            state = (screen, entry, screen.region, entry.region, app.theme)
+                            if state == stable_state:
+                                stable_passes += 1
+                            else:
+                                stable_state = state
+                                stable_passes = 1
+                            if stable_passes >= 2:
+                                return entry
+                        else:
+                            stable_state = None
+                            stable_passes = 0
+                    else:
+                        stable_state = None
+                        stable_passes = 0
+                    await pilot.pause(0.05)
+                self.fail("theme category was not mounted and interactive")
+
             app._write_entry("assistant", '**Result**\n\n```python\nreturn "ok"\n```')
             await pilot.pause()
             prompt = app.query_one("#prompt", PromptInput)
@@ -118,8 +155,8 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             ]:
                 if not isinstance(app.screen, SettingsScreen):
                     await app.action_open_settings()
-                    await pilot.pause()
-                self.assertTrue(await pilot.click("#settings-category-theme"))
+                settings_entry = await wait_for_settings_theme_entry()
+                self.assertTrue(await pilot.click(settings_entry))
                 await pilot.pause()
                 self.assertIsInstance(app.screen, ThemeSettingsScreen)
                 initial_choice = app.screen.selected
@@ -287,12 +324,53 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause(0.05)
                 self.fail("selected theme was not applied and persisted")
 
-            async def wait_for_settings_screen() -> None:
+            async def wait_for_settings_screen() -> Button:
+                stable_state: tuple[object, ...] | None = None
+                stable_passes = 0
                 for _ in range(100):
-                    if isinstance(app.screen, SettingsScreen):
-                        return
+                    screen = app.screen
+                    if isinstance(screen, SettingsScreen):
+                        button = next(iter(screen.query("#settings-category-theme")), None)
+                        hit_test_ready = False
+                        if (
+                            button is not None
+                            and button.region.width > 0
+                            and button.region.height > 0
+                        ):
+                            center_x = button.region.x + button.region.width // 2
+                            center_y = button.region.y + button.region.height // 2
+                            if screen.region.contains(center_x, center_y):
+                                # A restored screen can report mounted/focused before a
+                                # closing modal or screen transition stops covering the
+                                # button. Pilot.click returns False until hit testing
+                                # actually resolves the button at its click point.
+                                hit_test_ready = app.get_widget_at(center_x, center_y)[0] is button
+                        if (
+                            screen._settings_view_ready
+                            and button is not None
+                            and button.is_mounted
+                            and button.visible
+                            and button.region.width > 0
+                            and button.region.height > 0
+                            and app.focused is button
+                            and hit_test_ready
+                        ):
+                            state = (screen, button, screen.region, button.region, app.theme)
+                            if state == stable_state:
+                                stable_passes += 1
+                            else:
+                                stable_state = state
+                                stable_passes = 1
+                            if stable_passes >= 2:
+                                return button
+                        else:
+                            stable_state = None
+                            stable_passes = 0
+                    else:
+                        stable_state = None
+                        stable_passes = 0
                     await pilot.pause(0.05)
-                self.fail("settings screen was not restored after theme selection")
+                self.fail("settings theme entry was not interactive after modal restoration")
 
             async def wait_for_theme_screen(
                 selected: UiTheme, *, require_focus: bool = False
@@ -313,14 +391,33 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause(0.05)
                 self.fail("selected theme button was not mounted and focused")
 
+            async def wait_for_visible_theme(choice: UiTheme) -> None:
+                for _ in range(100):
+                    screen = app.screen
+                    if isinstance(screen, ThemeSettingsScreen):
+                        target = next(iter(screen.query(f"#settings-theme-{choice.value}")), None)
+                        viewport = next(iter(screen.query("#settings-themes")), None)
+                        if (
+                            target is not None
+                            and viewport is not None
+                            and app.focused is target
+                            and app.theme == choice.textual_name
+                            and viewport.region.contains_region(target.region)
+                        ):
+                            return
+                    # Textual schedules focus-driven scrolling after the key event;
+                    # wait for the viewport geometry rather than assuming one
+                    # event-loop turn is enough on every platform.
+                    await pilot.pause(0.05)
+                self.fail(f"focused theme choice {choice.value} did not become visible")
+
             prompt = app.query_one("#prompt", PromptInput)
             prompt.value = "中文草稿\nkeep this"
             prompt.cursor_location = (1, 3)
             await app._settings_category_selected("theme")
             await wait_for_theme_screen(UiTheme.PORCELAIN, require_focus=True)
             await pilot.press("up")
-            await pilot.pause()
-            self.assertEqual(app.theme, UiTheme.ONE_DARK.textual_name)
+            await wait_for_visible_theme(UiTheme.ONE_DARK)
             focused = app.screen.query_one("#settings-theme-one-dark", Button)
             viewport = app.screen.query_one("#settings-themes")
             self.assertTrue(viewport.region.contains_region(focused.region))
@@ -331,15 +428,16 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(preferences.saved_themes, [])
             self.assertEqual(prompt.value, "中文草稿\nkeep this")
             self.assertEqual(prompt.cursor_location, (1, 3))
-            await pilot.click("#settings-category-theme")
+            settings_entry = await wait_for_settings_screen()
+            self.assertTrue(await pilot.click(settings_entry))
             await wait_for_theme_screen(UiTheme.PORCELAIN, require_focus=True)
             app.screen.query_one("#settings-theme-system", Button).focus()
             await pilot.press("enter")
             await wait_for_theme_applied(UiTheme.SYSTEM)
-            await wait_for_settings_screen()
+            settings_entry = await wait_for_settings_screen()
             self.assertEqual(app.theme, UiTheme.SYSTEM.textual_name)
             self.assertEqual(preferences.saved_themes, [UiTheme.SYSTEM])
-            await pilot.click("#settings-category-theme")
+            self.assertTrue(await pilot.click(settings_entry))
             await wait_for_theme_screen(UiTheme.SYSTEM, require_focus=True)
             self.assertEqual(app.focused.id, "settings-theme-system")
 

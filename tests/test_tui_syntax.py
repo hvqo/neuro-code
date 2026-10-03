@@ -182,6 +182,17 @@ async def test_live_preview_cancel_save_preserves_prose_draft_and_geometry(
         cwd=Path("/workspace"),
     )
     async with app.run_test(size=viewport) as pilot:
+
+        async def wait_for_settings_entries() -> None:
+            for _ in range(100):
+                screen = app.screen
+                if isinstance(screen, SettingsScreen):
+                    entry = next(iter(screen.query("#settings-entry-language")), None)
+                    if entry is not None and entry.is_mounted:
+                        return
+                await pilot.pause(0.05)
+            pytest.fail("Settings entries were not mounted after the settings screen refresh")
+
         app._write_entry("user", "Review this.")
         app._write_entry("assistant", "Before `AGENTS.md`.\n\n```python\nreturn 42\n```")
         prompt = app.query_one("#prompt", PromptInput)
@@ -207,7 +218,7 @@ async def test_live_preview_cancel_save_preserves_prose_draft_and_geometry(
             app.screen_stack[0].query_one("#prompt-surface").region
         ] == geometry
         await pilot.press("escape")
-        await pilot.pause()
+        await wait_for_settings_entries()
         assert app._syntax_theme is SyntaxTheme.AUTO
         assert not store.saved_syntax_themes
         assert isinstance(app.screen, SettingsScreen)
@@ -216,7 +227,7 @@ async def test_live_preview_cancel_save_preserves_prose_draft_and_geometry(
         app.screen.query_one("#syntax-choice", Select).value = SyntaxTheme.FRIENDLY.value
         await pilot.pause()
         app.screen.query_one("#syntax-settings-save").press()
-        await pilot.pause()
+        await wait_for_settings_entries()
         assert store.saved_syntax_themes == [SyntaxTheme.FRIENDLY]
         assert isinstance(app.screen, SettingsScreen)
         assert app.screen.syntax_theme is SyntaxTheme.FRIENDLY

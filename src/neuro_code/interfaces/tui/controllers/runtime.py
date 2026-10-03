@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePath
 from time import monotonic
 
 from rich.table import Table
@@ -37,6 +37,12 @@ from neuro_code.interfaces.tui.tool_activity import (
     ToolDisclosureLevel,
 )
 from neuro_code.interfaces.tui.widgets import AssistantMessage, PromptInput
+
+
+def _path_for_display(path: PurePath) -> str:
+    """Render filesystem paths with stable separators across host platforms."""
+
+    return path.as_posix()
 
 
 class RuntimeControllerMixin(TuiAppControllerMixin):
@@ -355,8 +361,8 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
         try:
             relative = self._cwd.resolve().relative_to(Path.home().resolve())
         except (OSError, RuntimeError, ValueError):
-            return str(self._cwd)
-        return "~" if str(relative) == "." else f"~/{relative}"
+            return _path_for_display(self._cwd)
+        return "~" if str(relative) == "." else f"~/{_path_for_display(relative)}"
 
     def _reasoning_effort_summary(self) -> str:
         requested = self._reasoning_effort

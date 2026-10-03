@@ -4041,7 +4041,8 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("MODEL", primary_text)
             self.assertNotIn("EFFORT", primary_text)
             self.assertIn("ctx ~0.0%", secondary_text)
-            self.assertIn(str(Path("/workspace")), secondary_text)
+            self.assertIn("/workspace", secondary_text)
+            self.assertNotIn("\\workspace", secondary_text)
             self.assertNotIn("CWD", secondary_text)
             primary_segments = list(app.console.render(primary.renderable))
             self.assertIn(
@@ -4682,7 +4683,7 @@ class NeuroCodeAppTests(unittest.IsolatedAsyncioTestCase):
                 rendered_text(app, secondary.renderable, width=secondary.region.width),
             )
             self.assertIn(
-                str(Path("/workspace")),
+                "/workspace",
                 rendered_text(app, secondary.renderable, width=secondary.region.width),
             )
 

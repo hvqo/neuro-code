@@ -199,8 +199,9 @@ def test_caches_are_owned_by_messages_and_content_replacement_is_safe():
     first.update(changed)
     assert changed.fence_cache is first.fence_cache
     console = Console()
-    assert console.render_lines(changed, console.options, pad=False) == render(
-        changed.markup, color=console.color_system
+    baseline = AssistantMarkdown(changed.markup)
+    assert console.render_lines(changed, console.options, pad=False) == console.render_lines(
+        baseline, console.options, pad=False
     )
 
 

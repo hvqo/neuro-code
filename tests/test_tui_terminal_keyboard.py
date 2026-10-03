@@ -26,6 +26,7 @@ from neuro_code.interfaces.tui.terminal_keyboard import (
 )
 from neuro_code.interfaces.tui.widgets import PromptInput
 from neuro_code.shared.ui_theme import UiTheme
+from tests.terminal_assertions import terminal_mode_signature
 from tests.visual.showcases import make_app
 
 
@@ -114,7 +115,10 @@ def test_real_driver_negotiates_restores_and_delivers_prompt_input(
         assert output.index(b"\x1b[<u") < output.index(b"\x1b[?1049l")
         assert b"\x1b[?2004h" in output
         assert b"\x1b[?2004l" in output
-        assert termios.tcgetattr(slave) == original_mode
+        restored_mode = termios.tcgetattr(slave)
+        assert terminal_mode_signature(restored_mode, termios) == terminal_mode_signature(
+            original_mode, termios
+        )
     finally:
         if child.poll() is None:
             child.kill()

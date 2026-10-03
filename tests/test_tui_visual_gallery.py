@@ -80,7 +80,7 @@ def test_syntax_gallery_includes_choices_palette_cases_and_prose_comparison(tmp_
         output = render_gallery.render_gallery(
             tmp_path / "syntax.html", syntax_only=True, after_label="V2A"
         )
-    document = output.read_text()
+    document = output.read_text(encoding="utf-8")
     for name in included:
         assert name.replace("__", " · ") in document
     assert "composer-single" not in document

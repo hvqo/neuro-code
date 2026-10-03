@@ -2,19 +2,22 @@ from __future__ import annotations
 
 import os
 import sys
+from asyncio import Future
 from collections import deque
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar, TypeVar
+from typing import ClassVar, Literal, TypeVar, overload
 
 from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.geometry import Size
-from textual.widget import Widget
+from textual.screen import Screen, ScreenResultCallbackType
+from textual.widget import AwaitMount, Widget
 from textual.widgets import Button, Static
 from textual.worker import Worker
 
@@ -165,6 +168,7 @@ def _read_terminal_size() -> Size | None:
 
 
 _WidgetType = TypeVar("_WidgetType", bound=Widget)
+_ScreenResult = TypeVar("_ScreenResult")
 
 
 class NeuroCodeApp(
@@ -939,6 +943,43 @@ class NeuroCodeApp(
         candidate = next(iter(screen_stack[0].query(selector)), None)
         return candidate if isinstance(candidate, expect_type) else None
 
+    @overload
+    def push_screen(
+        self,
+        screen: Screen[_ScreenResult] | str,
+        callback: ScreenResultCallbackType[_ScreenResult] | None = None,
+        wait_for_dismiss: Literal[False] = False,
+    ) -> AwaitMount: ...
+
+    @overload
+    def push_screen(
+        self,
+        screen: Screen[_ScreenResult] | str,
+        callback: ScreenResultCallbackType[_ScreenResult] | None = None,
+        wait_for_dismiss: Literal[True] = True,
+    ) -> Future[_ScreenResult]: ...
+
+    def push_screen(
+        self,
+        screen: Screen[_ScreenResult] | str,
+        callback: ScreenResultCallbackType[_ScreenResult] | None = None,
+        wait_for_dismiss: bool = False,
+    ) -> AwaitMount | Future[_ScreenResult]:
+        result: AwaitMount | Future[_ScreenResult]
+        if wait_for_dismiss:
+            result = super().push_screen(screen, callback, True)
+        else:
+            result = super().push_screen(screen, callback, False)
+        # Hide the brand mark before the modal's first painted frame, including
+        # when its initial EmptyStateIdentity sync is still queued after mount.
+        self._sync_empty_identity()
+        return result
+
+    def pop_screen(self) -> AwaitComplete:
+        result = super().pop_screen()
+        self.call_after_refresh(self._sync_empty_identity)
+        return result
+
     @property
     def runtime_reload_session_id(self) -> str | None:
         """Session that should be rebound if a controlled runtime reload exits."""
@@ -981,6 +1022,7 @@ class NeuroCodeApp(
         symbol = self._main_screen_query_optional("#empty-state-identity", EmptyStateIdentity)
         transcript = self._main_screen_query_optional("#transcript", TranscriptScroll)
         if symbol is not None and transcript is not None:
+            symbol.set_modal_covered(len(self.screen_stack) > 1)
             symbol.arrange(transcript.content_region, (self.size.width, self.size.height))
 
     @on(EmptyStateIdentity.FocusComposer)

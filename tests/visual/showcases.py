@@ -231,11 +231,11 @@ def populate_fixture(app: NeuroCodeApp, fixture: str) -> None:
     raise ValueError(f"unknown visual fixture: {fixture}")
 
 
-def show_fixture_screen(app: NeuroCodeApp, fixture: str, theme: UiTheme) -> None:
+async def show_fixture_screen(app: NeuroCodeApp, fixture: str, theme: UiTheme) -> None:
     """Open one stable modal fixture without invoking its side-effect handlers."""
 
     if fixture == "permission":
-        app.push_screen(
+        await app.push_screen(
             PermissionApprovalScreen(
                 PermissionRequest(
                     call_id="visual-permission-01",
@@ -249,7 +249,7 @@ def show_fixture_screen(app: NeuroCodeApp, fixture: str, theme: UiTheme) -> None
             )
         )
     elif fixture == "settings":
-        app.push_screen(
+        await app.push_screen(
             SettingsScreen(
                 UiLanguage.ENGLISH,
                 language=UiLanguage.ENGLISH,
@@ -258,9 +258,9 @@ def show_fixture_screen(app: NeuroCodeApp, fixture: str, theme: UiTheme) -> None
             )
         )
     elif fixture == "trace":
-        app.push_screen(TraceScreen(app._trace_collector, language=UiLanguage.ENGLISH))
+        await app.push_screen(TraceScreen(app._trace_collector, language=UiLanguage.ENGLISH))
     elif fixture == "syntax-settings":
-        app.push_screen(
+        await app.push_screen(
             SyntaxThemeSettingsScreen(
                 app._syntax_theme,
                 language=UiLanguage.ENGLISH,

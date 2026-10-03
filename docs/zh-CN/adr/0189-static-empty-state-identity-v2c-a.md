@@ -37,7 +37,8 @@ Provider 调用、transcript item 或持久化状态。Activated peak 仅为 gal
 新空绑定显示；用户 / Assistant 正文立即关闭并锁定，包括流式内容和历史恢复。
 Tool / error 活动同样隐藏，避免成为水印；普通 system 提示不关闭。替换 transcript
 时先重置，再根据恢复条目重建锁定状态，因此已有历史 / resume 不误显示。
-覆盖层属于主屏幕，modal 生命周期不会重置该绑定的状态。
+覆盖层属于主屏幕，modal 生命周期不会重置该绑定的状态。可操作的 modal 覆盖会话时，
+隐藏装饰性 Logo；modal 关闭后，仅当对话仍为空时才恢复显示。
 
 本轮不实现动画或 reveal。静态图形避免增加动效源，保持确定性与已批准范围。
 Syntax Theme、Markdown、键盘归一化、Composer 几何和 Runtime 行为保持冻结。

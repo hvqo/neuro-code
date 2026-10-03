@@ -19,6 +19,7 @@ from neuro_code.interfaces.tui.terminal_palette import (
 )
 from neuro_code.interfaces.tui.theme import markdown_theme, textual_theme_for
 from neuro_code.shared.ui_theme import UiTheme
+from tests.terminal_assertions import terminal_mode_signature
 from tests.visual.showcases import make_app, populate_fixture
 
 
@@ -89,7 +90,38 @@ def test_terminal_probe_reads_osc_pair_and_restores_terminal_mode() -> None:
         assert colors == ((238, 238, 238), (26, 26, 26))
         assert b"\x1b]10;?\x1b\\" in requests
         assert b"\x1b]11;?\x1b\\" in requests
-        assert termios.tcgetattr(slave_fd) == original_mode
+        restored_mode = termios.tcgetattr(slave_fd)
+        assert terminal_mode_signature(restored_mode, termios) == terminal_mode_signature(
+            original_mode, termios
+        )
+    finally:
+        os.close(master_fd)
+        os.close(slave_fd)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="PTY palette probing requires POSIX")
+def test_terminal_probe_restores_mode_when_terminal_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pty
+    import termios
+
+    from neuro_code.interfaces.tui import terminal_palette
+
+    master_fd, slave_fd = pty.openpty()
+    original_mode = termios.tcgetattr(slave_fd)
+
+    def fail_query_write(_fd: int, _data: bytes) -> int:
+        raise OSError("simulated terminal write failure")
+
+    monkeypatch.setattr(terminal_palette.os, "write", fail_query_write)
+    try:
+        with pytest.raises(OSError, match="simulated terminal write failure"):
+            _probe_default_colors(slave_fd, slave_fd, timeout_seconds=0.01)
+        restored_mode = termios.tcgetattr(slave_fd)
+        assert terminal_mode_signature(restored_mode, termios) == terminal_mode_signature(
+            original_mode, termios
+        )
     finally:
         os.close(master_fd)
         os.close(slave_fd)
