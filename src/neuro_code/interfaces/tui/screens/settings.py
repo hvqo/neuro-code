@@ -137,6 +137,7 @@ class SettingsScreen(ModalScreen[str | None]):
         self.web_capabilities = web_capabilities
         self._initial_category = initial_category
         self._group = "all"
+        self._settings_view_ready = False
 
     GROUPS: ClassVar[dict[str, tuple[str, ...]]] = {
         "appearance": ("language", "theme", "syntax-theme", "input"),
@@ -418,6 +419,15 @@ class SettingsScreen(ModalScreen[str | None]):
             else "all"
         )
         self.set_class(self.app.size.width < 88, "compact")
+        # Settings entries are nested several containers below the screen.
+        # Textual may deliver Screen.Mount before those descendants have been
+        # added to the DOM, so query them only after the first completed refresh.
+        self.call_after_refresh(self._initialize_settings_view)
+
+    def _initialize_settings_view(self) -> None:
+        if not self.is_mounted:
+            return
+        self._settings_view_ready = True
         self._filter_entries()
         category = self._initial_category
         if category is not None and category in self._entries():
@@ -427,12 +437,12 @@ class SettingsScreen(ModalScreen[str | None]):
 
     def on_resize(self, event: events.Resize) -> None:
         self.set_class(event.size.width < 88, "compact")
-        if self.is_mounted and event.size.width < 88:
+        if self._settings_view_ready and event.size.width < 88:
             self._group = "all"
             self._filter_entries()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id == "settings-search":
+        if self._settings_view_ready and event.input.id == "settings-search":
             self._filter_entries()
 
     def action_search(self) -> None:
@@ -453,6 +463,8 @@ class SettingsScreen(ModalScreen[str | None]):
                     return
 
     def _filter_entries(self) -> None:
+        if not self._settings_view_ready:
+            return
         search = self.query_one("#settings-search", Input).value.casefold().strip()
         count = 0
         for group, categories in self.GROUPS.items():
