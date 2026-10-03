@@ -18,7 +18,7 @@ from neuro_code.interfaces.tui.widgets import PromptInput
 from neuro_code.shared.ui_theme import UiTheme
 from tests.test_tui_visual_snapshots import canonicalize_svg
 from tests.visual.empty_identity.exploration import ASSETS, VARIANTS, IdentityExplorationApp
-from tests.visual.readiness import wait_for_screenshot_readiness
+from tests.visual.readiness import wait_for_shell_geometry_stability
 from tests.visual.showcases import make_app
 
 VIEWPORTS = ((120, 40), (100, 32), (80, 24))
@@ -30,7 +30,7 @@ def fixed_clock(app: NeuroCodeApp) -> None:
 
 
 async def settle(pilot: Pilot[NeuroCodeApp]) -> None:
-    await wait_for_screenshot_readiness(pilot.app)
+    await wait_for_shell_geometry_stability(pilot.app)
 
 
 @pytest.mark.parametrize("size", ["large", "medium", "small"])
@@ -144,6 +144,7 @@ async def test_draft_growth_recenters_without_layout_pressure() -> None:
         before = symbol.region
         prompt = app.query_one("#prompt", PromptInput)
         prompt.text = "\n".join(["中文 draft"] * 12)
+        await pilot.pause()
         await settle(pilot)
         content = app.query_one("#transcript").content_region
         assert symbol.region != before
@@ -151,6 +152,7 @@ async def test_draft_growth_recenters_without_layout_pressure() -> None:
         assert content.contains_region(symbol.region)
         assert app.query_one("#transcript").max_scroll_y == 0
         prompt.text = ""
+        await pilot.pause()
         await settle(pilot)
         assert symbol.region == before
 
