@@ -4,23 +4,58 @@ from __future__ import annotations
 
 import asyncio
 
+from textual.widget import Widget
+
 from neuro_code.interfaces.tui.app import NeuroCodeApp
+from neuro_code.interfaces.tui.empty_state import EmptyStateIdentity, logo_layout
+from neuro_code.interfaces.tui.widgets import PromptInput, TranscriptScroll
 
 
 async def wait_for_screenshot_readiness(app: NeuroCodeApp) -> None:
-    """Await layout, overlay synchronization, and the resulting refresh."""
-
+    """Await stable shell geometry and its synchronized empty-state overlay."""
     loop = asyncio.get_running_loop()
-    ready: asyncio.Future[None] = loop.create_future()
+    previous_geometry: tuple[object, ...] | None = None
+    for _ in range(12):
+        ready: asyncio.Future[None] = loop.create_future()
 
-    def synchronize_overlay() -> None:
-        app._sync_empty_identity()
+        def synchronize_overlay(ready: asyncio.Future[None] = ready) -> None:
+            app._sync_empty_identity()
 
-        def mark_ready() -> None:
-            if not ready.done():
-                ready.set_result(None)
+            def mark_ready(ready: asyncio.Future[None] = ready) -> None:
+                if not ready.done():
+                    ready.set_result(None)
 
-        app.call_after_refresh(mark_ready)
+            app.call_after_refresh(mark_ready)
 
-    app.call_after_refresh(synchronize_overlay)
-    await ready
+        app.call_after_refresh(synchronize_overlay)
+        await ready
+
+        transcript = app._main_screen_query_one("#transcript", TranscriptScroll)
+        prompt = app._main_screen_query_one("#prompt", PromptInput)
+        composer = app._main_screen_query_one("#composer", Widget)
+        identity = app._main_screen_query_optional("#empty-state-identity", EmptyStateIdentity)
+        placement = logo_layout(transcript.content_region, (app.size.width, app.size.height))
+        identity_aligned = (
+            identity is None
+            or not identity.display
+            or (placement is not None and identity.region == placement[1])
+        )
+        geometry = (
+            app.size,
+            transcript.region,
+            transcript.content_region,
+            transcript.scroll_y,
+            prompt.region,
+            composer.region,
+            None if identity is None or not identity.display else identity.region,
+        )
+        if identity_aligned and geometry == previous_geometry:
+            return
+        previous_geometry = geometry
+
+    raise AssertionError(
+        "TUI screenshot geometry did not settle across refreshes: "
+        f"transcript={transcript.region}, content={transcript.content_region}, "
+        f"prompt={prompt.region}, composer={composer.region}, "
+        f"identity={None if identity is None else identity.region}"
+    )
