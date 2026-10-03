@@ -105,6 +105,43 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause(0.05)
                 self.fail(f"theme choice {choice.value} was not applied and persisted")
 
+            async def wait_for_settings_theme_entry() -> Button:
+                stable_state: tuple[object, ...] | None = None
+                stable_passes = 0
+                for _ in range(100):
+                    screen = app.screen
+                    if isinstance(screen, SettingsScreen):
+                        entry = next(iter(screen.query("#settings-category-theme")), None)
+                        hit_test_ready = False
+                        if entry is not None and entry.region.width > 0 and entry.region.height > 0:
+                            center_x = entry.region.x + entry.region.width // 2
+                            center_y = entry.region.y + entry.region.height // 2
+                            if screen.region.contains(center_x, center_y):
+                                hit_test_ready = app.get_widget_at(center_x, center_y)[0] is entry
+                        if (
+                            screen._settings_view_ready
+                            and isinstance(entry, Button)
+                            and entry.is_mounted
+                            and entry.visible
+                            and hit_test_ready
+                        ):
+                            state = (screen, entry, screen.region, entry.region, app.theme)
+                            if state == stable_state:
+                                stable_passes += 1
+                            else:
+                                stable_state = state
+                                stable_passes = 1
+                            if stable_passes >= 2:
+                                return entry
+                        else:
+                            stable_state = None
+                            stable_passes = 0
+                    else:
+                        stable_state = None
+                        stable_passes = 0
+                    await pilot.pause(0.05)
+                self.fail("theme category was not mounted and interactive")
+
             app._write_entry("assistant", '**Result**\n\n```python\nreturn "ok"\n```')
             await pilot.pause()
             prompt = app.query_one("#prompt", PromptInput)
@@ -118,8 +155,8 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             ]:
                 if not isinstance(app.screen, SettingsScreen):
                     await app.action_open_settings()
-                    await pilot.pause()
-                self.assertTrue(await pilot.click("#settings-category-theme"))
+                settings_entry = await wait_for_settings_theme_entry()
+                self.assertTrue(await pilot.click(settings_entry))
                 await pilot.pause()
                 self.assertIsInstance(app.screen, ThemeSettingsScreen)
                 initial_choice = app.screen.selected
