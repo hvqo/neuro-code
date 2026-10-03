@@ -46,7 +46,9 @@ latches it off, including streaming and restoration. Tool/error activity also hi
 it so it cannot act as a watermark. Ordinary system notices do not consume the gate.
 Transcript replacement resets the gate then reconstructs it from restored entries;
 existing/resumed conversations therefore remain hidden. The overlay belongs to the
-main screen, so modal lifecycle cannot reset that binding's gate.
+main screen, so modal lifecycle cannot reset that binding's gate. While an actionable
+modal covers the conversation, the decorative logo is hidden; it returns after the
+modal closes only if the conversation is still empty.
 
 No animation or reveal is implemented. A static symbol avoids an additional motion
 source, remains deterministic and respects the approved scope. Syntax Theme,

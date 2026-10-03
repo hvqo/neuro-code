@@ -6,6 +6,7 @@ import pytest
 
 from neuro_code.interfaces.tui.widgets import PromptInput
 from neuro_code.shared.ui_theme import UiTheme
+from tests.visual.readiness import wait_for_screenshot_readiness
 from tests.visual.showcases import make_app, populate_fixture, show_fixture_screen
 
 
@@ -150,12 +151,12 @@ async def test_long_content_keeps_shell_height_and_transcript_scrollable(
 @pytest.mark.parametrize("viewport", [(120, 40), (100, 32), (80, 24)])
 async def test_permission_modal_fits_without_resizing_the_shell(viewport: tuple[int, int]) -> None:
     app = make_app(UiTheme.GRAPHITE, fixture="permission")
-    async with app.run_test(size=viewport) as pilot:
+    async with app.run_test(size=viewport):
         shell = app.screen_stack[0]
         composer = shell.query_one("#composer")
         shell_height = composer.region.height
-        show_fixture_screen(app, "permission", UiTheme.GRAPHITE)
-        await pilot.pause()
+        await show_fixture_screen(app, "permission", UiTheme.GRAPHITE)
+        await wait_for_screenshot_readiness(app)
         dialog = app.screen.query_one("#approval-dialog")
 
         assert dialog.region.x >= 0

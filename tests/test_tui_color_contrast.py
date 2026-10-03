@@ -14,6 +14,7 @@ from neuro_code.interfaces.tui.theme import (
     theme_style,
 )
 from neuro_code.shared.ui_theme import UiTheme
+from tests.visual.readiness import wait_for_screenshot_readiness
 from tests.visual.showcases import make_app, populate_fixture, show_fixture_screen
 
 
@@ -142,8 +143,8 @@ async def test_theme_switch_changes_palette_without_moving_widgets(fixture: str)
     app = make_app(UiTheme.GRAPHITE, fixture=fixture)
     async with app.run_test(size=(100, 32)) as pilot:
         populate_fixture(app, fixture)
-        show_fixture_screen(app, fixture, UiTheme.GRAPHITE)
-        await pilot.pause()
+        await show_fixture_screen(app, fixture, UiTheme.GRAPHITE)
+        await wait_for_screenshot_readiness(app)
 
         selectors = (
             (
@@ -176,8 +177,8 @@ async def test_system_settings_selection_uses_reverse_without_a_filled_surface()
     app = make_app(UiTheme.SYSTEM, fixture="settings")
     async with app.run_test(size=(100, 32)) as pilot:
         populate_fixture(app, "settings")
-        show_fixture_screen(app, "settings", UiTheme.SYSTEM)
-        await pilot.pause()
+        await show_fixture_screen(app, "settings", UiTheme.SYSTEM)
+        await wait_for_screenshot_readiness(app)
 
         selected = app.screen.query_one("#settings-navigation Button.active", Button)
         selected.focus()

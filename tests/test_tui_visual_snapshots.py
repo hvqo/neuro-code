@@ -10,6 +10,8 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from neuro_code.interfaces.tui.app import NeuroCodeApp
+from neuro_code.interfaces.tui.empty_state import EmptyStateIdentity
+from neuro_code.interfaces.tui.empty_state_logo import LOGO_ROWS
 from neuro_code.interfaces.tui.terminal_palette import (
     TerminalColorLevel,
     TerminalPalette,
@@ -17,6 +19,7 @@ from neuro_code.interfaces.tui.terminal_palette import (
 from neuro_code.interfaces.tui.widgets import PromptInput
 from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_theme import UiTheme
+from tests.visual.readiness import wait_for_screenshot_readiness
 from tests.visual.showcases import (
     VISUAL_FIXTURES,
     make_app,
@@ -67,16 +70,17 @@ async def capture_snapshot(
         instance.query_one("#clock", Static).update("13:37")
 
     with patch.object(NeuroCodeApp, "_update_clock", fixed_clock):
-        async with app.run_test(size=viewport) as pilot:
+        async with app.run_test(size=viewport):
             populate_fixture(app, fixture)
             if fixture in {"single-line-composer", "multiline-composer", "long-composer"}:
                 app.query_one("#prompt", PromptInput).focus()
             elif fixture == "idle-composer":
                 app.query_one("#prompt", PromptInput).blur()
-            show_fixture_screen(app, fixture, theme)
-            # Let Textual complete a layout pass. No timers, provider calls, or
-            # animation-driven states are part of these fixtures.
-            await pilot.pause()
+            await show_fixture_screen(app, fixture, theme)
+            # Wait for an explicit post-layout callback, then a second refresh
+            # after synchronizing the non-layout logo overlay. This is a
+            # screenshot readiness barrier, not a timing retry.
+            await wait_for_screenshot_readiness(app)
             if (
                 fixture == "mixed-language-long-answer"
                 or fixture.startswith("markdown-")
@@ -87,8 +91,54 @@ async def capture_snapshot(
                 app.query_one("#transcript", VerticalScroll).scroll_home(
                     animate=False, immediate=True
                 )
-                await pilot.pause()
+                await wait_for_screenshot_readiness(app)
             return app.export_screenshot(title=_TITLE, simplify=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", THEMES)
+@pytest.mark.parametrize("viewport", VIEWPORTS)
+async def test_permission_modal_hides_empty_logo_then_restores_it(
+    theme: UiTheme, viewport: tuple[int, int]
+) -> None:
+    """Actionable modal screens hide the logo, then restore it after dismissal."""
+
+    app = make_app(theme, fixture="permission")
+    async with app.run_test(size=viewport):
+        # Queue the initial post-layout sync, then push before its callback is
+        # dispatched. Both syncs must observe the modal stack and keep the logo
+        # hidden until the modal is dismissed.
+        app.call_after_refresh(app._sync_empty_identity)
+        await show_fixture_screen(app, "permission", theme)
+        await wait_for_screenshot_readiness(app)
+
+        identity = app._main_screen_query_optional("#empty-state-identity", EmptyStateIdentity)
+        assert identity is not None
+        assert len(app.screen_stack) == 2
+        assert app.screen_stack[-1] is app.screen
+        assert not identity.display
+        original_size = identity.asset_size
+        assert original_size is not None
+        assert app.screen.query_one("#approval-dialog").is_mounted
+        if viewport == (120, 40):
+            screenshot = app.export_screenshot(title=_TITLE, simplify=True)
+            mark_glyphs = {
+                glyph
+                for row in LOGO_ROWS["large"]
+                for glyph in row
+                if "\u2800" <= glyph <= "\u28ff"
+            }
+            assert not any(glyph in screenshot for glyph in mark_glyphs)
+
+        await app.pop_screen()
+        await wait_for_screenshot_readiness(app)
+
+        assert len(app.screen_stack) == 1
+        assert app.screen_stack[-1] is app.screen
+        assert identity.display
+        assert identity.asset_size == original_size
+        assert identity.region.width > 0
+        assert identity.region.height > 0
 
 
 def canonicalize_svg(svg: str) -> str:

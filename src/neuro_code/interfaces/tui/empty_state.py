@@ -76,6 +76,7 @@ class EmptyStateIdentity(Static):
     def __init__(self) -> None:
         super().__init__(id="empty-state-identity", markup=False)
         self.content_seen = False
+        self.modal_covered = False
         self.asset_size: str | None = None
         self.rows: Mapping[str, tuple[str, ...]] | None = LOGO_ROWS
         self._frame_index: int | None = None
@@ -219,6 +220,15 @@ class EmptyStateIdentity(Static):
         self.content_seen = False
         self.display = False
 
+    def set_modal_covered(self, covered: bool) -> None:
+        """Hide the decorative identity while an actionable screen is active."""
+
+        if self.modal_covered == covered:
+            return
+        self.modal_covered = covered
+        if covered:
+            self.cancel_animation()
+
     def arrange(self, viewport: Region, terminal: tuple[int, int]) -> None:
         placement = logo_layout(viewport, terminal)
         size = placement[0] if placement is not None else None
@@ -226,7 +236,12 @@ class EmptyStateIdentity(Static):
             self.cancel_animation()
         previous_size = self.asset_size
         self.asset_size = size
-        self.display = not self.content_seen and self.rows is not None and placement is not None
+        self.display = (
+            not self.content_seen
+            and not self.modal_covered
+            and self.rows is not None
+            and placement is not None
+        )
         if not self.display or placement is None or self.rows is None:
             self.cancel_animation()
             return
