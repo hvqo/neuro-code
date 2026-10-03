@@ -292,13 +292,29 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     screen = app.screen
                     if isinstance(screen, SettingsScreen):
                         button = next(iter(screen.query("#settings-category-theme")), None)
+                        hit_test_ready = False
+                        if (
+                            button is not None
+                            and button.region.width > 0
+                            and button.region.height > 0
+                        ):
+                            center_x = button.region.x + button.region.width // 2
+                            center_y = button.region.y + button.region.height // 2
+                            if screen.region.contains(center_x, center_y):
+                                # A restored screen can report mounted/focused before a
+                                # closing modal or screen transition stops covering the
+                                # button. Pilot.click returns False until hit testing
+                                # actually resolves the button at its click point.
+                                hit_test_ready = app.get_widget_at(center_x, center_y)[0] is button
                         if (
                             screen._settings_view_ready
                             and button is not None
                             and button.is_mounted
+                            and button.visible
                             and button.region.width > 0
                             and button.region.height > 0
                             and app.focused is button
+                            and hit_test_ready
                         ):
                             return
                     await pilot.pause(0.05)
