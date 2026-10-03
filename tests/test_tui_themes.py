@@ -293,10 +293,12 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     if isinstance(screen, SettingsScreen):
                         button = next(iter(screen.query("#settings-category-theme")), None)
                         if (
-                            button is not None
+                            screen._settings_view_ready
+                            and button is not None
                             and button.is_mounted
                             and button.region.width > 0
                             and button.region.height > 0
+                            and app.focused is button
                         ):
                             return
                     await pilot.pause(0.05)
