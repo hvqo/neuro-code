@@ -32,6 +32,11 @@ from textual.visual import SupportsVisual, visualize
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static, TextArea
 
+from neuro_code.interfaces.tui.fence_cache import (
+    FenceRenderCache,
+    closed_fences,
+    fence_render_key,
+)
 from neuro_code.interfaces.tui.state import (
     _PROMPT_MARK,
     _PROMPT_MAX_VISIBLE_LINES,
@@ -157,7 +162,35 @@ class _FencedCodeBlock(CodeBlock):
     @classmethod
     def create(cls, markdown: Markdown, token: Token) -> _FencedCodeBlock:
         language = re.split(r"[\s,]+", (token.info or "").strip(), maxsplit=1)[0]
-        return cls(language.lower() or "text", markdown.code_theme)
+        element = cls(language.lower() or "text", markdown.code_theme)
+        element.fence_cache = None
+        if isinstance(markdown, AssistantMarkdown) and id(token) in markdown._closed_fences:
+            element.fence_cache = markdown.fence_cache
+        return element
+
+    fence_cache: FenceRenderCache | None = None
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RichRenderResult:
+        cache = self.fence_cache
+        key = (
+            fence_render_key(str(self.text), self.lexer_name, self.theme, console, options)
+            if cache is not None
+            else None
+        )
+        if cache is None or key is None:
+            yield from super().__rich_console__(console, options)
+            return
+        cached = cache.get(key)
+        if cached is None:
+            output: list[Segment] = []
+            for renderable in super().__rich_console__(console, options):
+                if isinstance(renderable, Segment):
+                    output.append(renderable)
+                else:
+                    output.extend(console.render(renderable, options))
+            cached = tuple(output)
+            cache.put(key, cached)
+        yield from cached
 
 
 class _ReadingParagraph(Paragraph):
@@ -226,6 +259,8 @@ class AssistantMarkdown(Markdown):
             markup, code_theme, justify, style, hyperlinks, inline_code_lexer, inline_code_theme
         )
         self._compact = compact
+        self.fence_cache: FenceRenderCache | None = None
+        self._closed_fences = closed_fences(markup, self.parsed)
         previous: Token | None = None
         gaps: set[int] = set()
         for token in self.parsed:
@@ -594,6 +629,9 @@ class AssistantMessage(ConversationMessage):
     ) -> None:
         super().__init__("assistant", rendered, pending=pending)
         self.content = content
+        self.fence_cache = FenceRenderCache()
+        if isinstance(rendered, AssistantMarkdown):
+            rendered.fence_cache = self.fence_cache
         self.tooltip = copy_hint
         self._arrival = ArrivalTimeline()
         self._arrival_timer: Timer | None = None
@@ -674,6 +712,7 @@ class AssistantMessage(ConversationMessage):
         if self._stream_renderer is None:
             return
         markdown = self._stream_renderer(self.content)
+        markdown.fence_cache = self.fence_cache
         canonical_body = self.app.console.get_style(theme_style(self, ASSISTANT_TEXT_STYLE))
         markdown.cache_stream_view(
             animate=self._arrival_enabled
@@ -727,6 +766,8 @@ class AssistantMessage(ConversationMessage):
         self.stop_arrival(flush=False)
         self._stream_renderer = None
         self._stream_commit_at = -1.0
+        if isinstance(content, AssistantMarkdown):
+            content.fence_cache = self.fence_cache
         super().update(content)
 
     def on_resize(self, event: events.Resize) -> None:
@@ -748,6 +789,7 @@ class AssistantMessage(ConversationMessage):
     def on_unmount(self) -> None:
         self.stop_arrival(flush=False)
         self._stream_renderer = None
+        self.fence_cache.clear()
 
     def render_lines(self, crop: Region) -> list[Strip]:
         strips = super().render_lines(crop)
