@@ -287,7 +287,9 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause(0.05)
                 self.fail("selected theme was not applied and persisted")
 
-            async def wait_for_settings_screen() -> None:
+            async def wait_for_settings_screen() -> Button:
+                stable_state: tuple[object, ...] | None = None
+                stable_passes = 0
                 for _ in range(100):
                     screen = app.screen
                     if isinstance(screen, SettingsScreen):
@@ -316,7 +318,20 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                             and app.focused is button
                             and hit_test_ready
                         ):
-                            return
+                            state = (screen, button, screen.region, button.region, app.theme)
+                            if state == stable_state:
+                                stable_passes += 1
+                            else:
+                                stable_state = state
+                                stable_passes = 1
+                            if stable_passes >= 2:
+                                return button
+                        else:
+                            stable_state = None
+                            stable_passes = 0
+                    else:
+                        stable_state = None
+                        stable_passes = 0
                     await pilot.pause(0.05)
                 self.fail("settings theme entry was not interactive after modal restoration")
 
@@ -376,16 +391,16 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(preferences.saved_themes, [])
             self.assertEqual(prompt.value, "中文草稿\nkeep this")
             self.assertEqual(prompt.cursor_location, (1, 3))
-            await wait_for_settings_screen()
-            self.assertTrue(await pilot.click("#settings-category-theme"))
+            settings_entry = await wait_for_settings_screen()
+            self.assertTrue(await pilot.click(settings_entry))
             await wait_for_theme_screen(UiTheme.PORCELAIN, require_focus=True)
             app.screen.query_one("#settings-theme-system", Button).focus()
             await pilot.press("enter")
             await wait_for_theme_applied(UiTheme.SYSTEM)
-            await wait_for_settings_screen()
+            settings_entry = await wait_for_settings_screen()
             self.assertEqual(app.theme, UiTheme.SYSTEM.textual_name)
             self.assertEqual(preferences.saved_themes, [UiTheme.SYSTEM])
-            self.assertTrue(await pilot.click("#settings-category-theme"))
+            self.assertTrue(await pilot.click(settings_entry))
             await wait_for_theme_screen(UiTheme.SYSTEM, require_focus=True)
             self.assertEqual(app.focused.id, "settings-theme-system")
 
