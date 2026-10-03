@@ -6,7 +6,6 @@ from tempfile import gettempdir
 from unittest.mock import patch
 
 import pytest
-from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from neuro_code.interfaces.tui.app import NeuroCodeApp
@@ -16,7 +15,7 @@ from neuro_code.interfaces.tui.terminal_palette import (
     TerminalColorLevel,
     TerminalPalette,
 )
-from neuro_code.interfaces.tui.widgets import PromptInput
+from neuro_code.interfaces.tui.widgets import PromptInput, TranscriptScroll
 from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_theme import UiTheme
 from tests.visual.readiness import wait_for_screenshot_readiness
@@ -88,10 +87,14 @@ async def capture_snapshot(
             ):
                 # Review the opening reading hierarchy and user/assistant axis.
                 # Normal long responses may auto-follow their bottom edge.
-                app.query_one("#transcript", VerticalScroll).scroll_home(
-                    animate=False, immediate=True
-                )
+                transcript = app.query_one("#transcript", TranscriptScroll)
+                # Static review fixtures must not inherit a pending runtime
+                # auto-follow callback from message mounting. Pin the opening
+                # transcript position after layout has settled.
+                transcript.pause_stream_follow()
+                transcript.scroll_home(animate=False, immediate=True)
                 await wait_for_screenshot_readiness(app)
+                assert transcript.scroll_y == 0
             return app.export_screenshot(title=_TITLE, simplify=True)
 
 
