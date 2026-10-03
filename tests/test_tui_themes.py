@@ -339,14 +339,33 @@ class TuiThemeTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause(0.05)
                 self.fail("selected theme button was not mounted and focused")
 
+            async def wait_for_visible_theme(choice: UiTheme) -> None:
+                for _ in range(100):
+                    screen = app.screen
+                    if isinstance(screen, ThemeSettingsScreen):
+                        target = next(iter(screen.query(f"#settings-theme-{choice.value}")), None)
+                        viewport = next(iter(screen.query("#settings-themes")), None)
+                        if (
+                            target is not None
+                            and viewport is not None
+                            and app.focused is target
+                            and app.theme == choice.textual_name
+                            and viewport.region.contains_region(target.region)
+                        ):
+                            return
+                    # Textual schedules focus-driven scrolling after the key event;
+                    # wait for the viewport geometry rather than assuming one
+                    # event-loop turn is enough on every platform.
+                    await pilot.pause(0.05)
+                self.fail(f"focused theme choice {choice.value} did not become visible")
+
             prompt = app.query_one("#prompt", PromptInput)
             prompt.value = "中文草稿\nkeep this"
             prompt.cursor_location = (1, 3)
             await app._settings_category_selected("theme")
             await wait_for_theme_screen(UiTheme.PORCELAIN, require_focus=True)
             await pilot.press("up")
-            await pilot.pause()
-            self.assertEqual(app.theme, UiTheme.ONE_DARK.textual_name)
+            await wait_for_visible_theme(UiTheme.ONE_DARK)
             focused = app.screen.query_one("#settings-theme-one-dark", Button)
             viewport = app.screen.query_one("#settings-themes")
             self.assertTrue(viewport.region.contains_region(focused.region))
