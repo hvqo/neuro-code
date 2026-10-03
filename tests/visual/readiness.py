@@ -24,6 +24,18 @@ async def wait_for_shell_geometry_stability(app: NeuroCodeApp) -> None:
         prompt = app._main_screen_query_one("#prompt", PromptInput)
         composer = app._main_screen_query_one("#composer", Widget)
         identity = app._main_screen_query_optional("#empty-state-identity", EmptyStateIdentity)
+        placement = logo_layout(transcript.content_region, (app.size.width, app.size.height))
+        identity_aligned = (
+            identity is None
+            or not identity.display
+            or (
+                placement is not None
+                and identity.asset_size == placement[0]
+                and transcript.content_region.contains_region(identity.region)
+                and abs(identity.region.center[0] - transcript.content_region.center[0]) <= 1
+                and abs(identity.region.center[1] - transcript.content_region.center[1]) <= 1
+            )
+        )
         geometry = (
             app.size,
             transcript.region,
@@ -33,7 +45,7 @@ async def wait_for_shell_geometry_stability(app: NeuroCodeApp) -> None:
             composer.region,
             None if identity is None or not identity.display else identity.region,
         )
-        if geometry == previous_geometry:
+        if identity_aligned and geometry == previous_geometry:
             return
         previous_geometry = geometry
 
@@ -41,7 +53,8 @@ async def wait_for_shell_geometry_stability(app: NeuroCodeApp) -> None:
         "TUI shell geometry did not settle across refreshes: "
         f"transcript={transcript.region}, content={transcript.content_region}, "
         f"prompt={prompt.region}, composer={composer.region}, "
-        f"identity={None if identity is None else identity.region}"
+        f"identity={None if identity is None else identity.region}, "
+        f"aligned={identity_aligned}"
     )
 
 

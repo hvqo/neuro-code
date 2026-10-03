@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -137,31 +136,15 @@ async def test_resize_large_compact_large_and_static_screenshot_are_deterministi
             assert not app.query_one(EmptyStateIdentity).display
 
 
-async def test_draft_growth_recenters_without_layout_pressure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_draft_growth_recenters_without_layout_pressure() -> None:
     app = make_app(UiTheme.SYSTEM, fixture="empty-conversation")
     async with app.run_test(size=VIEWPORTS[0]) as pilot:
         await settle(pilot)
         symbol = app.query_one(EmptyStateIdentity)
         before = symbol.region
         prompt = app.query_one("#prompt", PromptInput)
-        drafts = {
-            "\n".join(["中文 draft"] * 12): asyncio.Event(),
-            "": asyncio.Event(),
-        }
-        sync_content_height = PromptInput.sync_content_height
-
-        def sync_and_signal(text_area: PromptInput) -> None:
-            sync_content_height(text_area)
-            if text_area.text in drafts:
-                drafts[text_area.text].set()
-
-        monkeypatch.setattr(PromptInput, "sync_content_height", sync_and_signal)
-
-        prompt.text = next(text for text in drafts if text)
-        await asyncio.wait_for(drafts[prompt.text].wait(), timeout=1)
-        await pilot.pause()
+        prompt.text = "\n".join(["中文 draft"] * 12)
+        await pilot._wait_for_screen()
         await settle(pilot)
         assert prompt.region.height == 8
         content = app.query_one("#transcript").content_region
@@ -170,8 +153,7 @@ async def test_draft_growth_recenters_without_layout_pressure(
         assert content.contains_region(symbol.region)
         assert app.query_one("#transcript").max_scroll_y == 0
         prompt.text = ""
-        await asyncio.wait_for(drafts[""].wait(), timeout=1)
-        await pilot.pause()
+        await pilot._wait_for_screen()
         await settle(pilot)
         assert prompt.region.height == 1
         assert symbol.region == before
