@@ -81,42 +81,59 @@ def tag_paragraph(text: Text, source: tuple[int, str] | None, floor: int) -> Non
 class Arrival:
     start: int
     end: int
-    at: float
+    received_at: float
 
 
 class ArrivalTimeline:
     def __init__(self) -> None:
         self.arrivals: deque[Arrival] = deque(maxlen=256)
-        # Retain birth times within the bounded tail even after expiry. Appending
-        # combining marks must not repeatedly restart an existing glyph's life.
+        # First presentation, not delta receipt. Keep settled identities within
+        # the source window: rebuild/reflow/combining marks cannot restart them.
         self.births: dict[int, float] = {}
+        self._floor = 0
 
     def receive(self, start: int, end: int, now: float) -> None:
         if end > start:
             self.arrivals.append(Arrival(start, end, now))
+            self._floor = max(self._floor, end - SOURCE_WINDOW)
         self.prune(now)
-        self.births = {s: at for s, at in self.births.items() if s >= end - SOURCE_WINDOW}
 
     def prune(self, now: float) -> None:
-        while self.arrivals and now - self.arrivals[0].at >= DURATION_SECONDS:
+        # Pending ranges have no visual age. Bound by source progress/count,
+        # never by receive-time TTL, even if parsing takes longer than motion.
+        while self.arrivals and self.arrivals[0].end <= self._floor:
             self.arrivals.popleft()
+        self.births = {s: at for s, at in self.births.items() if s >= self._floor}
+
+    def eligible(self, source: tuple[int, int], now: float) -> bool:
+        start, end = source
+        if start < self._floor or end <= start:
+            return False
+        if start in self.births:
+            return self.age(source, now) is not None
+        return any(start < a.end and end > a.start for a in self.arrivals)
+
+    def start_visual(self, source: tuple[int, int], now: float) -> float | None:
+        """Called only for a proven, uncropped glyph in the visible strip crop."""
+        if not self.eligible(source, now):
+            return None
+        self.births.setdefault(source[0], now)
+        return self.age(source, now)
 
     def age(self, source: tuple[int, int], now: float) -> float | None:
-        start, end = source
-        at = self.births.get(start)
+        at = self.births.get(source[0])
         if at is None:
-            # Earliest overlapping arrival: an expanded grapheme cannot extend
-            # the animation's lifetime. Provider chunks are never split.
-            at = next((a.at for a in self.arrivals if start < a.end and end > a.start), None)
-            if at is None:
-                return None
-            self.births[start] = at
+            return None
         age = now - at
         return age if 0 <= age < DURATION_SECONDS else None
+
+    def has_active(self, now: float) -> bool:
+        return any(0 <= now - at < DURATION_SECONDS for at in self.births.values())
 
     def clear(self) -> None:
         self.arrivals.clear()
         self.births.clear()
+        self._floor = 0
 
 
 def ink_style(style: Style, age: float, rank: int, primary: str, secondary: str) -> Style:

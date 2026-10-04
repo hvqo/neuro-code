@@ -129,6 +129,7 @@ def test_uax29_clusters_and_static_complex_fallback():
 def test_birth_does_not_restart_with_combining_mark_and_bounded_tail():
     timeline = ArrivalTimeline()
     timeline.receive(0, 1, 1.0)
+    assert timeline.start_visual((0, 1), 1.0) == 0
     assert timeline.age((0, 1), 1.01) == pytest.approx(0.01)
     timeline.receive(1, 2, 1.1)
     assert timeline.age((0, 2), 1.15) == pytest.approx(0.15)
@@ -136,7 +137,7 @@ def test_birth_does_not_restart_with_combining_mark_and_bounded_tail():
     assert timeline.age((0, 3), 1.19) is None
     for i in range(500):
         timeline.receive(i, i + 1, 2.0)
-        timeline.age((i, i + 1), 2.01)
+        timeline.start_visual((i, i + 1), 2.01)
     assert len(timeline.arrivals) <= 256
     assert len(timeline.births) <= 385
     timeline.clear()
@@ -299,7 +300,7 @@ async def test_whole_delta_immediate_tick_no_parse_and_exact_settle(theme, clock
         await pilot.pause()
         assert signature([list(s) for s in pending.render_lines(crop)]) == canonical
         assert pending._arrival_timer is None
-        assert not pending._arrival.arrivals
+        assert not pending._arrival.has_active(clock[0])
         with patch.object(pending, "refresh", wraps=pending.refresh) as refresh:
             pending._arrival_tick()
             assert refresh.call_count == 0
@@ -333,7 +334,7 @@ async def test_metadata_cache_hits_and_width_compact_theme_invalidation(clock, m
         await pilot.resize_terminal(80, 24)
         await pilot.pause()
         assert md._view_key[1] is True
-        assert not pending._arrival.arrivals
+        assert pending._arrival.arrivals
         app._apply_ui_theme(UiTheme.PORCELAIN)
         assert pending.renderable is not md
 
@@ -417,15 +418,18 @@ async def test_resize_theme_syntax_view_switch_and_unmount_cleanup(clock):
         for viewport in [(80, 24), (120, 40)]:
             await pilot.resize_terminal(*viewport)
             await pilot.pause()
-            assert pending._arrival_timer is pending._stream_view_timer is None
-            assert not pending._arrival.arrivals
+            assert pending._stream_view_timer is None
+            assert pending._arrival_timer is not None
+            assert pending._arrival.arrivals
             assert pending.content == pending.renderable.markup
         app._update_pending_assistant("first\n\nsecond more")
         app._apply_ui_theme(UiTheme.PORCELAIN)
-        assert pending._arrival_timer is pending._stream_view_timer is None
+        assert pending._stream_view_timer is None
+        assert pending._arrival.births
         app._update_pending_assistant("first\n\nsecond more syntax")
         app._apply_syntax_theme(SyntaxTheme.MONOKAI)
-        assert pending._arrival_timer is pending._stream_view_timer is None
+        assert pending._stream_view_timer is None
+        assert pending._arrival.births
         app._update_pending_assistant("first\n\nsecond more syntax screen")
         await app.push_screen(ModalScreen())
         pending._arrival_tick()
@@ -454,8 +458,7 @@ async def test_idle_text_has_no_clock_refresh_or_parse(animated, monkeypatch):
         await pilot.pause()
         assert pending.content == pending.renderable.markup
         assert pending._arrival_timer is pending._stream_view_timer is None
-        assert not pending._arrival.arrivals
-        assert not pending._arrival.births
+        assert not pending._arrival.has_active(widgets.monotonic())
         with (
             patch.object(pending, "refresh", wraps=pending.refresh) as refresh,
             patch.object(AssistantMarkdown, "__init__", side_effect=AssertionError("idle parse")),
@@ -485,6 +488,9 @@ async def test_animation_off_persistence_inheritance_and_live_disable(clock, tmp
         assert pending._arrival_timer is None
         app._agent_preferences = replace(app._agent_preferences, text_arrival_animation=True)
         app._update_pending_assistant("new text animation")
+        clock[0] += 0.03
+        pending._commit_pending_view(pending._stream_generation)
+        await pilot.pause()
         assert pending._arrival_timer is not None
         app._agent_preferences = replace(app._agent_preferences, text_arrival_animation=False)
         app._apply_agent_preferences_to_ui()

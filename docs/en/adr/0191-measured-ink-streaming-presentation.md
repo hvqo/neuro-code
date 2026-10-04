@@ -37,8 +37,8 @@ not terminal cells. Whole safe Latin/Han graphemes receive metadata; Rich/Textua
 retain wrapping and cell widths. Emoji, ZWJ, flags and complex shaping remain static.
 At most twelve eligible tail glyphs per paragraph receive metadata, restricted to a
 384-code-point source window; the global overlay cap remains twelve glyphs.
-Earliest overlapping arrival fixes each glyph's birth, including appended combining
-marks, so sustained streaming cannot renew an old glyph indefinitely.
+First presentation of a proven visible glyph fixes its birth, including appended
+combining marks; receive time is diagnostic only. See [ADR 0194](0194-measured-ink-presentation-lifecycle.md).
 
 ## Cache and refresh ownership
 
@@ -62,10 +62,12 @@ not instantiate Markdown or parse source; they overlay cached source-tagged stri
 and request local affected-row refresh without layout. Textual still composes screen
 output; local dirty regions are not a claim of zero compositor cost.
 
-Completion, cancel/error/discard, transcript restore, new response, view hiding,
-resize, theme/syntax changes and unmount stop both timers, invalidate outstanding callbacks and clear arrivals. A content
-height change alone is not a viewport resize. The clock stops after the last arrival
-expires; idle content does not poll. Headless, NO_COLOR, ANSI16/unknown output remain
+Completion, cancel/error/discard, transcript restore, new response, view hiding
+and unmount stop both timers, invalidate outstanding callbacks and clear arrivals.
+Resize/reflow and theme/syntax refresh invalidate presentation geometry/styles,
+not source lifecycle. The clock starts on first presentation and stops after the
+last presented glyph expires; bounded pending/settled identities do not poll.
+[ADR 0194](0194-measured-ink-presentation-lifecycle.md) supersedes receive-time expiry. Headless, NO_COLOR, ANSI16/unknown output remain
 static. Off mode retains coalescing and caching but creates no animation ranges.
 
 ## Verification and limits

@@ -739,17 +739,18 @@ class AssistantMessage(ConversationMessage):
         now = monotonic()
         previous = self.content
         appended = content.startswith(previous)
-        if not appended or self._response_complete:
+        new_generation = not appended or self._response_complete
+        if new_generation:
             self.fence_presentation.reset()
         enabled = animate and self._motion_allowed() and self.screen is self.app.screen
-        if not appended or enabled != self._arrival_enabled:
+        if new_generation or enabled != self._arrival_enabled:
             self.stop_arrival(flush=False)
         self.content = content  # Canonical source is always immediate and whole.
         self._response_complete = False
         self._stream_renderer = renderer
         self._arrival_enabled = enabled
         if enabled:
-            self._arrival.receive(len(previous) if appended else 0, len(content), now)
+            self._arrival.receive(0 if new_generation else len(previous), len(content), now)
         self._stream_dirty = True
         if self._stream_commit_at < 0 or now - self._stream_commit_at >= VIEW_COMMIT_SECONDS:
             self._cancel_view_timer()
@@ -759,10 +760,6 @@ class AssistantMessage(ConversationMessage):
             self._stream_view_timer = self._schedule_stream_commit(
                 max(0, self._stream_commit_at + VIEW_COMMIT_SECONDS - now),
                 generation,
-            )
-        if self._arrival_timer is None and self._arrival.arrivals:
-            self._arrival_timer = self.set_interval(
-                FRAME_SECONDS, self._arrival_tick, name="measured-ink"
             )
 
     def _schedule_stream_commit(self, delay: float, generation: int) -> TimerHandle:
@@ -794,6 +791,9 @@ class AssistantMessage(ConversationMessage):
         if self._stream_renderer is None:
             return
         markdown = self._stream_renderer(self.content)
+        self._set_stream_view(markdown, now)
+
+    def _set_stream_view(self, markdown: AssistantMarkdown, now: float) -> None:
         markdown.bind_fence_presentation(self.fence_presentation, complete=self._response_complete)
         markdown.fence_cache = self.fence_cache
         canonical_body = self.app.console.get_style(theme_style(self, ASSISTANT_TEXT_STYLE))
@@ -824,13 +824,24 @@ class AssistantMessage(ConversationMessage):
         self._arrival.prune(now)
         for row in self._arrival_rows:
             self.refresh(Region(0, row, self.size.width, 1))
-        if not self._arrival.arrivals:
-            self._stop_motion()
+        if not self._arrival.has_active(now):
+            self._pause_motion()
+            self._arrival_rows.clear()
 
-    def _stop_motion(self) -> None:
+    def _ensure_arrival_clock(self, now: float) -> None:
+        if self._arrival_timer is None and self._arrival.has_active(now):
+            self._arrival_timer = self.set_interval(
+                FRAME_SECONDS, self._arrival_tick, name="measured-ink"
+            )
+
+    def _pause_motion(self) -> None:
+        """Stop idle polling; bounded pending/settled source identities survive."""
         timer, self._arrival_timer = self._arrival_timer, None
         if timer is not None:
             timer.stop()
+
+    def _stop_motion(self) -> None:
+        self._pause_motion()
         self._arrival.clear()
         for row in self._arrival_rows:
             self.refresh(Region(0, row, self.size.width, 1))
@@ -844,8 +855,8 @@ class AssistantMessage(ConversationMessage):
         self._stream_dirty = False
 
     def update(self, content: RenderableType | SupportsVisual = "") -> None:
-        # Existing finalization, theme/syntax changes and restored replies use
-        # this canonical path; they cannot inherit a streaming clock or range.
+        # Finalization and restored replies cannot inherit streaming state.
+        # Theme/syntax refresh uses restyle_stream instead.
         self.stop_arrival(flush=False)
         self._stream_renderer = None
         self._stream_commit_at = -1.0
@@ -856,15 +867,27 @@ class AssistantMessage(ConversationMessage):
             content.fence_cache = self.fence_cache
         super().update(content)
 
+    def restyle_stream(self, content: RenderableType | SupportsVisual) -> None:
+        """Theme refresh replaces presentation, never the source generation."""
+        if (
+            self._stream_renderer is not None
+            and isinstance(content, AssistantMarkdown)
+            and content.markup == self.content
+        ):
+            self._cancel_view_timer()
+            self._set_stream_view(content, monotonic())
+        else:
+            self.update(content)
+
     def on_resize(self, event: events.Resize) -> None:
         previous, self._arrival_view_width = self._arrival_view_width, event.size.width
-        # Content growth changes height during normal streaming; that is not a
-        # viewport change and must not cancel each newly arrived line.
+        # Widget width also changes when a scrollbar appears. Both internal
+        # reflow and real terminal resize rebuild rows, not source lifetimes.
         if previous is not None and previous != event.size.width:
             self.invalidate_stream_view()
 
     def invalidate_stream_view(self) -> None:
-        self.stop_arrival()
+        self._arrival_rows.clear()
         if isinstance(self.renderable, AssistantMarkdown):
             self.renderable.invalidate_view()
             self.refresh(layout=True)
@@ -887,26 +910,32 @@ class AssistantMessage(ConversationMessage):
         if not isinstance(markdown, AssistantMarkdown):
             return strips
         sources = [
-            source
-            for source in markdown.cached_sources
-            if self._arrival.age(source, now) is not None
-        ]
+            source for source in markdown.cached_sources if self._arrival.eligible(source, now)
+        ][:GLYPH_LIMIT]
         ranks = {source: rank for rank, source in enumerate(sources)}
         primary, secondary = theme_style(self, TEXT_PRIMARY), theme_style(self, TEXT_SECONDARY)
         output: list[Strip] = []
+        self._arrival_rows.difference_update(range(crop.y, crop.bottom))
         for y, strip in enumerate(strips, crop.y):
             segments: list[Segment] = []
             for segment in strip:
                 style = segment.style
                 if style and ARRIVAL_META in style.meta:
                     source = tuple(style.meta[ARRIVAL_META])
-                    age = self._arrival.age(source, now)
-                    if age is not None and source in ranks and ranks[source] < GLYPH_LIMIT:
+                    # Cropping a wide glyph may leave a padding cell with its
+                    # metadata. It is not a first presentation of that glyph.
+                    age = (
+                        self._arrival.start_visual(source, now)
+                        if source in ranks and segment.text == self.content[slice(*source)]
+                        else None
+                    )
+                    if age is not None:
                         self._arrival_rows.add(y)
                         style = ink_style(style, age, ranks[source], primary, secondary)
                         segment = Segment(segment.text, style, segment.control)
                 segments.append(segment)
             output.append(Strip(segments, strip.cell_length))
+        self._ensure_arrival_clock(now)
         return output
 
     async def _on_click(self, event: events.Click) -> None:
