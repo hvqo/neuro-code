@@ -44,6 +44,7 @@ jobs:
           tests/test_tui_fence_cache.py
           tests/test_tui_fence_presentation.py
           tests/test_tui_text_arrival.py
+          tests/test_tui_arrival_lifecycle.py
           tests/test_tui_frame_pacing.py
           tests/test_tui_empty_identity.py
           tests/test_tui_empty_reveal.py
