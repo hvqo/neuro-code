@@ -69,6 +69,9 @@ def fence_render_key(
         theme_key = (theme.resolved_choice.value, theme.background, theme.foreground)
     else:
         return None
+    # Cached values are Rich segments before viewport-height cropping. Height
+    # budgets therefore must not split an otherwise identical syntax render
+    # (Textual's measurement and paint passes often use different max heights).
     return FenceRenderKey(
         code,
         language,
@@ -76,8 +79,6 @@ def fence_render_key(
         (
             options.min_width,
             options.max_width,
-            options.max_height,
-            options.height,
             options.justify,
             options.overflow,
             options.no_wrap,
@@ -118,7 +119,7 @@ class FenceRenderCache:
         self._entries.move_to_end(key)
         return entry[0]
 
-    def put(self, key: FenceRenderKey, segments: tuple[Segment, ...]) -> None:
+    def put(self, key: FenceRenderKey, segments: tuple[Segment, ...]) -> bool:
         styles = {segment.style for segment in segments if segment.style is not None}
         size = (
             getsizeof(key)
@@ -135,11 +136,12 @@ class FenceRenderCache:
         if previous is not None:
             self.estimated_bytes -= previous[1]
         if not self.max_entries or size > self.max_bytes:
-            return
+            return False
         self._entries[key] = (segments, size)
         self.estimated_bytes += size
         while len(self._entries) > self.max_entries or self.estimated_bytes > self.max_bytes:
             self.estimated_bytes -= self._entries.popitem(last=False)[1][1]
+        return key in self._entries
 
     def clear(self) -> None:
         self._entries.clear()

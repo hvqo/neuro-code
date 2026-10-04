@@ -17,9 +17,11 @@ from tests.test_tui_text_arrival import wait_for_committed_view
 from tests.visual.showcases import make_app
 
 
-def render(source, cache=None, width=80, theme="monokai", style="none", color="truecolor"):
+def render(
+    source, cache=None, width=80, theme="monokai", style="none", color="truecolor", complete=True
+):
     console = Console(width=width, color_system=color, theme=Theme({"markdown.code_block": style}))
-    md = AssistantMarkdown(source, code_theme=theme, hyperlinks=False)
+    md = AssistantMarkdown(source, code_theme=theme, hyperlinks=False, response_complete=complete)
     md.fence_cache = cache
     return console.render_lines(md, console.options, pad=False)
 
@@ -77,9 +79,11 @@ def test_closed_540_lines_highlights_once_over_prose_revisions():
 def test_open_or_unproven_fence_never_cached_even_when_unchanged(source):
     cache = FenceRenderCache()
     with patch.object(Syntax, "highlight", autospec=True, side_effect=Syntax.highlight) as spy:
-        render(source, cache)
-        render(source, cache)
-        assert spy.call_count == 2
+        render(source, cache, complete=False)
+        render(source, cache, complete=False)
+        assert spy.call_count == (
+            0 if AssistantMarkdown(source, response_complete=False)._active_fences else 2
+        )
     assert len(cache) == 0
 
 

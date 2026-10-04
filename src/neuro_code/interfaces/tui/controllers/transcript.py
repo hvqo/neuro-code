@@ -466,6 +466,7 @@ class TranscriptControllerMixin(TuiAppControllerMixin):
         pending.display = True
         if isinstance(pending, AssistantMessage):
             pending.set_content(content)
+            pending.finalize_response()
         pending.update(self._render_entry("assistant", content))
         self._active_tool_activity_group = None
         self._entries.append(TranscriptEntry("assistant", content))
