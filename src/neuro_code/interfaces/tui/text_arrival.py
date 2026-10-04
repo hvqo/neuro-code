@@ -105,13 +105,16 @@ class ArrivalTimeline:
             self.arrivals.popleft()
         self.births = {s: at for s, at in self.births.items() if s >= self._floor}
 
-    def eligible(self, source: tuple[int, int], now: float) -> bool:
+    def registered(self, source: tuple[int, int]) -> bool:
         start, end = source
         if start < self._floor or end <= start:
             return False
-        if start in self.births:
-            return self.age(source, now) is not None
-        return any(start < a.end and end > a.start for a in self.arrivals)
+        return start in self.births or any(start < a.end and end > a.start for a in self.arrivals)
+
+    def eligible(self, source: tuple[int, int], now: float) -> bool:
+        return self.registered(source) and (
+            source[0] not in self.births or self.age(source, now) is not None
+        )
 
     def start_visual(self, source: tuple[int, int], now: float) -> float | None:
         """Called only for a proven, uncropped glyph in the visible strip crop."""

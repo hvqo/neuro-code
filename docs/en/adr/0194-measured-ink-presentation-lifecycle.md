@@ -37,7 +37,9 @@ previously presented glyphs keep aging while off-screen.
 
 Pending provenance is bounded by 256 ranges and the last 384 source code points,
 not by animation duration. Source progress/count can evict old pending ranges;
-no unbounded delayed-animation backlog. Births share that source window. A real
+no unbounded delayed-animation backlog. The newest twelve source identities stay
+in the tail after settling; expiry never promotes older pending paragraphs into
+new animation waves. Births share that source window. A real
 message-generation boundary, complete/cancel/error/discard, hiding, restore or
 unmount clears the timeline. Animation-off and reduced-capability paths remain static.
 

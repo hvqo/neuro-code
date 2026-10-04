@@ -11,7 +11,7 @@ from neuro_code.interfaces.tui import widgets
 from neuro_code.interfaces.tui.text_arrival import ARRIVAL_META, SOURCE_WINDOW, ArrivalTimeline
 from neuro_code.interfaces.tui.widgets import AssistantMarkdown, AssistantMessage
 from neuro_code.shared.ui_theme import UiTheme
-from tests.test_tui_text_arrival import begin, signature
+from tests.test_tui_text_arrival import begin, signature, wait_for_committed_view
 from tests.test_tui_text_arrival import clock as clock
 from tests.visual.showcases import make_app
 
@@ -43,6 +43,46 @@ def test_pending_bound_and_settled_tombstones_are_generation_local():
     timeline.clear()
     timeline.receive(0, 1, 10001)
     assert timeline.start_visual((0, 1), 10002) == 0
+
+
+@pytest.mark.asyncio
+async def test_settle_does_not_promote_older_pending_glyphs_into_a_new_tail(clock):
+    app = make_app(UiTheme.GRAPHITE, fixture="empty-conversation")
+    async with app.run_test(size=(120, 40)) as pilot:
+        pending = await begin(app, pilot)
+        app._update_pending_assistant("Earlier paragraph 旧段落\n\nNewest paragraph 新段落")
+        await pilot.pause()
+        births = dict(pending._arrival.births)
+        assert births
+        clock[0] += 0.2
+        pending._arrival_tick()
+        pending.render_lines(Region(0, 0, pending.size.width, pending.size.height))
+        assert pending._arrival.births == births
+        assert pending._arrival_timer is None
+
+
+@pytest.mark.asyncio
+async def test_commit_readiness_drains_callbacks_queued_at_end_of_pilot_pause(clock, monkeypatch):
+    from neuro_code.interfaces.tui.widgets import TranscriptScroll
+
+    app = make_app(UiTheme.GRAPHITE, fixture="empty-conversation")
+    async with app.run_test(size=(100, 32)) as pilot:
+        pending = await begin(app, pilot)
+        app._update_pending_assistant("Whole delta 完整正文")
+        original = pilot.pause
+        queued, completed = [], []
+
+        async def pause_then_queue(delay=None):
+            await original(delay)
+            if not queued:
+                queued.append(True)
+                app.screen.call_next(lambda: completed.append(True))
+
+        monkeypatch.setattr(pilot, "pause", pause_then_queue)
+        await wait_for_committed_view(
+            pending, app.query_one("#transcript", TranscriptScroll), pilot
+        )
+        assert completed == [True]
 
 
 @pytest.mark.asyncio

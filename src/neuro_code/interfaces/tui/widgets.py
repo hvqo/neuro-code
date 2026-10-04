@@ -910,8 +910,10 @@ class AssistantMessage(ConversationMessage):
         if not isinstance(markdown, AssistantMarkdown):
             return strips
         sources = [
-            source for source in markdown.cached_sources if self._arrival.eligible(source, now)
+            source for source in markdown.cached_sources if self._arrival.registered(source)
         ][:GLYPH_LIMIT]
+        # Recency is source-based, never expiry-based. Settling the newest tail
+        # must not promote older pending paragraphs into a fresh animation wave.
         ranks = {source: rank for rank, source in enumerate(sources)}
         primary, secondary = theme_style(self, TEXT_PRIMARY), theme_style(self, TEXT_SECONDARY)
         output: list[Strip] = []

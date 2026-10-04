@@ -182,10 +182,16 @@ async def wait_for_committed_view(pending, transcript, pilot):
     # Do not wait for is_vertical_scroll_end: a broken follow must still fail.
     for _ in range(40):
         await pilot.pause(0.05)
+        # Pilot.pause() ends by calling Screen._on_timer_update(), which queues
+        # post-layout callbacks with call_next; it does not await those callbacks.
+        # Drain that newly queued work before declaring follow/layout settled.
+        await pilot._wait_for_screen()
         if (
             not pending._stream_dirty
             and pending._stream_view_timer is None
             and not transcript._stream_follow_pending
+            and not pending.screen._layout_required
+            and not pending.screen._scroll_required
         ):
             assert pending.renderable.markup == pending.content
             return
@@ -627,7 +633,9 @@ async def test_growing_tail_follows_layout_but_manual_history_scroll_is_preserve
         assert transcript.scroll_y == y
         assert not transcript._stream_follow_pending
         transcript.scroll_end(animate=False, immediate=True)
-        await pilot.pause()
+        await wait_for_committed_view(pending, transcript, pilot)
+        assert transcript.is_vertical_scroll_end
+        assert not transcript._stream_follow_paused
         text += "恢复主动跟随后继续输出。" * 100
         app._update_pending_assistant(text)
         await wait_for_committed_view(pending, transcript, pilot)

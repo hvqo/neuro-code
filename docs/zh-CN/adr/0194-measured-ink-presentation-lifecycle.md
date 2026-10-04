@@ -33,7 +33,8 @@ glyph 即使移到屏幕外也继续按原 birth 计时。
 
 pending provenance 以最多 256 个 range、末尾 384 个 source code point 限界，
 不能按 animation duration 提前删除。源码推进或数量上限可淘汰旧 pending，避免无限积压。
-births 使用同一 source window。真实 message generation 边界、complete/cancel/error/
+最近十二个 source identity settle 后仍占据 tail，不能因到期而把较旧 pending
+段落提升为新的动画波次。births 使用同一 source window。真实 message generation 边界、complete/cancel/error/
 discard、隐藏、restore、unmount 清理 timeline。动画关闭与低能力终端仍静态降级。
 
 ## Geometry 与 style 所有权
