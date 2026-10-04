@@ -13,11 +13,13 @@ from time import monotonic
 from typing import ClassVar, Literal
 
 from markdown_it.token import Token
+from pygments.token import Text as PygmentsText
 from rich.console import Console, ConsoleOptions, JustifyMethod, RenderableType
 from rich.console import RenderResult as RichRenderResult
 from rich.markdown import CodeBlock, Heading, Markdown, MarkdownElement, Paragraph
 from rich.segment import Segment
 from rich.style import Style
+from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from textual import events
@@ -36,6 +38,11 @@ from neuro_code.interfaces.tui.fence_cache import (
     FenceRenderCache,
     closed_fences,
     fence_render_key,
+)
+from neuro_code.interfaces.tui.fence_presentation import (
+    FenceIdentity,
+    FencePhase,
+    FencePresentation,
 )
 from neuro_code.interfaces.tui.state import (
     _PROMPT_MARK,
@@ -156,6 +163,29 @@ class _ReadingHeading(Heading):
     LEVEL_ALIGN: ClassVar[dict[str, JustifyMethod]] = {**Heading.LEVEL_ALIGN, "h1": "left"}
 
 
+class _PlainCodeSyntax(Syntax):
+    """Use Rich Syntax layout and surface without invoking a Pygments lexer."""
+
+    def highlight(self, code: str, line_range: tuple[int | None, int | None] | None = None) -> Text:
+        base_style = self._get_base_style()
+        justify: JustifyMethod = "default" if base_style.transparent_background else "left"
+        text = Text(
+            code,
+            justify=justify,
+            style=base_style,
+            tab_size=self.tab_size,
+            no_wrap=not self.word_wrap,
+        )
+        plain_style = self._theme.get_style_for_token(PygmentsText)
+        if code:
+            text.stylize(plain_style, 0, len(code))
+        if self.background_color is not None:
+            text.stylize(f"on {self.background_color}")
+        if self._stylized_ranges:
+            self._apply_stylized_ranges(text)
+        return text
+
+
 class _FencedCodeBlock(CodeBlock):
     """Pass only the language identifier to Rich's existing lexer resolver."""
 
@@ -164,13 +194,29 @@ class _FencedCodeBlock(CodeBlock):
         language = re.split(r"[\s,]+", (token.info or "").strip(), maxsplit=1)[0]
         element = cls(language.lower() or "text", markdown.code_theme)
         element.fence_cache = None
-        if isinstance(markdown, AssistantMarkdown) and id(token) in markdown._closed_fences:
-            element.fence_cache = markdown.fence_cache
+        element._defer_syntax = False
+        if isinstance(markdown, AssistantMarkdown):
+            record = markdown._fence_records.get(id(token))
+            if record is not None:
+                element._defer_syntax = id(token) in markdown._active_fences
+                element._fence_identity = record.identity
+                element._fence_presentation = markdown._fence_presentation
+                if not element._defer_syntax:
+                    element.fence_cache = markdown.fence_cache
         return element
 
     fence_cache: FenceRenderCache | None = None
+    _defer_syntax: bool = False
+    _fence_identity: FenceIdentity | None = None
+    _fence_presentation: FencePresentation | None = None
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RichRenderResult:
+        if self._defer_syntax:
+            # Reuse Rich's exact code-block padding, theme background and wrapping
+            # without invoking Pygments. Only token-level coloring is deferred.
+            code = str(self.text).rstrip()
+            yield _PlainCodeSyntax(code, "text", theme=self.theme, word_wrap=True, padding=1)
+            return
         cache = self.fence_cache
         key = (
             fence_render_key(str(self.text), self.lexer_name, self.theme, console, options)
@@ -189,7 +235,11 @@ class _FencedCodeBlock(CodeBlock):
                 else:
                     output.extend(console.render(renderable, options))
             cached = tuple(output)
-            cache.put(key, cached)
+            retained = cache.put(key, cached)
+        else:
+            retained = True
+        if retained and self._fence_identity is not None and self._fence_presentation is not None:
+            self._fence_presentation.mark_cached(self._fence_identity)
         yield from cached
 
 
@@ -254,6 +304,7 @@ class AssistantMarkdown(Markdown):
         inline_code_theme: str | None = None,
         *,
         compact: Callable[[], bool] | None = None,
+        response_complete: bool = True,
     ) -> None:
         super().__init__(
             markup, code_theme, justify, style, hyperlinks, inline_code_lexer, inline_code_theme
@@ -261,6 +312,8 @@ class AssistantMarkdown(Markdown):
         self._compact = compact
         self.fence_cache: FenceRenderCache | None = None
         self._closed_fences = closed_fences(markup, self.parsed)
+        self._fence_presentation = FencePresentation()
+        self.set_response_complete(response_complete)
         previous: Token | None = None
         gaps: set[int] = set()
         for token in self.parsed:
@@ -280,6 +333,21 @@ class AssistantMarkdown(Markdown):
         self._view_key: tuple[object, ...] | None = None
         self.cached_lines: list[list[Segment]] = []
         self.cached_sources: tuple[tuple[int, int], ...] = ()
+
+    def bind_fence_presentation(self, presentation: FencePresentation, *, complete: bool) -> None:
+        self._fence_presentation = presentation
+        self.set_response_complete(complete)
+
+    def set_response_complete(self, complete: bool) -> None:
+        """Resolve only this parse's bindings against the owning message lifecycle."""
+        self._fence_records = self._fence_presentation.resolve(
+            self.markup, self.parsed, complete=complete
+        )
+        self._active_fences = frozenset(
+            token_id
+            for token_id, record in self._fence_records.items()
+            if record.phase is FencePhase.ACTIVE
+        )
 
     def cache_stream_view(self, *, animate: bool) -> None:
         self._view_cached = True
@@ -630,7 +698,12 @@ class AssistantMessage(ConversationMessage):
         super().__init__("assistant", rendered, pending=pending)
         self.content = content
         self.fence_cache = FenceRenderCache()
+        self.fence_presentation = FencePresentation()
+        self._response_complete = not pending
         if isinstance(rendered, AssistantMarkdown):
+            rendered.bind_fence_presentation(
+                self.fence_presentation, complete=self._response_complete
+            )
             rendered.fence_cache = self.fence_cache
         self.tooltip = copy_hint
         self._arrival = ArrivalTimeline()
@@ -645,7 +718,13 @@ class AssistantMessage(ConversationMessage):
         self._arrival_view_width: int | None = None
 
     def set_content(self, content: str) -> None:
+        if not content.startswith(self.content):
+            self.fence_presentation.reset()
         self.content = content
+
+    def finalize_response(self) -> None:
+        """Mark the current assistant response stable for final code rendering."""
+        self._response_complete = True
 
     def _motion_allowed(self) -> bool:
         return (
@@ -660,10 +739,13 @@ class AssistantMessage(ConversationMessage):
         now = monotonic()
         previous = self.content
         appended = content.startswith(previous)
+        if not appended or self._response_complete:
+            self.fence_presentation.reset()
         enabled = animate and self._motion_allowed() and self.screen is self.app.screen
         if not appended or enabled != self._arrival_enabled:
             self.stop_arrival(flush=False)
         self.content = content  # Canonical source is always immediate and whole.
+        self._response_complete = False
         self._stream_renderer = renderer
         self._arrival_enabled = enabled
         if enabled:
@@ -712,6 +794,7 @@ class AssistantMessage(ConversationMessage):
         if self._stream_renderer is None:
             return
         markdown = self._stream_renderer(self.content)
+        markdown.bind_fence_presentation(self.fence_presentation, complete=self._response_complete)
         markdown.fence_cache = self.fence_cache
         canonical_body = self.app.console.get_style(theme_style(self, ASSISTANT_TEXT_STYLE))
         markdown.cache_stream_view(
@@ -767,6 +850,9 @@ class AssistantMessage(ConversationMessage):
         self._stream_renderer = None
         self._stream_commit_at = -1.0
         if isinstance(content, AssistantMarkdown):
+            content.bind_fence_presentation(
+                self.fence_presentation, complete=self._response_complete
+            )
             content.fence_cache = self.fence_cache
         super().update(content)
 
@@ -790,6 +876,7 @@ class AssistantMessage(ConversationMessage):
         self.stop_arrival(flush=False)
         self._stream_renderer = None
         self.fence_cache.clear()
+        self.fence_presentation.reset()
 
     def render_lines(self, crop: Region) -> list[Strip]:
         strips = super().render_lines(crop)
