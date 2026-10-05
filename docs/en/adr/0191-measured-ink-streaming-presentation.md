@@ -3,17 +3,18 @@
 **English** · [简体中文](../../zh-CN/adr/0191-measured-ink-streaming-presentation.md)
 
 - Date: 2026-10-03
-- Status: Accepted; fixed production timing selected by the user
+- Status: Accepted historical baseline; visual parameters superseded by ADR 0195
 - Scope: Assistant TUI presentation only
 
 ## Decision
 
-Adopt exploration D only: Measured Ink, 20fps / 180ms / at most twelve recent
-plain-prose graphemes. Received provider chunks update canonical source immediately
+The initial implementation adopted exploration D: 20fps / 180ms / at most twelve
+recent plain-prose graphemes. Those visual parameters are historical; the current
+A22 Materialize contract is defined by ADR 0195. Received provider chunks update canonical source immediately
 and intact. No typewriter queue, artificial character release, Runtime event change,
 extra cursor, marker or Agent pulse change. The view may coalesce commits within a
-25ms budget (40Hz), both with animation on and off, independently of the 50ms
-animation clock. This is a scheduling budget, not a guaranteed display rate: source
+25ms budget (40Hz), both with animation on and off, independently of the animation
+clock. This is a scheduling budget, not a guaranteed display rate: source
 pauses, parsing/rendering and terminal backpressure still affect frame pacing. Animation
 follows arrival; it never
 controls delivery. Appearance → Input provides one inherited boolean
@@ -36,13 +37,14 @@ segmentation, replacing the exploration helper. Source indices are code points,
 not terminal cells. Whole safe Latin/Han graphemes receive metadata; Rich/Textual
 retain wrapping and cell widths. Emoji, ZWJ, flags and complex shaping remain static.
 At most twelve eligible tail glyphs per paragraph receive metadata, restricted to a
-384-code-point source window; the global overlay cap remains twelve glyphs.
+384-code-point source window; the current global active overlay cap is eight glyphs
+under ADR 0195.
 First presentation of a proven visible glyph fixes its birth, including appended
 combining marks; receive time is diagnostic only. See [ADR 0194](0194-measured-ink-presentation-lifecycle.md).
 
 ## Cache and refresh ownership
 
-`AssistantMessage` owns one bounded arrival timeline, one 50ms animation clock,
+`AssistantMessage` owns one bounded arrival timeline, one shared animation clock,
 one cancellable asyncio one-shot view deadline and one current Markdown view.
 The deadline queues into the widget message pump and always delivers when overdue;
 Textual 1.x one-shot timers default to skipping late callbacks and cannot own a

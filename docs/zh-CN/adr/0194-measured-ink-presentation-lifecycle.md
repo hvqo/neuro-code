@@ -3,7 +3,7 @@
 **简体中文** · [English](../../en/adr/0194-measured-ink-presentation-lifecycle.md)
 
 - 日期：2026-10-05
-- 状态：已接受实现；等待实机视觉验收
+- 状态：已接受（生命周期）；当前视觉参数见 ADR 0195
 - 范围：仅呈现生命周期；替代 ADR 0191 的接收时间过期与 resize 取消规则
 
 ## 证据与决策
@@ -12,8 +12,9 @@
 `on_resize → stop_arrival` 提前丢弃未呈现 arrival；cold render/layout 耗时
 286～420ms，超过探索的 280ms receive-based 寿命。这是生命周期缺陷，不是配色问题。
 
-保留既有 Production 效果：20fps / 180ms / 十二 glyph，正文独立 25ms commit，
-canonical delta 整块立即接收。不增加 Variant、palette、每字 timer、lexer 或围栏行为。
+本 ADR 只负责生命周期。当前视觉效果为 ADR 0195 定义的 A22 Materialize：24fps / 160ms /
+最多八个活跃 glyph。保留首次呈现生命周期和独立 25ms 正文 commit；canonical delta
+仍整块立即接收。不增加每字 timer、lexer 或围栏行为。
 
 ## Source 生命周期
 
@@ -51,14 +52,15 @@ presentation 不变，Syntax 继续按原有 cache key 正常失效。
 
 ## 验证与回放
 
-回归覆盖 0/50/150/300/400/500ms stall、280ms duration 下的 400ms stall、终端
+回归覆盖 A22 160ms lifetime 下的 0/50/150/300/400/500ms stall，以及用于证明
+first-presentation birth 的 400ms 诊断 Sentinel、终端
 尺寸不变时 156→155→156 width 事件、真实 scrollbar overflow、
 120×40→100×32→80×24→120×40、完整/裁剪 CJK、不可见 source、主题刷新、
 combining mark、generation reset、有界状态和 idle 文字零工作。
 
 显式测试工具采用 Production mapping/lifecycle，使用完整 synthetic delta 的 540 行
 围栏 + 正文 tape。Sentinel 只在诊断时使用 500ms reverse+bold，仍遵守 Production 的
-十二 glyph 上限，不进入设置或生产 Variant。
+八个活跃 glyph 上限，不进入设置或生产 Variant。
 
 ```bash
 uv run python -m tests.visual.text_arrival.lifecycle_replay --sentinel --theme system

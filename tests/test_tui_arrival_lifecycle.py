@@ -8,6 +8,7 @@ from textual import events
 from textual.geometry import Region, Size
 
 from neuro_code.interfaces.tui import widgets
+from neuro_code.interfaces.tui.terminal_palette import TerminalColorLevel, TerminalPalette
 from neuro_code.interfaces.tui.text_arrival import ARRIVAL_META, SOURCE_WINDOW, ArrivalTimeline
 from neuro_code.interfaces.tui.widgets import AssistantMarkdown, AssistantMessage
 from neuro_code.shared.ui_theme import UiTheme
@@ -43,6 +44,21 @@ def test_pending_bound_and_settled_tombstones_are_generation_local():
     timeline.clear()
     timeline.receive(0, 1, 10001)
     assert timeline.start_visual((0, 1), 10002) == 0
+
+
+def test_active_birth_survives_source_window_advance_until_its_original_settle():
+    timeline = ArrivalTimeline()
+    timeline.receive(0, 1, 0)
+    assert timeline.start_visual((0, 1), 0) == 0
+
+    timeline.receive(SOURCE_WINDOW + 116, SOURCE_WINDOW + 117, 0.05)
+    assert timeline.births == {0: 0}
+    assert timeline.registered((0, 1))
+    assert timeline.age((0, 1), 0.05) == pytest.approx(0.05)
+
+    timeline.prune(0.17)
+    assert 0 not in timeline.births
+    assert not timeline.registered((0, 1))
 
 
 @pytest.mark.asyncio
@@ -96,7 +112,12 @@ async def test_sentinel_first_frame_survives_400ms_and_reflow(theme, clock, monk
     monkeypatch.setattr(
         widgets, "ink_style", lambda style, *args: style + Style(reverse=True, bold=True)
     )
-    app = make_app(theme, fixture="empty-conversation")
+    terminal_palette = (
+        TerminalPalette(TerminalColorLevel.TRUECOLOR, (233, 233, 233), (23, 23, 23))
+        if theme is UiTheme.SYSTEM
+        else None
+    )
+    app = make_app(theme, fixture="empty-conversation", terminal_palette=terminal_palette)
     async with app.run_test(size=(120, 40)) as pilot:
         pending = await begin(app, pilot)
         render = pending.render_lines
@@ -127,16 +148,16 @@ async def test_sentinel_first_frame_survives_400ms_and_reflow(theme, clock, monk
         assert set(pending._arrival.births.values()) == {clock[0]}
 
 
-def test_280ms_duration_cannot_consume_400ms_pending(monkeypatch):
+def test_160ms_duration_cannot_consume_delayed_pending(monkeypatch):
     from neuro_code.interfaces.tui import text_arrival
 
-    monkeypatch.setattr(text_arrival, "DURATION_SECONDS", 0.28)
+    monkeypatch.setattr(text_arrival, "DURATION_SECONDS", 0.16)
     timeline = ArrivalTimeline()
     timeline.receive(0, 1, 1)
     timeline.prune(1.4)
     assert timeline.start_visual((0, 1), 1.4) == 0
-    assert timeline.age((0, 1), 1.6) == pytest.approx(0.2)
-    assert timeline.start_visual((0, 1), 1.7) is None
+    assert timeline.age((0, 1), 1.48) == pytest.approx(0.08)
+    assert timeline.start_visual((0, 1), 1.56) is None
 
 
 @pytest.mark.asyncio
@@ -274,11 +295,13 @@ async def test_true_resize_theme_and_rebuild_never_rebirth(clock):
         await pilot.pause()
         assert pending._arrival.births == births
         assert pending._arrival_timer is timer
+        active_before_append = pending._arrival.active_starts(clock[0])
         app._update_pending_assistant(source + " appended")
         clock[0] += 0.03
         pending._commit_pending_view(pending._stream_generation)
         await pilot.pause()
         assert all(pending._arrival.births[s] == at for s, at in births.items())
+        assert active_before_append <= {start for start, _ in pending.renderable.cached_sources}
 
 
 @pytest.mark.asyncio
@@ -296,7 +319,7 @@ async def test_unseen_cached_sources_do_not_start_and_cropped_cells_fail_closed(
         md.cached_sources = ((0, 1), (9, 10))
         from rich.style import Style
 
-        style = Style(meta={ARRIVAL_META: (0, 1)})
+        style = Style(color="#E9E9E9", bgcolor="#171717", meta={ARRIVAL_META: (0, 1)})
         monkeypatch.setattr(
             widgets.ConversationMessage,
             "render_lines",
