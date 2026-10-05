@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "definition_id": "dw1-example",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "targets": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "max_items": 4
+      },
+      "objective": {
+        "type": "string"
+      }
+    }
+  },
+  "budget": {
+    "max_generated_tasks": 32,
+    "max_model_calls": 100,
+    "max_tool_calls": 1000,
+    "max_input_tokens": 100000,
+    "max_output_tokens": 20000,
+    "max_wall_seconds": 600
+  },
+  "steps": [
+    {
+      "kind": "Map",
+      "step_id": "expand",
+      "collection": {
+        "kind": "input",
+        "field_path": [
+          "targets"
+        ]
+      },
+      "max_items": 4,
+      "batch": {
+        "kind": "TaskBatch",
+        "step_id": "item_batch",
+        "tasks": [
+          {
+            "task_id": "work",
+            "prompt_template": "检查中文与 English 源码；只修改被分配的目标。",
+            "profile_ref": "writable_worker",
+            "required_capabilities": [
+              "workspace.read",
+              "workspace.write"
+            ],
+            "inputs": {
+              "target": {
+                "kind": "item",
+                "field_path": []
+              }
+            },
+            "depends_on": []
+          }
+        ],
+        "max_parallel": 1
+      }
+    }
+  ],
+  "completion_requirements": []
+}

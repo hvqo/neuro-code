@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "definition_id": "dw1-example",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "targets": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "max_items": 4
+      },
+      "objective": {
+        "type": "string"
+      }
+    }
+  },
+  "budget": {
+    "max_generated_tasks": 32,
+    "max_model_calls": 100,
+    "max_tool_calls": 1000,
+    "max_input_tokens": 100000,
+    "max_output_tokens": 20000,
+    "max_wall_seconds": 600
+  },
+  "steps": [
+    {
+      "kind": "TaskBatch",
+      "step_id": "implement",
+      "tasks": [
+        {
+          "task_id": "work",
+          "prompt_template": "检查中文与 English 源码；只修改被分配的目标。",
+          "profile_ref": "writable_worker",
+          "required_capabilities": [
+            "workspace.read",
+            "workspace.write"
+          ],
+          "inputs": {},
+          "depends_on": []
+        }
+      ],
+      "max_parallel": 1
+    },
+    {
+      "kind": "Activity",
+      "step_id": "adopt",
+      "activity": "parent.adopt",
+      "inputs": {}
+    },
+    {
+      "kind": "Repeat",
+      "step_id": "repair_loop",
+      "max_iterations": 3,
+      "steps": [
+        {
+          "kind": "Activity",
+          "step_id": "verify",
+          "activity": "parent.verify",
+          "inputs": {}
+        }
+      ],
+      "until": {
+        "op": "eq",
+        "ref": {
+          "kind": "result",
+          "step_id": "verify",
+          "field_path": [
+            "status"
+          ]
+        },
+        "value": "PASS"
+      }
+    },
+    {
+      "kind": "Activity",
+      "step_id": "final_verify",
+      "activity": "parent.verify",
+      "inputs": {}
+    },
+    {
+      "kind": "Branch",
+      "step_id": "route",
+      "condition": {
+        "op": "eq",
+        "ref": {
+          "kind": "result",
+          "step_id": "final_verify",
+          "field_path": [
+            "status"
+          ]
+        },
+        "value": "PASS"
+      },
+      "paths": {
+        "pass": [
+          {
+            "kind": "Activity",
+            "step_id": "accepted",
+            "activity": "parent.adopt",
+            "inputs": {}
+          }
+        ],
+        "fail": [
+          {
+            "kind": "Activity",
+            "step_id": "repair",
+            "activity": "parent.repair",
+            "inputs": {}
+          }
+        ]
+      },
+      "then_path": "pass",
+      "else_path": "fail"
+    }
+  ],
+  "completion_requirements": [
+    {
+      "op": "eq",
+      "ref": {
+        "kind": "result",
+        "step_id": "final_verify",
+        "field_path": [
+          "status"
+        ]
+      },
+      "value": "PASS"
+    }
+  ]
+}

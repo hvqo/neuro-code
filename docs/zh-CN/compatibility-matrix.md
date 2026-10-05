@@ -10,6 +10,7 @@
 
 | 能力 | 目标 | 状态 | 证据 / 备注 |
 |---|---|---|---|
+| Dynamic Workflow 定义基础 | M5 | partial | DW1 提供 strict JSON、五种不可变 IR 节点、纯结构/类型/支配关系/上限验证和 SHA-256 canonical fingerprint。没有 Workflow 执行路径、Run、持久化、DAG publication、Planner 接入或 authority 变化。Profile/capability 仍仅为 intent，运行时检查留到后续。见 [ADR 0196](adr/0196-dw1-workflow-ir-and-pure-validator.md)。 |
 | Semantic text accents | TUI | intentionally-different | 13 个 UI 主题映射正文、工具与状态的语义色；围栏代码/diff token 使用下述独立 Syntax Theme 契约。主题、排版和视觉回归保护表现层边界。 |
 | TUI 排版与阅读层级 | TUI | intentionally-different | V1B 使普通正文、用户文字、工具/状态摘要及界面标题保持 regular。H1 与显式 Markdown 强调保留 bold；路径、耗时和计数作为元数据退让。行内代码没有背景标签，各主题共享排版角色且不修改几何。确定性快照和中英文混排 fixture 约束阅读契约。详见 [ADR 0185](adr/0185-tui-typography-and-reading-hierarchy-v1b.md)。 |
 | TUI Composer 与外壳布局 | TUI | intentionally-different | V1C 让 Header 与底部状态栏各占 1 行，Composer 随草稿增高且受视口预算约束，将空输入释放的行交回不重复展示模型/工作区的主阅读区。Footer 展示的 workspace 路径在各平台统一使用 `/` 分隔符。默认 Enter 发送；终端能区分修饰键时组合 Enter 换行，Ctrl+J/F2 移至 Help；键盘能力按独立事件确认；编辑器与发送按钮共用一行，无常驻提示。三个尺寸的快照、几何与键盘测试约束外壳。详见 [ADR 0186](adr/0186-tui-composer-and-shell-layout-v1c.md)。 |
