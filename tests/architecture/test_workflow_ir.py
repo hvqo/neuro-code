@@ -191,9 +191,10 @@ def test_fingerprint_golden_is_independent_of_hash_seed_and_host_paths(seed):
         ],
         input=recording,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=True,
-        env={**os.environ, "PYTHONHASHSEED": seed},
+        env={**os.environ, "PYTHONHASHSEED": seed, "PYTHONIOENCODING": "utf-8"},
     )
     assert completed.stdout.strip() == expected
     assert "\\u" not in definition.canonical_json
