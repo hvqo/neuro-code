@@ -228,7 +228,11 @@ def test_strict_json(wire, code):
     assert code in {item.code for item in caught.value.diagnostics}
 
 
-@pytest.mark.parametrize("wire", [None, b"{}", " " * (MAX_WORKFLOW_SOURCE_BYTES + 1), "\ud800"])
+@pytest.mark.parametrize(
+    "wire",
+    [None, b"{}", " " * (MAX_WORKFLOW_SOURCE_BYTES + 1), "\ud800"],
+    ids=["none", "bytes", "oversize", "surrogate"],
+)
 def test_invalid_source_is_bounded(wire):
     with pytest.raises(WorkflowValidationError) as caught:
         compile_workflow(wire)
