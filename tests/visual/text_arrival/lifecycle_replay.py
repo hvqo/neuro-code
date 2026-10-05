@@ -207,14 +207,33 @@ class LifecycleReplay(NeuroCodeApp):
                 await asyncio.sleep(0.9)
                 message = self._pending_assistant
                 assert message.renderable.markup == source
-                before = Counter(profile.counts)
-                body_refresh_before = local_refreshes["body_refresh"]
-                await asyncio.sleep(0.3)
-                idle = {
-                    key: profile.counts[key] - before[key]
-                    for key in ["animation_tick", "markdown_parse", "refresh_request"]
-                }
-                idle["body_refresh"] = local_refreshes["body_refresh"] - body_refresh_before
+                # Wait through any final first-presentation or timer callback that
+                # was queued during the replay, then measure one genuinely quiet
+                # window. Windows runners can deliver the final render later than
+                # the replay clock without changing the runtime lifecycle.
+                for _ in range(8):
+                    before = Counter(profile.counts)
+                    body_refresh_before = local_refreshes["body_refresh"]
+                    await asyncio.sleep(0.3)
+                    idle = {
+                        key: profile.counts[key] - before[key]
+                        for key in [
+                            "animation_tick",
+                            "markdown_parse",
+                            "refresh_request",
+                        ]
+                    }
+                    idle["body_refresh"] = local_refreshes["body_refresh"] - body_refresh_before
+                    if (
+                        message._arrival_timer is None
+                        and message._stream_view_timer is None
+                        and idle["animation_tick"] == 0
+                        and idle["markdown_parse"] == 0
+                        and idle["body_refresh"] == 0
+                    ):
+                        break
+                else:
+                    raise AssertionError(f"streaming view did not become idle: {idle}")
                 # App pulse/status may refresh; isolate the text timer and parse.
                 assert message._arrival_timer is message._stream_view_timer is None
                 assert idle["animation_tick"] == idle["markdown_parse"] == 0

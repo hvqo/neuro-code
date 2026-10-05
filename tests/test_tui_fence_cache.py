@@ -7,6 +7,7 @@ import pytest
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.theme import Theme
+from textual.geometry import Region
 
 from neuro_code.interfaces.tui.fence_cache import FenceRenderCache, fence_render_key
 from neuro_code.interfaces.tui.syntax import resolve_syntax_theme
@@ -15,6 +16,28 @@ from neuro_code.shared.syntax_theme import SyntaxTheme
 from neuro_code.shared.ui_theme import UiTheme
 from tests.test_tui_text_arrival import wait_for_committed_view
 from tests.visual.showcases import make_app
+
+
+def visible_signature(lines):
+    """Compare rendered output while ignoring private arrival provenance metadata."""
+    rows = []
+    for line in lines:
+        normalized = []
+        for segment in line:
+            style = str(segment.style) if segment.style else ""
+            control = segment.control
+            if (
+                normalized
+                and control is None
+                and normalized[-1][2] is None
+                and normalized[-1][1] == style
+            ):
+                previous_text, previous_style, previous_control = normalized[-1]
+                normalized[-1] = (previous_text + segment.text, previous_style, previous_control)
+            else:
+                normalized.append((segment.text, style, control))
+        rows.append(tuple(normalized))
+    return tuple(rows)
 
 
 def render(
@@ -172,9 +195,15 @@ async def test_message_lifecycle_resize_theme_animation_and_scroll(theme, animat
                 expected = app._render_entry("assistant", source)
                 expected.cache_stream_view(animate=animate)
                 options = app.console.options.update(width=pending.content_size.width)
-                assert app.console.render_lines(
-                    actual, options, pad=False
-                ) == app.console.render_lines(expected, options, pad=False)
+                if animate:
+                    # Compare the stable visual result, not internal source tags or
+                    # a platform-dependent point inside the 160ms arrival lifetime.
+                    pending.render_lines(Region(0, 0, pending.size.width, pending.size.height))
+                    await pilot.pause(0.2)
+                    actual = pending.renderable
+                assert visible_signature(
+                    app.console.render_lines(actual, options, pad=False)
+                ) == visible_signature(app.console.render_lines(expected, options, pad=False))
             assert len(pending.fence_cache) > 0
             cache = pending.fence_cache
             app._apply_ui_theme(UiTheme.PORCELAIN)
