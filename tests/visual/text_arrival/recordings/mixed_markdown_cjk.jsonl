@@ -1,0 +1,108 @@
+{"at_ms": 0, "text": "我正在分析"}
+{"at_ms": 182, "text": "当前仓库的实现方式，并检查"}
+{"at_ms": 437, "text": "流式渲染链路。新"}
+{"at_ms": 594, "text": "的文字会立即显示，已经完成的文字保持安静。"}
+{"at_ms": 883, "text": "我们关心的是"}
+{"at_ms": 1097, "text": "阅读过程是否连续，而不是文字旁边"}
+{"at_ms": 1345, "text": "有没有额外的符号。\n\n"}
+{"at_ms": 1543, "text": "## 第一阶段：理解真实证据\n\n首先核对 pro"}
+{"at_ms": 1815, "text": "vider"}
+{"at_ms": 1996, "text": " delta、canoni"}
+{"at_ms": 2252, "text": "cal text"}
+{"at_ms": 2409, "text": " 和 view commit 的顺序。一次"}
+{"at_ms": 2698, "text": " delta"}
+{"at_ms": 2912, "text": " 中的全部内容都进入真实回答，p"}
+{"at_ms": 3160, "text": "resentation"}
+{"at_ms": 3358, "text": " 只调整刚刚到达的字形。The animatio"}
+{"at_ms": 3630, "text": "n fol"}
+{"at_ms": 3812, "text": "lows the stre"}
+{"at_ms": 4067, "text": "am, and "}
+{"at_ms": 4224, "text": "never schedules a sec"}
+{"at_ms": 4513, "text": "ond qu"}
+{"at_ms": 4727, "text": "eue of character"}
+{"at_ms": 4975, "text": "s.\n\n正文会跨越终端"}
+{"at_ms": 5173, "text": "宽度自动换行。中文、English identi"}
+{"at_ms": 5445, "text": "fiers"}
+{"at_ms": 5626, "text": "、全角标点，以及 é 和"}
+{"at_ms": 5882, "text": " ä，都应保持"}
+{"at_ms": 6039, "text": "同一个阅读轴。👩🏽‍💻、🇨🇳 与复杂 ZW"}
+{"at_ms": 6328, "text": "J glyp"}
+{"at_ms": 6542, "text": "h 保持静态，不拆散 graph"}
+{"at_ms": 6790, "text": "eme。\n\n### 语"}
+{"at_ms": 6988, "text": "义样式继续属于 Markdown\n\n- 第一项："}
+{"at_ms": 7260, "text": "保持**关"}
+{"at_ms": 7442, "text": "键结论**与普通正文的层级"}
+{"at_ms": 7697, "text": "，同时检查*强调"}
+{"at_ms": 7854, "text": "说明*是否完整保留原来的字形属性。\n- 第"}
+{"at_ms": 8143, "text": "二项：参考 "}
+{"at_ms": 8357, "text": "[Neuro Code 文档]("}
+{"at_ms": 8605, "text": "https://exa"}
+{"at_ms": 8803, "text": "mple.com/neuro)，链接的语义颜色与"}
+{"at_ms": 9075, "text": "目标不应丢"}
+{"at_ms": 9256, "text": "失。\n- 第三项：`AGE"}
+{"at_ms": 9512, "text": "NTS.md`、"}
+{"at_ms": 9669, "text": "`src/app.py` 和 `uv ru"}
+{"at_ms": 9958, "text": "n pyte"}
+{"at_ms": 10172, "text": "st` 使用已有 inline "}
+{"at_ms": 10420, "text": "code 样式，没有额"}
+{"at_ms": 10618, "text": "外背景标签。\n\n> 引用内容使用既有的 Mark"}
+{"at_ms": 10890, "text": "down "}
+{"at_ms": 11072, "text": "呈现。新到达的文字可以短暂"}
+{"at_ms": 11327, "text": "变化，但引用结构"}
+{"at_ms": 11484, "text": "本身不参与动画。\n\n接下来显示真正的代码围"}
+{"at_ms": 11773, "text": "栏。ACTI"}
+{"at_ms": 11987, "text": "VE code foregrou"}
+{"at_ms": 12235, "text": "nd 必须始终稳定，闭"}
+{"at_ms": 12433, "text": "合后才切换一次正式 Syntax Theme。这"}
+{"at_ms": 12705, "text": "段已经验收"}
+{"at_ms": 12886, "text": "的行为独立于正文 arri"}
+{"at_ms": 13142, "text": "val moti"}
+{"at_ms": 13299, "text": "on。\n\n```python\nfrom p"}
+{"at_ms": 13588, "text": "athlib"}
+{"at_ms": 13802, "text": " import Path\n\nde"}
+{"at_ms": 14050, "text": "f inspect_w"}
+{"at_ms": 14248, "text": "orkspace(root: Path) -> "}
+{"at_ms": 14520, "text": "list["}
+{"at_ms": 14702, "text": "str]:\n    \"\"\""}
+{"at_ms": 14711, "text": "代码区域保持稳定"}
+{"at_ms": 14720, "text": "，语法主题独立。\"\"\"\n    paths"}
+{"at_ms": 14729, "text": " = []\n"}
+{"at_ms": 14738, "text": "    for candidat"}
+{"at_ms": 14747, "text": "e in root.i"}
+{"at_ms": 14756, "text": "terdir():\n        if can"}
+{"at_ms": 14765, "text": "didat"}
+{"at_ms": 14774, "text": "e.is_file():\n"}
+{"at_ms": 14783, "text": "        "}
+{"at_ms": 14792, "text": "    paths.append(cand"}
+{"at_ms": 14801, "text": "idate."}
+{"at_ms": 14810, "text": "name)\n    return"}
+{"at_ms": 14819, "text": " sorted(pat"}
+{"at_ms": 14828, "text": "hs)\n```\n\n代码完成后，回到普通 pros"}
+{"at_ms": 14837, "text": "e。The"}
+{"at_ms": 14846, "text": " settled code"}
+{"at_ms": 14855, "text": " stays c"}
+{"at_ms": 14864, "text": "ompletely static whil"}
+{"at_ms": 15153, "text": "e this"}
+{"at_ms": 15367, "text": " paragraph conti"}
+{"at_ms": 15615, "text": "nues to arr"}
+{"at_ms": 15813, "text": "ive. 动画不是打字机，也不改变输出速度。只有"}
+{"at_ms": 16085, "text": "最新一小段"}
+{"at_ms": 16267, "text": "合格字形短暂变化，其余正文"}
+{"at_ms": 16522, "text": "保持 canon"}
+{"at_ms": 16679, "text": "ical style。\n\n最后检查高速输出"}
+{"at_ms": 16968, "text": "。一批文字即"}
+{"at_ms": 17182, "text": "使很长，也必须立刻完整可见。最近"}
+{"at_ms": 17430, "text": "的 bounded t"}
+{"at_ms": 17628, "text": "rail 可以更短，但不能把整段高亮，也不能让旧"}
+{"at_ms": 17900, "text": "字形因新的"}
+{"at_ms": 18082, "text": " delta 一直延长生命"}
+{"at_ms": 18337, "text": "周期。\n\n## "}
+{"at_ms": 18494, "text": "完成后的状态\n\n停止到达后，全部文字恢复原"}
+{"at_ms": 18783, "text": "样，anim"}
+{"at_ms": 18997, "text": "ation clock 随之停止"}
+{"at_ms": 19245, "text": "。没有持续 curso"}
+{"at_ms": 19443, "text": "r，没有循环动效，也没有后续慢慢补出的字符。请在"}
+{"at_ms": 19715, "text": "同一份 r"}
+{"at_ms": 19897, "text": "ecording 上比较 "}
+{"at_ms": 20152, "text": "OFF 与候选方"}
+{"at_ms": 20309, "text": "案，再根据实际终端观感选择。\n"}
