@@ -28,8 +28,8 @@ Diff、list、quote、table 均静态呈现。整个格式段落静态降级，�
 source code-point 索引与 terminal cell 分离，完整安全 Latin/Han grapheme 才携带 metadata；
 换行和 cell width 仍由 Rich/Textual 处理。emoji、ZWJ、flags 与复杂 shaping 静态降级。
 每个段落只标记末尾十二个候选 glyph，并限制到 source 最后 384 个 code point；实际叠加
-全局最多十二个 glyph。首次相交 arrival 固定 glyph 出生时间，追加 combining mark 也不会
-重新启动寿命，持续高速输出不能无限延长旧文字动画。
+全局最多十二个 glyph。可证明 glyph 首次呈现时固定 birth，追加 combining mark 不会
+重启动画；接收时间仅用于诊断，见 [ADR 0194](0194-measured-ink-presentation-lifecycle.md)。
 
 ## 缓存与刷新所有权
 
@@ -48,9 +48,11 @@ Markdown semantic styles。主题、Syntax、width、viewport 变化失效或替
 缓存 source-tagged strips，并对受影响行请求局部 refresh，不请求 layout。Textual 仍负责
 屏幕合成，局部 dirty region 不意味着 compositor 成本为零。
 
-完成、取消、错误、discard、restore、新 response、view 隐藏、resize、主题或 Syntax 切换、
-unmount 均停止两种 timer、失效旧 callback 并清理 arrival。正文自然增高不等于 viewport resize。最后 arrival 到期
-即停止 timer，idle 不轮询。Headless、NO_COLOR、ANSI16/unknown 静态降级。关闭动画仍复用
+完成、取消、错误、discard、restore、新 response、view 隐藏、unmount 停止两种 timer、
+失效旧 callback 并清理 arrival。resize/reflow、主题或 Syntax 刷新只失效呈现 geometry/style，
+保留 source 生命周期。首次呈现启动 clock，最后 presented glyph 到期即停止；有界
+pending/settled identity 不轮询。[ADR 0194](0194-measured-ink-presentation-lifecycle.md)
+替代原有接收时间过期规则。Headless、NO_COLOR、ANSI16/unknown 静态降级。关闭动画仍复用
 合并刷新和缓存，不创建 arrival ranges。
 
 ## 验证与限制

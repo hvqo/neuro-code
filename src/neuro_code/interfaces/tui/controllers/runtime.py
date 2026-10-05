@@ -422,7 +422,7 @@ class RuntimeControllerMixin(TuiAppControllerMixin):
             isinstance(self._pending_assistant, AssistantMessage)
             and self._pending_assistant.content
         ):
-            self._pending_assistant.update(
+            self._pending_assistant.restyle_stream(
                 self._render_entry("assistant", self._pending_assistant.content)
             )
         elif self._pending_assistant is not None and self._assistant_parts:
