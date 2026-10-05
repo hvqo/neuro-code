@@ -25,7 +25,8 @@ LRU 最多保留 32 entries、每消息估算 8 MiB，计入 source、Segments�
 估算不是精确 RSS 保证；过大结果照常渲染但不保留。Eviction 不影响正确性。
 Unmount/disposal 清空 entries；conversation replacement 删除所属 widget。
 不新增全局结果缓存、parser replacement、后台 worker 或 timer。既有 current-view cache
-保持独立。正文仍为 25ms/40Hz，Measured Ink 仍为 20fps/180ms/12 glyph；滚动与 Runtime 不变。
+保持独立。正文仍为 25ms/40Hz；当前 Measured Ink 采用 A22 Materialize，24fps/160ms/最多
+8 个活跃 glyph（ADR 0195）；滚动与 Runtime 不变。
 
 ## 验证与限制
 

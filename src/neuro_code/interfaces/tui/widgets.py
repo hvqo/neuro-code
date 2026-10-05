@@ -14,6 +14,7 @@ from typing import ClassVar, Literal
 
 from markdown_it.token import Token
 from pygments.token import Text as PygmentsText
+from rich.color import Color
 from rich.console import Console, ConsoleOptions, JustifyMethod, RenderableType
 from rich.console import RenderResult as RichRenderResult
 from rich.markdown import CodeBlock, Heading, Markdown, MarkdownElement, Paragraph
@@ -54,19 +55,26 @@ from neuro_code.interfaces.tui.terminal_keyboard import (
     TerminalInputNormalizer,
     TerminalKeyboardCapability,
 )
+from neuro_code.interfaces.tui.terminal_palette import TerminalColorLevel, TerminalPalette
 from neuro_code.interfaces.tui.text_arrival import (
     ARRIVAL_META,
     FRAME_SECONDS,
-    GLYPH_LIMIT,
+    MAX_ACTIVE_GLYPHS,
     SOURCE_WINDOW,
     ArrivalTimeline,
+    MaterializePlan,
+    color_system_name,
+    concrete_rgb,
     ink_style,
+    materialize_plan,
     paragraph_sources,
+    quantized_rgb,
     tag_paragraph,
 )
 from neuro_code.interfaces.tui.theme import (
     ACCENT_CODE,
     ASSISTANT_TEXT_STYLE,
+    BG_0,
     TEXT_DISABLED,
     TEXT_PLACEHOLDER,
     TEXT_PRIMARY,
@@ -74,8 +82,9 @@ from neuro_code.interfaces.tui.theme import (
     TOOL_COMPLETE_STYLE,
     theme_style,
 )
+from neuro_code.shared.ui_theme import UiTheme
 
-# Content presentation cadence is independent of Measured Ink's 20fps clock.
+# Content presentation cadence is independent of Measured Ink's 24fps clock.
 # Fixed production budget; animation-off uses the same commit clock.
 VIEW_COMMIT_SECONDS = 1 / 40
 
@@ -249,6 +258,7 @@ class _ReadingParagraph(Paragraph):
     extra_gap: bool = False
     source: tuple[int, str] | None = None
     source_floor: int = 0
+    preserve_sources: frozenset[int] = frozenset()
 
     @classmethod
     def create(cls, markdown: Markdown, token: Token) -> _ReadingParagraph:
@@ -259,6 +269,7 @@ class _ReadingParagraph(Paragraph):
         if isinstance(markdown, AssistantMarkdown):
             element.source = markdown._arrival_sources.get(id(token))
             element.source_floor = markdown._arrival_floor
+            element.preserve_sources = markdown._arrival_preserve_sources
         return element
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RichRenderResult:
@@ -266,7 +277,7 @@ class _ReadingParagraph(Paragraph):
             yield Segment.line()
         text = self.text.copy() if self.source is not None else self.text
         text.justify = self.justify
-        tag_paragraph(text, self.source, self.source_floor)
+        tag_paragraph(text, self.source, self.source_floor, self.preserve_sources)
         yield text
 
 
@@ -329,6 +340,7 @@ class AssistantMarkdown(Markdown):
         self._paragraph_gaps = frozenset(gaps)
         self._arrival_sources: dict[int, tuple[int, str]] = {}
         self._arrival_floor = 0
+        self._arrival_preserve_sources: frozenset[int] = frozenset()
         self._view_cached = False
         self._view_key: tuple[object, ...] | None = None
         self.cached_lines: list[list[Segment]] = []
@@ -349,10 +361,13 @@ class AssistantMarkdown(Markdown):
             if record.phase is FencePhase.ACTIVE
         )
 
-    def cache_stream_view(self, *, animate: bool) -> None:
+    def cache_stream_view(
+        self, *, animate: bool, preserve_sources: frozenset[int] = frozenset()
+    ) -> None:
         self._view_cached = True
         self._arrival_floor = max(0, len(self.markup) - SOURCE_WINDOW)
         self._arrival_sources = paragraph_sources(self.markup, self.parsed) if animate else {}
+        self._arrival_preserve_sources = preserve_sources if animate else frozenset()
 
     def invalidate_view(self) -> None:
         self._view_key = None
@@ -730,8 +745,38 @@ class AssistantMessage(ConversationMessage):
         return (
             not self.app.is_headless
             and not self.app.no_color
-            and self.app.console.color_system in {"truecolor", "256"}
+            and color_system_name(self.app.console.color_system) is not None
         )
+
+    def _arrival_canvas_rgb(self) -> tuple[int, int, int] | None:
+        color_system = self.app.console.color_system
+        mode = color_system_name(color_system)
+        if mode is None:
+            return None
+        if UiTheme.from_textual_name(self.app.theme) is UiTheme.SYSTEM:
+            palette = getattr(self.app, "terminal_palette", None)
+            if (
+                not isinstance(palette, TerminalPalette)
+                or palette.color_level
+                not in {TerminalColorLevel.TRUECOLOR, TerminalColorLevel.ANSI256}
+                or palette.foreground is None
+                or palette.background is None
+            ):
+                return None
+            # This is the probed terminal default background, so it is already
+            # the color the user sees and must not be quantized as a UI fill.
+            return palette.background
+        color = self.app.console.get_style(theme_style(self, BG_0)).color
+        rgb = concrete_rgb(color)
+        return quantized_rgb(rgb, color_system) if rgb is not None else None
+
+    def _arrival_background_rgb(
+        self, style: Style, canvas_rgb: tuple[int, int, int] | None
+    ) -> tuple[int, int, int] | None:
+        if style.bgcolor is None:
+            return canvas_rgb
+        rgb = concrete_rgb(style.bgcolor)
+        return quantized_rgb(rgb, self.app.console.color_system) if rgb is not None else None
 
     def stream_content(
         self, content: str, renderer: Callable[[str], AssistantMarkdown], *, animate: bool
@@ -799,7 +844,8 @@ class AssistantMessage(ConversationMessage):
         canonical_body = self.app.console.get_style(theme_style(self, ASSISTANT_TEXT_STYLE))
         markdown.cache_stream_view(
             animate=self._arrival_enabled
-            and self.app.console.get_style(markdown.style) == canonical_body
+            and self.app.console.get_style(markdown.style) == canonical_body,
+            preserve_sources=self._arrival.active_starts(now),
         )
         if isinstance(self.parent, TranscriptScroll):
             self.parent.follow_stream_growth()
@@ -909,13 +955,33 @@ class AssistantMessage(ConversationMessage):
         markdown = self.renderable
         if not isinstance(markdown, AssistantMarkdown):
             return strips
-        sources = [
-            source for source in markdown.cached_sources if self._arrival.registered(source)
-        ][:GLYPH_LIMIT]
-        # Recency is source-based, never expiry-based. Settling the newest tail
-        # must not promote older pending paragraphs into a fresh animation wave.
-        ranks = {source: rank for rank, source in enumerate(sources)}
-        primary, secondary = theme_style(self, TEXT_PRIMARY), theme_style(self, TEXT_SECONDARY)
+        canvas_rgb = self._arrival_canvas_rgb()
+        visible_sources = {
+            tuple(segment.style.meta[ARRIVAL_META])
+            for strip in strips
+            for segment in strip
+            if segment.style
+            and ARRIVAL_META in segment.style.meta
+            and self._arrival.registered(tuple(segment.style.meta[ARRIVAL_META]))
+            and segment.text == self.content[slice(*tuple(segment.style.meta[ARRIVAL_META]))]
+        }
+        active_sources = sorted(
+            (source for source in visible_sources if self._arrival.age(source, now) is not None),
+            key=lambda source: self._arrival.births[source[0]],
+        )[:MAX_ACTIVE_GLYPHS]
+        slots = MAX_ACTIVE_GLYPHS - len(active_sources)
+        new_sources = sorted(
+            (
+                source
+                for source in visible_sources
+                if source[0] not in self._arrival.births and source[0] not in self._arrival.skipped
+            ),
+            key=lambda source: source[0],
+        )
+        if slots:
+            active_sources.extend(new_sources[-slots:])
+        sources = set(active_sources)
+        plans: dict[tuple[Color | None, tuple[int, int, int] | None], MaterializePlan | None] = {}
         output: list[Strip] = []
         self._arrival_rows.difference_update(range(crop.y, crop.bottom))
         for y, strip in enumerate(strips, crop.y):
@@ -926,15 +992,51 @@ class AssistantMessage(ConversationMessage):
                     source = tuple(style.meta[ARRIVAL_META])
                     # Cropping a wide glyph may leave a padding cell with its
                     # metadata. It is not a first presentation of that glyph.
-                    age = (
-                        self._arrival.start_visual(source, now)
-                        if source in ranks and segment.text == self.content[slice(*source)]
-                        else None
-                    )
+                    exact_visible_glyph = segment.text == self.content[slice(*source)]
+                    age = self._arrival.age(source, now) if exact_visible_glyph else None
+                    background_rgb = self._arrival_background_rgb(style, canvas_rgb)
+                    key = (style.color, background_rgb)
+                    if (
+                        exact_visible_glyph
+                        and source in visible_sources
+                        and source[0] not in self._arrival.births
+                    ):
+                        if source not in sources:
+                            self._arrival.skip_visual(source)
+                        else:
+                            if key not in plans:
+                                plans[key] = (
+                                    materialize_plan(
+                                        style.color,
+                                        background_rgb,
+                                        self.app.console.color_system,
+                                    )
+                                    if not (
+                                        style.bold or style.italic or style.underline or style.link
+                                    )
+                                    else None
+                                )
+                            if plans[key] is None:
+                                self._arrival.skip_visual(source)
+                            else:
+                                age = self._arrival.start_visual(source, now)
                     if age is not None:
-                        self._arrival_rows.add(y)
-                        style = ink_style(style, age, ranks[source], primary, secondary)
-                        segment = Segment(segment.text, style, segment.control)
+                        if key not in plans:
+                            plans[key] = (
+                                materialize_plan(
+                                    style.color,
+                                    background_rgb,
+                                    self.app.console.color_system,
+                                )
+                                if not (style.bold or style.italic or style.underline or style.link)
+                                else None
+                            )
+                        plan = plans[key]
+                        if plan is not None:
+                            animated_style = ink_style(style, age, plan)
+                            if animated_style != style:
+                                self._arrival_rows.add(y)
+                                segment = Segment(segment.text, animated_style, segment.control)
                 segments.append(segment)
             output.append(Strip(segments, strip.cell_length))
         self._ensure_arrival_clock(now)

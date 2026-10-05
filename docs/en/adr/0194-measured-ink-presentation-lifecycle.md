@@ -3,7 +3,7 @@
 **English** · [简体中文](../../zh-CN/adr/0194-measured-ink-presentation-lifecycle.md)
 
 - Date: 2026-10-05
-- Status: Accepted implementation; native visual acceptance pending
+- Status: Accepted lifecycle; current visual parameters are defined by ADR 0195
 - Scope: Presentation lifecycle only; supersedes ADR 0191's receive-time expiry and resize cancellation
 
 ## Evidence and decision
@@ -13,9 +13,10 @@ width while terminal size stayed constant; `on_resize → stop_arrival` discarde
 unseen arrivals. Cold render/layout took 286–420ms, longer than the exploration's
 280ms receive-based lifespan. These are lifecycle defects, not color design.
 
-Keep the existing production effect unchanged: 20fps / 180ms / twelve glyphs,
-25ms independent view commits, canonical deltas immediately received intact.
-No new variant, palette, timer per glyph, lexer or fence behavior.
+This ADR owns lifecycle only. The accepted visual effect is A22 Materialize at
+24fps / 160ms / up to eight active glyphs, as specified by ADR 0195. Preserve the
+first-presentation lifecycle and independent 25ms view commits; canonical deltas
+remain immediate and intact. No timer per glyph, lexer or fence behavior is added.
 
 ## Source lifecycle
 
@@ -59,14 +60,15 @@ unchanged; syntax only receives its existing cache-key invalidation.
 
 ## Validation and replay
 
-Tests cover 0/50/150/300/400/500ms stalls, a 400ms stall with 280ms duration,
+Tests cover 0/50/150/300/400/500ms stalls with the A22 160ms lifetime, plus a
+400ms diagnostic Sentinel that proves first-presentation birth,
 156→155→156 width events at constant viewport, real scrollbar overflow,
 120×40→100×32→80×24→120×40, whole/cropped CJK glyphs, unseen sources, theme
 refresh, combining marks, generation reset, bounded state and zero idle text work.
 
 The explicit test tool uses production mapping/lifecycle and a synthetic intact
 540-line fence + prose tape. Sentinel is test-only reverse+bold for 500ms, with
-the production twelve-glyph cap. It is never a setting or production variant.
+the production eight-active-glyph cap. It is never a setting or production variant.
 
 ```bash
 uv run python -m tests.visual.text_arrival.lifecycle_replay --sentinel --theme system

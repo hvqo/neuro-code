@@ -3,15 +3,16 @@
 **简体中文** · [English](../../en/adr/0191-measured-ink-streaming-presentation.md)
 
 - 日期：2026-10-03
-- 状态：已接受；用户已选定固定 Production 参数
+- 状态：已接受的历史基线；视觉参数已由 ADR 0195 取代
 - 范围：仅 Assistant TUI 呈现
 
 ## 决策
 
-仅采用探索 D：Measured Ink，20fps / 180ms / 最多十二个最近正文 grapheme。
-Provider delta 整块立即更新 canonical source，不设逐字队列，不改变 Runtime event，
+初始实现采用探索 D：20fps / 180ms / 最多十二个最近普通正文 grapheme。这些视觉参数
+属于历史记录；当前 A22 Materialize 契约见 ADR 0195。Provider delta 整块立即更新
+canonical source，不设逐字队列，不改变 Runtime event，
 不新增光标或 marker，不修改 Agent pulse。开关两种路径均以独立的 25ms（40Hz）预算
-合并 view commit，不受 50ms 动画 clock 限制。这是调度预算，不是显示速率保证；source
+合并 view commit，独立于动画 clock。这是调度预算，不是显示速率保证；source
 停顿、解析/渲染成本与终端 backpressure 仍会影响 frame pacing。
 动画跟随 arrival，不控制内容接收。Appearance → Input 新增可继承的布尔配置
 `text_arrival_animation`，缺省开启；旧 version-1 preference 仍能读取，不暴露高级参数。
@@ -28,12 +29,12 @@ Diff、list、quote、table 均静态呈现。整个格式段落静态降级，�
 source code-point 索引与 terminal cell 分离，完整安全 Latin/Han grapheme 才携带 metadata；
 换行和 cell width 仍由 Rich/Textual 处理。emoji、ZWJ、flags 与复杂 shaping 静态降级。
 每个段落只标记末尾十二个候选 glyph，并限制到 source 最后 384 个 code point；实际叠加
-全局最多十二个 glyph。可证明 glyph 首次呈现时固定 birth，追加 combining mark 不会
+全局当前最多八个活跃 glyph，见 ADR 0195。可证明 glyph 首次呈现时固定 birth，追加 combining mark 不会
 重启动画；接收时间仅用于诊断，见 [ADR 0194](0194-measured-ink-presentation-lifecycle.md)。
 
 ## 缓存与刷新所有权
 
-`AssistantMessage` 持有有界 arrival timeline、50ms animation clock、一个可取消的 asyncio
+`AssistantMessage` 持有有界 arrival timeline、一个共享 animation clock、一个可取消的 asyncio
 one-shot view deadline 和当前 Markdown view。deadline 到期后进入 widget message pump；
 迟到也必须执行。Textual 1.x one-shot 默认跳过迟到 callback，不能用于保证最终正文提交；
 generation guard 同时失效已入队的旧 callback。截止时间相对上次 commit，新 delta 不会不断推迟截止时间，

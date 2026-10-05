@@ -17,6 +17,7 @@ from pathlib import Path
 from time import perf_counter, process_time
 from unittest.mock import patch
 
+from rich.color import ColorSystem
 from rich.style import Style
 from tests.visual.showcases import _VisualFixtureRunner
 from tests.visual.text_arrival.frame_pacing import Profile, load_recording
@@ -51,7 +52,7 @@ class LifecycleReplay(NeuroCodeApp):
             _VisualFixtureRunner(),
             ui_theme=UiTheme(args.theme),
             provider_name="synthetic-lifecycle-replay",
-            model_name="25ms view / 20fps ink",
+            model_name="25ms view / 24fps ink",
             cwd=Path.cwd(),
             terminal_palette=None if args.headless else probe_terminal_palette(),
         )
@@ -258,6 +259,10 @@ class LifecycleReplay(NeuroCodeApp):
 async def headless(args):
     app = LifecycleReplay(args)
     async with app.run_test(size=(args.width, args.height)):
+        # The test driver is intentionally headless; pin an explicit renderer
+        # capability so lifecycle Sentinel assertions exercise the same path
+        # as a supported-color terminal instead of guessing a host palette.
+        app.console._color_system = ColorSystem.TRUECOLOR
         await app.replay()
 
 

@@ -74,7 +74,7 @@ class NativePacingReplay(NeuroCodeApp):
             _VisualFixtureRunner(),
             ui_theme=UiTheme(args.theme),
             provider_name="timed-replay",
-            model_name=f"{widgets.VIEW_COMMIT_SECONDS * 1000:g}ms-view / 20fps-ink",
+            model_name=f"{widgets.VIEW_COMMIT_SECONDS * 1000:g}ms-view / 24fps-ink",
             cwd=Path.cwd(),
         )
         self.replay_args = args
@@ -104,7 +104,7 @@ class NativePacingReplay(NeuroCodeApp):
         args, profile = self.replay_args, self.profile
         self._replace_transcript([])
         self._write_entry(
-            "user", f"{args.case}: {widgets.VIEW_COMMIT_SECONDS * 1000:g}ms body / 20fps ink"
+            "user", f"{args.case}: {widgets.VIEW_COMMIT_SECONDS * 1000:g}ms body / 24fps ink"
         )
         await asyncio.sleep(0.3)
         profile.__init__()

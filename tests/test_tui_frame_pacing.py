@@ -21,15 +21,15 @@ def test_production_commit_and_animation_contract():
     from neuro_code.interfaces.tui.text_arrival import (
         DURATION_SECONDS,
         FRAME_SECONDS,
-        GLYPH_LIMIT,
+        MAX_ACTIVE_GLYPHS,
     )
     from neuro_code.interfaces.tui.widgets import VIEW_COMMIT_SECONDS
 
     assert VIEW_COMMIT_SECONDS == 0.025
-    assert FRAME_SECONDS == 0.05
+    assert pytest.approx(1 / 24) == FRAME_SECONDS
     assert VIEW_COMMIT_SECONDS != FRAME_SECONDS
-    assert DURATION_SECONDS == 0.180
-    assert GLYPH_LIMIT == 12
+    assert DURATION_SECONDS == 0.160
+    assert MAX_ACTIVE_GLYPHS == 8
 
 
 def test_recorded_delta_boundaries_and_timing_are_preserved(tmp_path):

@@ -29,7 +29,8 @@ oversized output is rendered without retention. Eviction never affects correctne
 Unmount/disposal clears entries; conversation replacement removes the owning widget.
 No process-global result cache, parser replacement, background worker or timer is
 introduced. Existing current-view cache remains separate. Body cadence is unchanged
-at 25ms/40Hz, Measured Ink at 20fps/180ms/12 glyph; scrolling and Runtime are unchanged.
+at 25ms/40Hz; current Measured Ink is A22 Materialize at 24fps/160ms/up to 8 active
+glyphs (ADR 0195). Scrolling and Runtime are unchanged.
 
 ## Validation and limits
 

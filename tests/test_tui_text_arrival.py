@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 from io import StringIO
+from itertools import pairwise
 from unittest.mock import patch
 
 import pytest
+from rich.color import Color, ColorSystem
 from rich.console import Console
 from rich.style import Style
 from textual.geometry import Region
@@ -16,11 +18,20 @@ from neuro_code.application.ports.agent_preferences import AgentPreferences
 from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
 from neuro_code.infrastructure.persistence.ui_preferences import JsonUiPreferencesStore
 from neuro_code.interfaces.tui import widgets
+from neuro_code.interfaces.tui.terminal_palette import TerminalColorLevel, TerminalPalette
 from neuro_code.interfaces.tui.text_arrival import (
     ARRIVAL_META,
+    DELTA_LSTAR,
+    DURATION_SECONDS,
+    FRAME_RATE,
+    MAX_ACTIVE_GLYPHS,
+    MIN_CONTRAST_RATIO,
     ArrivalTimeline,
+    concrete_rgb,
+    contrast_ratio,
     graphemes,
     ink_style,
+    materialize_plan,
     paragraph_sources,
     safe_glyph,
 )
@@ -149,15 +160,93 @@ def test_birth_does_not_restart_with_combining_mark_and_bounded_tail():
     "style", [Style(bold=True), Style(italic=True), Style(underline=True), Style(link="https://x")]
 )
 def test_defensive_semantic_guard(style):
-    assert ink_style(style, 0, 0, "white", "grey50") == style
+    plan = materialize_plan(Color.parse("#E9E9E9"), (23, 23, 23), "truecolor")
+    assert plan is not None
+    decorated = style + Style(color="#E9E9E9", bgcolor="#171717")
+    assert ink_style(decorated, 0, plan) == decorated
 
 
-def test_ink_lifetime_and_rank_limit():
-    style = Style(color="grey70", bgcolor="black")
-    assert ink_style(style, 0, 0, "white", "grey50").color == Style.parse("white").color
-    assert ink_style(style, 0.08, 0, "white", "grey50").color == Style.parse("grey50").color
-    assert ink_style(style, 0.15, 0, "white", "grey50") == style
-    assert ink_style(style, 0, 12, "white", "grey50") == style
+def test_a22_materialize_is_monotonic_contrasted_and_restores_full_style():
+    canonical = Color.parse("#E9E9E9")
+    background = (23, 23, 23)
+    plan = materialize_plan(canonical, background, ColorSystem.TRUECOLOR)
+    assert plan is not None
+    assert FRAME_RATE == 24
+    assert DURATION_SECONDS == 0.160
+    assert plan.delta_lstar == pytest.approx(22, abs=0.1)
+
+    ages = [0, 1 / FRAME_RATE, 2 / FRAME_RATE, 3 / FRAME_RATE]
+    colors = [plan.color_at(age) for age in ages]
+    assert all(color is not None for color in colors)
+    rgb = [concrete_rgb(color) for color in colors]
+    assert all(value is not None for value in rgb)
+    assert rgb[0] != concrete_rgb(canonical)
+    lightness_distance = [
+        abs(_test_lstar(value) - _test_lstar(concrete_rgb(canonical))) for value in rgb
+    ]
+    assert all(later <= earlier + 0.1 for earlier, later in pairwise(lightness_distance))
+    assert all(contrast_ratio(value, background) >= MIN_CONTRAST_RATIO for value in rgb)
+
+    original = Style(
+        color=canonical,
+        bgcolor="#171717",
+        dim=True,
+        meta={ARRIVAL_META: (0, 1), "preserved": "value"},
+    )
+    animated = ink_style(original, 0, plan)
+    assert animated.color != original.color
+    assert animated.bgcolor == original.bgcolor
+    assert animated.dim == original.dim
+    assert animated.meta == original.meta
+    assert ink_style(original, DURATION_SECONDS, plan) == original
+
+
+def test_a22_clips_to_preserve_contrast_and_static_fallbacks():
+    clipped = materialize_plan(Color.parse("#68625C"), (246, 245, 242), "truecolor")
+    assert clipped is not None
+    assert 0 < clipped.delta_lstar < DELTA_LSTAR
+    first = concrete_rgb(clipped.color_at(0))
+    assert first is not None
+    assert contrast_ratio(first, (246, 245, 242)) >= MIN_CONTRAST_RATIO
+
+    ansi256 = materialize_plan(Color.parse("#E9E9E9"), (23, 23, 23), "256")
+    assert ansi256 is not None
+    ansi_first, ansi_second = ansi256.color_at(0), ansi256.color_at(1 / FRAME_RATE)
+    assert ansi_first is not None
+    assert ansi_second is not None
+    assert ansi_first.number != Color.parse("#E9E9E9").downgrade(ColorSystem.EIGHT_BIT).number
+    assert ansi_second.number != Color.parse("#E9E9E9").downgrade(ColorSystem.EIGHT_BIT).number
+    assert len({color.number for color in ansi256.frames if color is not None}) >= 2
+    assert all(
+        contrast_ratio(concrete_rgb(color), (23, 23, 23)) >= MIN_CONTRAST_RATIO
+        for color in (ansi_first, ansi_second)
+    )
+
+    near_threshold = materialize_plan(Color.parse("#777777"), (0, 0, 0), "256")
+    assert near_threshold is None
+    assert materialize_plan(Color.parse("#E9E9E9"), (23, 23, 23), "16") is None
+    assert materialize_plan(Color.parse("#E9E9E9"), None, "truecolor") is None
+    assert materialize_plan(Color.parse("#E9E9E9"), (23, 23, 23), None) is None
+
+
+def _test_lstar(rgb):
+    from neuro_code.interfaces.tui.text_arrival import _rgb_to_lab
+
+    return _rgb_to_lab(rgb)[0]
+
+
+def test_arrival_timeline_caps_active_glyphs_and_never_promotes_skipped():
+    timeline = ArrivalTimeline()
+    for index in range(MAX_ACTIVE_GLYPHS + 1):
+        timeline.receive(index, index + 1, 0)
+        age = timeline.start_visual((index, index + 1), 1)
+        if index < MAX_ACTIVE_GLYPHS:
+            assert age == 0
+        else:
+            assert age is None
+    assert timeline.active_count(1) == MAX_ACTIVE_GLYPHS
+    assert MAX_ACTIVE_GLYPHS in timeline.skipped
+    assert timeline.start_visual((MAX_ACTIVE_GLYPHS, MAX_ACTIVE_GLYPHS + 1), 2) is None
 
 
 @pytest.fixture
@@ -165,6 +254,7 @@ def clock(monkeypatch):
     now = [100.0]
     monkeypatch.setattr(widgets, "monotonic", lambda: now[0])
     monkeypatch.setattr(AssistantMessage, "_motion_allowed", lambda self: True)
+    monkeypatch.setattr(Console, "color_system", property(lambda self: "truecolor"))
     return now
 
 
@@ -265,9 +355,21 @@ async def test_overdue_commit_is_delivered_once_without_another_delta(clock, mon
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("theme", [UiTheme.GRAPHITE, UiTheme.PORCELAIN, UiTheme.SYSTEM])
-async def test_whole_delta_immediate_tick_no_parse_and_exact_settle(theme, clock, monkeypatch):
-    app = make_app(theme, fixture="empty-conversation")
+@pytest.mark.parametrize(
+    ("theme", "terminal_palette"),
+    [
+        (UiTheme.GRAPHITE, None),
+        (UiTheme.PORCELAIN, None),
+        (
+            UiTheme.SYSTEM,
+            TerminalPalette(TerminalColorLevel.TRUECOLOR, (233, 233, 233), (23, 23, 23)),
+        ),
+    ],
+)
+async def test_whole_delta_immediate_tick_no_parse_and_exact_settle(
+    theme, terminal_palette, clock, monkeypatch
+):
+    app = make_app(theme, fixture="empty-conversation", terminal_palette=terminal_palette)
     async with app.run_test(size=(100, 32)) as pilot:
         pending = await begin(app, pilot)
         calls = []
@@ -296,7 +398,7 @@ async def test_whole_delta_immediate_tick_no_parse_and_exact_settle(theme, clock
                 for row_a, row_b in zip(animated, canonical, strict=True)
                 for a, b in zip(row_a, row_b, strict=True)
             )
-            assert 0 < changed <= 12
+            assert 0 < changed <= MAX_ACTIVE_GLYPHS
             pending._arrival_tick()
             assert all(not c.kwargs.get("layout") for c in refresh.call_args_list)
         assert len(calls) == before
@@ -387,7 +489,7 @@ async def test_high_frequency_coalesces_without_queuing_canonical_and_large_delt
         pending._commit_pending_view(pending._stream_generation)
         assert pending.renderable.markup == large
         await pilot.pause()
-        assert len(pending.renderable.cached_sources) <= 384
+        assert len(pending.renderable.cached_sources) <= 12
 
 
 @pytest.mark.asyncio
@@ -548,7 +650,7 @@ async def test_large_cjk_delta_cell_geometry_and_new_canonical_revision(clock):
         animated = pending.render_lines(crop)
         assert [s.cell_length for s in animated] == [s.cell_length for s in canonical]
         assert [s.text for s in animated] == [s.text for s in canonical]
-        assert len(pending.renderable.cached_sources) <= 12
+        assert len(pending.renderable.cached_sources) <= 384
         # A non-append revision is a new canonical view, never a stale arrival.
         clock[0] += 0.05
         app._update_pending_assistant("新回复")
@@ -556,6 +658,22 @@ async def test_large_cjk_delta_cell_geometry_and_new_canonical_revision(clock):
         assert pending.renderable.markup == "新回复"
         assert pending._arrival.arrivals[0].start == 0
         pending.stop_arrival()
+        assert pending._arrival_timer is None
+
+
+@pytest.mark.asyncio
+async def test_system_unknown_terminal_palette_keeps_arrivals_static(monkeypatch, clock):
+    monkeypatch.setattr(AssistantMessage, "_motion_allowed", lambda self: True)
+    app = make_app(UiTheme.SYSTEM, fixture="empty-conversation")
+    async with app.run_test(size=(100, 32)) as pilot:
+        pending = await begin(app, pilot)
+        app._update_pending_assistant("ordinary readable prose")
+        await pilot.pause()
+        crop = Region(0, 0, pending.size.width, pending.size.height)
+        canonical = signature(super(AssistantMessage, pending).render_lines(crop))
+        assert signature(pending.render_lines(crop)) == canonical
+        assert pending._arrival.arrivals
+        assert not pending._arrival.births
         assert pending._arrival_timer is None
 
 
