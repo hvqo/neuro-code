@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "definition_id": "dw1-example",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "targets": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "max_items": 4
+      },
+      "objective": {
+        "type": "string"
+      }
+    }
+  },
+  "budget": {
+    "max_generated_tasks": 32,
+    "max_model_calls": 100,
+    "max_tool_calls": 1000,
+    "max_input_tokens": 100000,
+    "max_output_tokens": 20000,
+    "max_wall_seconds": 600
+  },
+  "steps": [
+    {
+      "kind": "Activity",
+      "step_id": "verify",
+      "activity": "parent.verify",
+      "inputs": {}
+    },
+    {
+      "kind": "Branch",
+      "step_id": "route",
+      "condition": {
+        "op": "eq",
+        "ref": {
+          "kind": "result",
+          "step_id": "verify",
+          "field_path": [
+            "status"
+          ]
+        },
+        "value": "PASS"
+      },
+      "paths": {
+        "pass": [
+          {
+            "kind": "Activity",
+            "step_id": "accept",
+            "activity": "parent.adopt",
+            "inputs": {}
+          }
+        ],
+        "fail": [
+          {
+            "kind": "Activity",
+            "step_id": "repair",
+            "activity": "parent.repair",
+            "inputs": {}
+          }
+        ]
+      },
+      "then_path": "pass",
+      "else_path": "fail"
+    }
+  ],
+  "completion_requirements": []
+}
