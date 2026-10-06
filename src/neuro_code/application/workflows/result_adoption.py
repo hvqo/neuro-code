@@ -351,7 +351,9 @@ class ResultAdoptionApplicationService:
     async def _recheck_workflow_record(
         self, record: ResultAdoptionRecord, request: ResultAdoptionRequest
     ) -> None:
-        if request.workflow_source is None:
+        # Terminal replay reads a verified durable fact, not execution authority.
+        # Request identity is checked before this call; live resources may be gone.
+        if record.state.terminal or request.workflow_source is None:
             return
         resolved = await self._source_adapter.resolve(
             request, parent_session_id=self._parent_session_id

@@ -35,9 +35,15 @@ through the injected permission/workspace/sandbox mutation port. No adapter writ
 The durable adoption owner/lease, target CAS, desired-image observation and forward
 recovery are unchanged. A crash after a write but before ACK is recovered by observing
 the desired image rather than repeating the write; a third image is never overwritten.
-Workflow provenance is revalidated on preparation/replay, and checked again after
-source inspection before creating a plan. Recovery uses that immutable materialized
-plan through the existing owner lifecycle; projection replay does not claim a Run.
+Workflow provenance is checked again after source inspection before creating a plan.
+Live source revalidation protects execution/forward recovery. Durable terminal replay
+relies on persisted adoption identity and integrity and does not require execution-time
+resources to remain live. Every terminal state returns the existing fact after validating
+plan integrity, exact request source and parent session/root, without resolving Projection,
+requiring preserved leases/worktrees/checkpoints or checking the current parent HEAD.
+Non-terminal replay retains exact source and live parent checks, owner fencing and safe
+forward recovery. Recovery uses the immutable materialized plan through the existing
+owner lifecycle; neither terminal replay nor projection replay claims a Workflow Run.
 
 ## Durable compatibility and identity
 
@@ -69,6 +75,7 @@ completion requirements and verification are later stages, not this adapter.
 
 Real SQLite regressions cover TaskBatch/Map sources, immutable projection checks,
 wrong Run/session/Expansion/DAG, terminal failures, stale preserved resources,
-worker overlap, parent conflicts, unrelated dirt, exact replay/reopen, write-before-ACK
+worker overlap, parent conflicts, unrelated dirt, terminal replay after cleanup/parent
+commit, non-terminal source revalidation, exact replay/reopen, write-before-ACK
 forward recovery, source-kind collisions and old Swarm JSON/fingerprint compatibility.
 Existing adoption, Swarm, UltraCode, permission and migration regressions remain gates.

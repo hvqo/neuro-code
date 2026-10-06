@@ -469,28 +469,124 @@ async def test_exact_dag_drift_rejected_on_creation_and_replay(tmp_path, prepare
     assert not f.mutation.calls
 
 
-async def test_completed_replay_rejects_changed_parent_head(tmp_path):
+async def test_completed_replay_returns_durable_fact_after_parent_commit(tmp_path):
     f, request, _ = await fixture(tmp_path)
-    await service(f).adopt(request)
+    completed = await service(f).adopt(request)
     calls = len(f.mutation.calls)
     f.parent.repository = replace(f.parent.repository, head_sha="f" * 40)
-    with pytest.raises(ResultAdoptionError):
-        await service(f).adopt(request)
+    reopened = SqliteSessionStore(f.store.database_path)
+    await reopened.initialize()
+    replay = await service(f, store=reopened).adopt(request)
+    assert replay == completed
     assert len(f.mutation.calls) == calls
 
 
-async def test_workflow_plan_provenance_tamper_rejected_after_reopen(tmp_path):
+@pytest.mark.parametrize("terminal", [state for state in ResultAdoptionState if state.terminal])
+async def test_terminal_replay_needs_no_live_source_or_parent(tmp_path, monkeypatch, terminal):
     f, request, _ = await fixture(tmp_path)
-    await service(f).prepare(request)
+    controller = service(f)
+    if terminal is ResultAdoptionState.COMPLETED:
+        original = await controller.adopt(request)
+    else:
+        prepared = await controller.prepare(request)
+        original = await controller._terminate(
+            prepared, terminal, ResultAdoptionError("terminal fact", kind="conflict")
+        )
+    calls = len(f.mutation.calls)
+    # Resource cleanup is legitimate after terminal adoption. It cannot revoke
+    # the durable historical fact or make replay authorize another mutation.
     with closing(f.store._connect()) as c, c:
-        raw = json.loads(c.execute("SELECT plan_json FROM result_adoptions").fetchone()[0])
-        raw["completed_source"]["projection_source_fingerprint"] = "f" * 64
-        c.execute("UPDATE result_adoptions SET plan_json = ?", (json.dumps(raw),))
+        c.execute("UPDATE writable_subagent_leases SET state = 'orphaned'")
+    f.worktrees.snapshots.clear()
+    f.checkpoints.checkpoints.clear()
+    reopened = SqliteSessionStore(f.store.database_path)
+    await reopened.initialize()
+    replay_controller = service(f, store=reopened)
+
+    async def unavailable(*args, **kwargs):
+        raise AssertionError("terminal replay must not inspect live resources")
+
+    monkeypatch.setattr(replay_controller._source_adapter, "resolve", unavailable)
+    monkeypatch.setattr(reopened, "get_workflow_result_projection", unavailable)
+    monkeypatch.setattr(f.parent, "inspect", unavailable)
+    assert await replay_controller.prepare(request) == original
+    assert await replay_controller.adopt(request) == original
+    assert len(f.mutation.calls) == calls
+
+
+@pytest.mark.parametrize("state", [state for state in ResultAdoptionState if not state.terminal])
+@pytest.mark.parametrize("change", ["lease", "parent_head"])
+async def test_nonterminal_replay_still_revalidates_source_and_parent(tmp_path, state, change):
+    f, request, _ = await fixture(tmp_path)
+    controller = service(f)
+    record = await controller.prepare(request)
+    for next_state in (
+        ResultAdoptionState.VERIFIED,
+        ResultAdoptionState.APPLYING,
+        ResultAdoptionState.VERIFYING,
+    ):
+        if record.state is state:
+            break
+        record = await controller._transition_adoption(record, next_state)
+    assert record.state is state
+    if change == "lease":
+        with closing(f.store._connect()) as c, c:
+            c.execute("UPDATE writable_subagent_leases SET state = 'orphaned'")
+    else:
+        f.parent.repository = replace(f.parent.repository, head_sha="f" * 40)
+    reopened = SqliteSessionStore(f.store.database_path)
+    await reopened.initialize()
+    with pytest.raises(ResultAdoptionError):
+        await service(f, store=reopened).adopt(request)
+    assert await reopened.get_result_adoption(request.adoption_id) == record
+    assert not f.mutation.calls
+
+
+@pytest.mark.parametrize("completed", [False, True])
+@pytest.mark.parametrize("tamper", ["plan", "fingerprint"])
+async def test_workflow_plan_provenance_tamper_rejected_after_reopen(tmp_path, completed, tamper):
+    f, request, _ = await fixture(tmp_path)
+    controller = service(f)
+    if completed:
+        await controller.adopt(request)
+    else:
+        await controller.prepare(request)
+    calls = len(f.mutation.calls)
+    with closing(f.store._connect()) as c, c:
+        if tamper == "plan":
+            raw = json.loads(c.execute("SELECT plan_json FROM result_adoptions").fetchone()[0])
+            raw["completed_source"]["projection_source_fingerprint"] = "f" * 64
+            c.execute("UPDATE result_adoptions SET plan_json = ?", (json.dumps(raw),))
+        else:
+            c.execute("UPDATE result_adoptions SET plan_fingerprint = ?", ("f" * 64,))
     reopened = SqliteSessionStore(f.store.database_path)
     await reopened.initialize()
     with pytest.raises(ResultAdoptionError, match="integrity"):
         await service(f, store=reopened).adopt(request)
-    assert not f.mutation.calls
+    assert len(f.mutation.calls) == calls
+
+
+@pytest.mark.parametrize("change", ["session", "root"])
+async def test_terminal_replay_rejects_wrong_parent_binding(tmp_path, change):
+    from tests.test_result_adoption import _ParentRunner
+
+    f, request, _ = await fixture(tmp_path)
+    completed = await service(f).adopt(request)
+    calls = len(f.mutation.calls)
+    if change == "session":
+        other = await f.store.create_session(str(f.binding.workspace_root), "fixture", "model")
+        f.binding = replace(f.binding, runner=_ParentRunner(other))
+    else:
+        root = tmp_path / "other-parent"
+        f.binding = replace(
+            f.binding,
+            workspace_root=root,
+            capabilities=replace(f.binding.capabilities, cwd=root, workspace_roots=(root,)),
+        )
+    with pytest.raises(ResultAdoptionError, match="different parent"):
+        await service(f).adopt(request)
+    assert await f.store.get_result_adoption(request.adoption_id) == completed
+    assert len(f.mutation.calls) == calls
 
 
 async def test_concurrent_workflow_prepare_reuses_one_plan_with_distinct_clocks(tmp_path):

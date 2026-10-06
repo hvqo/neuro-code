@@ -30,9 +30,13 @@ Permission/Workspace/Sandbox mutation port；adapter 不写文件。
 
 Durable adoption owner/lease、target CAS、desired-image observation 与 forward recovery 不变。
 写入成功但 ACK 前崩溃时，通过观察 desired image 恢复，不重复写；绝不覆盖第三方 image。
-Workflow preparation/replay 重验来源，创建 plan 前再次核对来源未漂移。
-恢复使用 immutable materialized plan 与既有 adoption owner lifecycle；Projection replay 不取得
-Workflow Run ownership。
+创建 plan 前再次核对 Workflow 来源未漂移。Live source 重验证保护执行与 forward recovery；
+durable terminal replay 只依赖持久化 adoption identity/integrity，不要求执行时资源继续存活。
+所有终态均在校验 plan 完整性、精确请求来源与 parent session/root 后返回既有事实，不再解析
+Projection、不要求 preserved lease/worktree/checkpoint 或当前 parent HEAD 保持不变。
+非终态 replay 继续保留 exact source、live parent 检查、owner fence 与安全 forward recovery。
+恢复使用 immutable materialized plan 与既有 adoption owner lifecycle；terminal replay 与
+Projection replay 均不取得 Workflow Run ownership。
 
 ## 持久化兼容与身份
 
@@ -59,6 +63,7 @@ source/projection/parent/DAG 拒绝。并发 preparation 只有在除创建时�
 ## 验证
 
 真实 SQLite 回归覆盖 TaskBatch/Map、Projection 完整性、错误 Run/session/Expansion/DAG、
-非成功终态、stale preserved resources、overlap、父冲突、无关脏文件、exact replay/reopen、
+非成功终态、stale preserved resources、overlap、父冲突、无关脏文件、cleanup/父 commit 后的
+terminal replay、非终态 source 重验证、exact replay/reopen、
 写入后 ACK 丢失的 forward recovery、来源身份冲突与旧 Swarm JSON/fingerprint。
 既有 adoption、Swarm、UltraCode、权限与 migration 回归继续作为门禁。
