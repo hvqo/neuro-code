@@ -3715,7 +3715,7 @@ workspace binding. Each optional project owns an isolated directory below the
 Neuro Code state root. `FileProjectMemoryStore` validates the canonical project
 UUID, manifest, body filenames, file types, links, containment, and strict
 count/byte limits. It keeps a manifest, generated bounded `MEMORY.md` index,
-and one body per memory. Session schema v35 remains unchanged.
+and one body per memory. Session schema v36 remains unchanged.
 
 The application exposes index and exact-id recall through
 `ProjectMemoryRecallService`. The read-only `read_project_memory` tool receives

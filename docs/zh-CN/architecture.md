@@ -2546,7 +2546,7 @@ Agent 偏好还包括 Enter 行为、输入折行、轮次结束与失败铃声�
 
 ## 项目记忆 V1
 
-`SessionProject.id` 是唯一的 Project Memory 身份；`cwd` 仍是工作区绑定。每个可选项目在 Neuro Code state root 下拥有独立目录。`FileProjectMemoryStore` 校验规范 UUID、manifest、正文文件名、文件类型、链接、目录包含性以及严格的数量/字节限制。它保存 manifest、生成的有界 `MEMORY.md` index，以及每条记忆独立的正文文件。Session schema v35 保持不变。
+`SessionProject.id` 是唯一的 Project Memory 身份；`cwd` 仍是工作区绑定。每个可选项目在 Neuro Code state root 下拥有独立目录。`FileProjectMemoryStore` 校验规范 UUID、manifest、正文文件名、文件类型、链接、目录包含性以及严格的数量/字节限制。它保存 manifest、生成的有界 `MEMORY.md` index，以及每条记忆独立的正文文件。Session schema v36 保持不变。
 
 应用层通过 `ProjectMemoryRecallService` 提供 index 和按精确 ID 召回。只读 `read_project_memory` 工具只接收当前 binding 的可变项目 scope，不接收路径参数。启用 Project Memory 的 Main Agent 无论是否绑定项目，其工具定义都保持注册；未绑定时执行 fail closed。`ContextBuilder` 为当前 active context generation 固定有界的 `PROJECT_MEMORY_INDEX`，位于仓库指令与 Skills 之后、普通历史之前。后台提取更新 store 不会改变当前快照；新建或恢复 Session 会读取最新 index；项目 scope 变化会使快照失效；已提交 Fresh Context Rollover 后重新读取。重命名保留当前快照 identity；项目 detach/delete 会立即清除 scope。Full compaction 不是 generation boundary，因此保留当前快照。Synthetic Memory Context 不进入持久会话历史。Index 和召回正文都明确指出记忆可能过期，当前仓库、Git 和 `AGENTS.md` 状态优先。
 

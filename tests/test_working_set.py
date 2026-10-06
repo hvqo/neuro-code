@@ -793,11 +793,11 @@ class WorkingSetTests(unittest.IsolatedAsyncioTestCase):
 
         migrated = SqliteSessionStore(self.database)
         await migrated.initialize()
-        self.assertEqual(SCHEMA_VERSION, 35)
+        self.assertEqual(SCHEMA_VERSION, 36)
         with closing(sqlite3.connect(self.database)) as connection:
             self.assertEqual(
                 connection.execute("SELECT version FROM schema_meta").fetchone(),
-                (35,),
+                (SCHEMA_VERSION,),
             )
             self.assertIsNotNone(
                 connection.execute(

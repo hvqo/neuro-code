@@ -1306,3 +1306,68 @@ def _ensure_session_context_generation_boundary_schema(connection: sqlite3.Conne
             "UPDATE sessions SET context_generation_start_index = ? WHERE id = ?",
             (item_count, session_id),
         )
+
+
+def _ensure_workflow_state_schema(connection: sqlite3.Connection) -> None:
+    """DW2 snapshot + journal share the existing database/transaction owner."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_definitions (
+            fingerprint TEXT PRIMARY KEY,
+            canonical_ir TEXT NOT NULL,
+            schema_version INTEGER NOT NULL,
+            compiler_version INTEGER NOT NULL
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_runs (
+            run_id TEXT PRIMARY KEY,
+            definition_fingerprint TEXT NOT NULL REFERENCES workflow_definitions(fingerprint),
+            parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            generation INTEGER NOT NULL CHECK (generation >= 0),
+            status TEXT NOT NULL,
+            owner_id TEXT,
+            owner_fence INTEGER NOT NULL CHECK (owner_fence >= 0),
+            snapshot_json TEXT NOT NULL
+        )
+    """)
+    connection.execute("""
+        CREATE INDEX IF NOT EXISTS workflow_runs_by_session
+        ON workflow_runs(parent_session_id, run_id)
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_step_instances (
+            run_id TEXT NOT NULL REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+            instance_key TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            PRIMARY KEY (run_id, instance_key)
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_budget_reservations (
+            run_id TEXT NOT NULL REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+            reservation_id TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            PRIMARY KEY (run_id, reservation_id)
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_transition_journal (
+            run_id TEXT NOT NULL REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+            generation INTEGER NOT NULL CHECK (generation >= 0),
+            request_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, generation),
+            UNIQUE (run_id, request_id)
+        )
+    """)
+    # Insertion/deletion are adapter responsibilities; persisted definitions and
+    # journal evidence may never be edited in place, including via accidental SQL.
+    for table in ("workflow_definitions", "workflow_transition_journal"):
+        connection.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS {table}_immutable
+            BEFORE UPDATE ON {table}
+            BEGIN SELECT RAISE(ABORT, 'immutable workflow record'); END
+        """)
