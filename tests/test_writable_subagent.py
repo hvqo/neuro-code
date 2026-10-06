@@ -116,6 +116,7 @@ from neuro_code.domain.parent_context_relay import (
 from neuro_code.domain.sandbox.models import SandboxProfile
 from neuro_code.domain.session_tasks import SessionTaskStatus
 from neuro_code.domain.task_dag import TaskDag, TaskDagNode, TaskDagNodeState, TaskDagState
+from neuro_code.domain.task_dag_result import TaskDagResultEvidence
 from neuro_code.domain.task_dag_result_relay import (
     MAX_TASK_DAG_RESULT_RELAY_ITEM_BYTES,
     TaskDagDependencyResultEntry,
@@ -2219,6 +2220,7 @@ class _CrashBeforeTaskDagFinishStore:
         expected_generation: int,
         expected_state: TaskDagNodeState,
         updated_at: datetime,
+        result_evidence: TaskDagResultEvidence | None = None,
     ) -> TaskDag:
         if node.state is TaskDagNodeState.COMPLETED:
             if node.parent_task_id is None:
@@ -2279,6 +2281,7 @@ class _CrashBeforeTaskDagFinishStore:
             expected_generation=expected_generation,
             expected_state=expected_state,
             updated_at=updated_at,
+            result_evidence=result_evidence,
         )
 
 

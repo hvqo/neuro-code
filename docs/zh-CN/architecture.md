@@ -2588,3 +2588,7 @@ Execution Efficiency 是现有 Agent loop 上有界、按回合创建的建议�
 ## DW3 Workflow 原子发布
 
 已确定的 typed expansion 在同一 SQLite transaction 中发布新的 immutable Task DAG，并保存 Workflow WAITING/linkage、journal 与 generated-task accounting。Schema 37 和 canonical `WorkflowPublicationStore` port 尚无 Interpreter，也不改变 scheduler。参见 [ADR 0198](adr/0198-dw3-atomic-workflow-dag-publication.md)。
+
+## DW4a Typed Result Projection
+
+Schema 38 保存精确 terminal worker-result evidence，并从 DW3 已绑定 DAG 产生 immutable、带 scope 的 projection。复用 DW1 output schema 与冻结成员映射，preview/截断 response 不能冒充完整结果。Run/Step/Budget/Journal 不变，不新增验证或执行权威。参见 [ADR 0199](adr/0199-dw4a-typed-result-projection.md)。

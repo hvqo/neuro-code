@@ -168,7 +168,7 @@ async def test_v35_upgrade_preserves_session_and_is_idempotent(tmp_path):
                     "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'workflow_%'"
                 ).fetchall()
             )
-            == 6
+            == 7
         )
 
 

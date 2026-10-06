@@ -277,6 +277,9 @@ class _FakeWritableService:
             return SimpleNamespace(
                 status=SessionTaskStatus.COMPLETED,
                 response=outcome,
+                parent_task_id=execution_identity.parent_task_id,
+                child_session_id=f"child-{execution_identity.node_id}",
+                truncated=False,
             )
         finally:
             self.active -= 1
@@ -355,10 +358,16 @@ class _ParallelWritableService:
             return SimpleNamespace(
                 status=SessionTaskStatus.FAILED,
                 response=f"failed-{node_id}",
+                parent_task_id=execution_identity.parent_task_id,
+                child_session_id=f"child-{node_id}",
+                truncated=False,
             )
         return SimpleNamespace(
             status=SessionTaskStatus.COMPLETED,
             response=f"completed-{request.prompt}",
+            parent_task_id=execution_identity.parent_task_id,
+            child_session_id=f"child-{node_id}",
+            truncated=False,
         )
 
 
@@ -2117,7 +2126,13 @@ class TaskDagSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 execution_identity.parent_task_id,
                 execution_identity.node_id,
             )
-            return SimpleNamespace(status=SessionTaskStatus.FAILED, response="failed result")
+            return SimpleNamespace(
+                status=SessionTaskStatus.FAILED,
+                response="failed result",
+                parent_task_id=execution_identity.parent_task_id,
+                child_session_id=f"child-{execution_identity.node_id}",
+                truncated=False,
+            )
 
         writable.run_subagent_with_execution_identity = run_failed
         service = self._service(writable)

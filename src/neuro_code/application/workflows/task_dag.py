@@ -42,6 +42,7 @@ from neuro_code.domain.task_dag import (
     TaskDagState,
 )
 from neuro_code.domain.task_dag_recovery import TaskDagRecoveryClaim
+from neuro_code.domain.task_dag_result import TaskDagResultEvidence
 from neuro_code.domain.task_dag_result_relay import TaskDagDependencyResultRelay
 from neuro_code.domain.writable_subagent import WritableSubagentWorkspaceState
 from neuro_code.shared.errors import ConfigurationError
@@ -1085,6 +1086,18 @@ class TaskDagApplicationService:
                 expected_generation=claimed_node.generation,
                 expected_state=TaskDagNodeState.RUNNING,
                 updated_at=self._clock().astimezone(UTC),
+                result_evidence=(
+                    TaskDagResultEvidence(
+                        result.parent_task_id,
+                        result.child_session_id,
+                        result.response,
+                        result.truncated,
+                    )
+                    if result is not None
+                    and lease is not None
+                    and lease.child_session_id is not None
+                    else None
+                ),
             )
         except TaskDagError as error:
             if error.kind == "concurrent_modification":

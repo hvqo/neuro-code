@@ -227,7 +227,13 @@ class _Writable:
             changed_file_count=0,
             state=WritableSubagentWorkspaceState.PRESERVED,
         )
-        return SimpleNamespace(status=SessionTaskStatus.COMPLETED, response=request.prompt)
+        return SimpleNamespace(
+            status=SessionTaskStatus.COMPLETED,
+            response=request.prompt,
+            parent_task_id=parent_task_id,
+            child_session_id=f"child-{node_id}",
+            truncated=False,
+        )
 
 
 class _WaveWritable:
@@ -277,7 +283,13 @@ class _WaveWritable:
             finally:
                 async with self.state.lock:
                     self.state.active -= 1
-        return SimpleNamespace(status=SessionTaskStatus.COMPLETED, response=request.prompt)
+        return SimpleNamespace(
+            status=SessionTaskStatus.COMPLETED,
+            response=request.prompt,
+            parent_task_id=parent_task_id,
+            child_session_id=f"child-{node_id}",
+            truncated=False,
+        )
 
 
 class _WaveFactory:

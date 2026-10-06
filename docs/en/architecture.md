@@ -3876,3 +3876,7 @@ Built-in profiles (`main`, `explorer`, `planner`, `reviewer`, `writable_worker`,
 ## DW3 atomic Workflow publication
 
 A prepared, typed expansion publishes a fresh immutable Task DAG and durable Workflow WAITING/linkage, journal and generated-task accounting in one SQLite transaction. Schema 37 and the canonical `WorkflowPublicationStore` port introduce no Interpreter or scheduler changes. See [ADR 0198](adr/0198-dw3-atomic-workflow-dag-publication.md).
+
+## DW4a typed result projection
+
+Schema 38 adds exact terminal worker-result evidence and immutable, scoped projections from DW3-bound DAGs. DW1 output schemas and frozen member bindings determine output; previews/truncated responses cannot substitute for exact response. Run/Step/budget/journal remain unchanged; no verification or execution authority is introduced. See [ADR 0199](adr/0199-dw4a-typed-result-projection.md).
