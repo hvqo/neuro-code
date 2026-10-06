@@ -3715,7 +3715,7 @@ workspace binding. Each optional project owns an isolated directory below the
 Neuro Code state root. `FileProjectMemoryStore` validates the canonical project
 UUID, manifest, body filenames, file types, links, containment, and strict
 count/byte limits. It keeps a manifest, generated bounded `MEMORY.md` index,
-and one body per memory. Session schema v36 remains unchanged.
+and one body per memory. Session schema v37 remains unchanged.
 
 The application exposes index and exact-id recall through
 `ProjectMemoryRecallService`. The read-only `read_project_memory` tool receives
@@ -3871,3 +3871,8 @@ payloads. See [ADR 0181](adr/0181-reasoning-efficiency-phase-gate.md).
 `EffectiveAgentBinding` is the immutable, per-execution result consumed by `AgentRuntime`: resolved profile/model/reasoning, exact effective capabilities and unavailable reasons, bound tools, memory/context policy, bounded execution budget, and security metadata. The production composition root creates it from the actual conversation binding, provider and tool catalog. A profile-bound tool collection narrows both model-visible schemas and dispatch against the same catalog; existing permission, workspace, sandbox, and specialized application services remain authoritative at execution time. Child bindings also intersect the actual parent ceiling.
 
 Built-in profiles (`main`, `explorer`, `planner`, `reviewer`, `writable_worker`, `leader`) describe existing runtime roles without replacing Task DAG, Leader, Ultracode, or writable-worker orchestration. Overrides are deterministic and may only narrow declared capabilities and execution limits. Profile guidance is a bounded binding-time synthetic context projection, not a rewrite of the stable system prefix. Context/tool-contract changes still require the existing explicit cache boundary. Trace records only safe profile/role/provider/model labels, effective and unavailable capability identifiers, and execution budget metadata; it excludes prompts, arguments, results, and credentials. Dynamic Workflow can reference the same profile IDs and binding service while continuing to use existing permission and workflow authorities. See [ADR 0182](adr/0182-agent-profile-capability-model-v1.md).
+
+
+## DW3 atomic Workflow publication
+
+A prepared, typed expansion publishes a fresh immutable Task DAG and durable Workflow WAITING/linkage, journal and generated-task accounting in one SQLite transaction. Schema 37 and the canonical `WorkflowPublicationStore` port introduce no Interpreter or scheduler changes. See [ADR 0198](adr/0198-dw3-atomic-workflow-dag-publication.md).

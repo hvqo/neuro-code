@@ -64,41 +64,7 @@ class DagMixin(_SqliteSessionPersistenceContext):
                                 kind="protocol",
                             )
                         return current
-                    if dag.created_at is None or dag.updated_at is None:
-                        raise TaskDagError("task DAG timestamps are required", kind="protocol")
-                    connection.execute(
-                        """
-                        INSERT INTO task_dags(
-                            dag_id, parent_session_id, definition_fingerprint,
-                            state, generation, created_at, updated_at, active_node_id, max_parallel
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            dag.dag_id,
-                            dag.parent_session_id,
-                            dag.definition_fingerprint,
-                            dag.state.value,
-                            dag.generation,
-                            dag.created_at.isoformat(),
-                            dag.updated_at.isoformat(),
-                            dag.active_node_id,
-                            dag.max_parallel,
-                        ),
-                    )
-                    for node in dag.nodes:
-                        connection.execute(
-                            """
-                            INSERT INTO task_dag_nodes(
-                                dag_id, node_id, ordinal, prompt, prompt_fingerprint,
-                                dependencies_json, kind, state, generation,
-                                parent_task_id, execution_owner_pid, execution_owner_token,
-                                child_session_id, lease_id, worktree_id,
-                                baseline_checkpoint_id, relay_id, error_kind, error_reason,
-                                response_preview, final_workspace_fingerprint, changed_file_count
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            _task_dag_node_values(dag.dag_id, node),
-                        )
+                    _insert_task_dag(connection, dag)
                 return dag
             except TaskDagError:
                 raise
@@ -1449,3 +1415,42 @@ def _verify_task_dag_dependency_relay_linkage(
                 "DAG dependency relay Parent Relay identity is inconsistent",
                 kind="protocol",
             )
+
+
+def _insert_task_dag(connection: sqlite3.Connection, dag: TaskDag) -> None:
+    """Insert a new DAG using the caller-owned transaction; never commits."""
+    if dag.created_at is None or dag.updated_at is None:
+        raise TaskDagError("task DAG timestamps are required", kind="protocol")
+    connection.execute(
+        """
+        INSERT INTO task_dags(
+            dag_id, parent_session_id, definition_fingerprint,
+            state, generation, created_at, updated_at, active_node_id, max_parallel
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            dag.dag_id,
+            dag.parent_session_id,
+            dag.definition_fingerprint,
+            dag.state.value,
+            dag.generation,
+            dag.created_at.isoformat(),
+            dag.updated_at.isoformat(),
+            dag.active_node_id,
+            dag.max_parallel,
+        ),
+    )
+    for node in dag.nodes:
+        connection.execute(
+            """
+            INSERT INTO task_dag_nodes(
+                dag_id, node_id, ordinal, prompt, prompt_fingerprint,
+                dependencies_json, kind, state, generation,
+                parent_task_id, execution_owner_pid, execution_owner_token,
+                child_session_id, lease_id, worktree_id,
+                baseline_checkpoint_id, relay_id, error_kind, error_reason,
+                response_preview, final_workspace_fingerprint, changed_file_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            _task_dag_node_values(dag.dag_id, node),
+        )

@@ -310,6 +310,7 @@ class WorkflowEventKind(StrEnum):
     RESERVED = "budget_reserved"
     CONSUMED = "budget_consumed"
     RECONCILED = "budget_reconciled"
+    PUBLISHED = "dag_published"
 
 
 @dataclass(frozen=True, slots=True)
