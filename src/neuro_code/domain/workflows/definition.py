@@ -902,6 +902,20 @@ def _batch_output(batch: TaskBatch) -> FieldSchema:
     )
 
 
+def workflow_output_schema(step: TaskBatch | Map) -> FieldSchema:
+    """Expose the same DW1 output contract used by ResultRef validation."""
+    if isinstance(step, TaskBatch):
+        return _batch_output(step)
+    if isinstance(step, Map):
+        return _object(
+            count=_INTEGER,
+            items=FieldSchema(
+                SchemaKind.ARRAY, items=_batch_output(step.batch), max_items=step.max_items
+            ),
+        )
+    raise TypeError("result projection requires TaskBatch or Map")
+
+
 def _activity_output(activity: ActivityKind) -> FieldSchema:
     match activity:
         case ActivityKind.ADOPT:
@@ -1127,7 +1141,7 @@ class _Validator(_Decoder):
             location = f"{path}[{i}]"
             if isinstance(step, TaskBatch):
                 self.batch(step, scope, location)
-                scope[step.step_id] = _batch_output(step)
+                scope[step.step_id] = workflow_output_schema(step)
                 generated += len(step.tasks)
             elif isinstance(step, Activity):
                 self.check_bindings(step.inputs, scope, f"{location}.inputs", None)
@@ -1193,12 +1207,7 @@ class _Validator(_Decoder):
                         f"single expanded batch at most {MAX_TASK_DAG_NODES} tasks",
                         expanded,
                     )
-                scope[step.step_id] = _object(
-                    count=_INTEGER,
-                    items=FieldSchema(
-                        SchemaKind.ARRAY, items=_batch_output(step.batch), max_items=step.max_items
-                    ),
-                )
+                scope[step.step_id] = workflow_output_schema(step)
                 generated += expanded
         return scope, generated
 

@@ -25,6 +25,7 @@ from neuro_code.domain.task_dag import (
     TaskDagState,
 )
 from neuro_code.domain.task_dag_recovery import TaskDagRecoveryClaim
+from neuro_code.domain.task_dag_result import TaskDagResultEvidence
 from neuro_code.domain.task_dag_result_relay import (
     TaskDagDependencyResultEntry,
     TaskDagDependencyResultRelay,
@@ -33,6 +34,7 @@ from neuro_code.domain.writable_subagent import WritableSubagentWorkspaceState
 from neuro_code.infrastructure.persistence.sqlite_session_connection import (
     _SqliteSessionPersistenceContext,
 )
+from neuro_code.infrastructure.persistence.sqlite_session_dag_results import persist_result_evidence
 from neuro_code.infrastructure.persistence.sqlite_session_subagents import (
     _PARENT_CONTEXT_RELAY_SELECT,
     _parent_context_relay_from_row,
@@ -370,6 +372,7 @@ class DagMixin(_SqliteSessionPersistenceContext):
         expected_generation: int,
         expected_state: TaskDagNodeState,
         updated_at: datetime,
+        result_evidence: TaskDagResultEvidence | None = None,
     ) -> TaskDag:
         _validated_task_dag_identifier(dag_id)
         if not isinstance(node, TaskDagNode) or not node.state.terminal:
@@ -386,6 +389,10 @@ class DagMixin(_SqliteSessionPersistenceContext):
                     raise TaskDagError("task DAG is missing", kind="unmanaged")
                 current = current_dag.node(node.node_id)
                 _verify_task_dag_node_definition(current, node)
+                if result_evidence is not None and node.parent_task_id != current.parent_task_id:
+                    raise TaskDagError(
+                        "result cannot replace the claimed worker identity", kind="protocol"
+                    )
                 if (
                     current.generation != expected_generation
                     or current.state is not expected_state
@@ -440,6 +447,7 @@ class DagMixin(_SqliteSessionPersistenceContext):
                         "task DAG parallel finish was lost",
                         kind="concurrent_modification",
                     )
+                persist_result_evidence(connection, dag_id, node, result_evidence)
                 connection.commit()
                 result = _load_task_dag(connection, dag_id)
                 if result is None:

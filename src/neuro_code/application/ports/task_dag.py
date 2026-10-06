@@ -11,6 +11,7 @@ from neuro_code.domain.task_dag import (
     TaskDagNodeState,
     TaskDagState,
 )
+from neuro_code.domain.task_dag_result import TaskDagResultEvidence
 
 
 class TaskDagError(Exception):
@@ -64,6 +65,7 @@ class TaskDagStore(Protocol):
         expected_generation: int,
         expected_state: TaskDagNodeState,
         updated_at: datetime,
+        result_evidence: TaskDagResultEvidence | None = None,
     ) -> TaskDag: ...
 
 

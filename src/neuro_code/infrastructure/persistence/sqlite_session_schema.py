@@ -1401,3 +1401,48 @@ def _ensure_workflow_publication_schema(connection: sqlite3.Connection) -> None:
             BEFORE {operation} ON workflow_expansions
             BEGIN SELECT RAISE(ABORT, 'immutable workflow expansion'); END
         """)
+
+
+def _ensure_workflow_projection_schema(connection: sqlite3.Connection) -> None:
+    """DW4a: exact terminal worker evidence and immutable typed projection facts."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS task_dag_result_evidence (
+            dag_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            node_generation INTEGER NOT NULL CHECK (node_generation > 0),
+            node_fingerprint TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL,
+            PRIMARY KEY (dag_id, node_id),
+            FOREIGN KEY (dag_id, node_id) REFERENCES task_dag_nodes(dag_id, node_id)
+                ON DELETE RESTRICT
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_result_projections (
+            expansion_id TEXT PRIMARY KEY,
+            projection_id TEXT NOT NULL UNIQUE,
+            run_id TEXT NOT NULL,
+            parent_session_id TEXT NOT NULL,
+            step_key TEXT NOT NULL,
+            dag_id TEXT NOT NULL UNIQUE,
+            source_json TEXT NOT NULL,
+            output_json TEXT NOT NULL,
+            source_fingerprint TEXT NOT NULL,
+            projection_fingerprint TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (expansion_id) REFERENCES workflow_expansions(expansion_id)
+                ON DELETE RESTRICT,
+            FOREIGN KEY (run_id, step_key) REFERENCES workflow_step_instances(run_id, instance_key)
+                ON DELETE RESTRICT,
+            FOREIGN KEY (dag_id) REFERENCES task_dags(dag_id) ON DELETE RESTRICT,
+            FOREIGN KEY (parent_session_id) REFERENCES sessions(id) ON DELETE RESTRICT
+        )
+    """)
+    for table in ("task_dag_result_evidence", "workflow_result_projections"):
+        for operation in ("UPDATE", "DELETE"):
+            connection.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_immutable_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, 'immutable result fact'); END
+            """)

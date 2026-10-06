@@ -37,6 +37,9 @@ from neuro_code.infrastructure.persistence.sqlite_session_turns import TurnsMixi
 from neuro_code.infrastructure.persistence.sqlite_session_ultracode import (
     UltracodeMixin,
 )
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_projection import (
+    WorkflowProjectionMixin,
+)
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_publication import (
     WorkflowPublicationMixin,
 )
@@ -62,6 +65,7 @@ class SqliteSessionStore(
     WorkingSetMixin,
     WorkflowsMixin,
     WorkflowPublicationMixin,
+    WorkflowProjectionMixin,
 ):
     """SQLite-backed implementation of the application SessionStore port."""
 
