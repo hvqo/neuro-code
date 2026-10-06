@@ -146,6 +146,7 @@ async def test_v35_upgrade_preserves_session_and_is_idempotent(tmp_path):
     session = await store.create_session("/old", "old-provider", "old-model")
     with closing(sqlite3.connect(store.database_path)) as connection, connection:
         for table in (
+            "workflow_expansions",
             "workflow_transition_journal",
             "workflow_budget_reservations",
             "workflow_step_instances",
@@ -167,7 +168,7 @@ async def test_v35_upgrade_preserves_session_and_is_idempotent(tmp_path):
                     "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'workflow_%'"
                 ).fetchall()
             )
-            == 5
+            == 6
         )
 
 
@@ -176,6 +177,7 @@ async def test_migration_failure_rolls_back_schema_and_version(tmp_path):
     await store.initialize()
     with closing(sqlite3.connect(store.database_path)) as connection, connection:
         for table in (
+            "workflow_expansions",
             "workflow_transition_journal",
             "workflow_budget_reservations",
             "workflow_step_instances",

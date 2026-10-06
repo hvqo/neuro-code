@@ -1371,3 +1371,33 @@ def _ensure_workflow_state_schema(connection: sqlite3.Connection) -> None:
             BEFORE UPDATE ON {table}
             BEGIN SELECT RAISE(ABORT, 'immutable workflow record'); END
         """)
+
+
+def _ensure_workflow_publication_schema(connection: sqlite3.Connection) -> None:
+    """DW3 immutable linkage, in the same database as Workflow and Task DAG."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_expansions (
+            expansion_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES workflow_runs(run_id) ON DELETE RESTRICT,
+            step_key TEXT NOT NULL,
+            dag_id TEXT NOT NULL UNIQUE REFERENCES task_dags(dag_id) ON DELETE RESTRICT,
+            identity_fingerprint TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL,
+            canonical_intent TEXT NOT NULL,
+            generated_tasks INTEGER NOT NULL CHECK (generated_tasks BETWEEN 1 AND 8),
+            created_generation INTEGER NOT NULL CHECK (created_generation > 0),
+            created_at TEXT NOT NULL,
+            UNIQUE (run_id, step_key),
+            FOREIGN KEY (run_id, step_key)
+                REFERENCES workflow_step_instances(run_id, instance_key) ON DELETE RESTRICT,
+            FOREIGN KEY (run_id, created_generation)
+                REFERENCES workflow_transition_journal(run_id, generation)
+                ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+        )
+    """)
+    for operation in ("UPDATE", "DELETE"):
+        connection.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS workflow_expansions_immutable_{operation.lower()}
+            BEFORE {operation} ON workflow_expansions
+            BEGIN SELECT RAISE(ABORT, 'immutable workflow expansion'); END
+        """)

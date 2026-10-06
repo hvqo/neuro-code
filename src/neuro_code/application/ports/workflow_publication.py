@@ -1,0 +1,26 @@
+"""One atomic publication seam, with no interpreter or scheduler API."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Protocol
+
+from neuro_code.domain.workflows.publication import (
+    WorkflowExpansion,
+    WorkflowExpansionIntent,
+    WorkflowPublicationResult,
+)
+
+
+class WorkflowPublicationStore(Protocol):
+    async def publish_workflow_expansion(
+        self,
+        intent: WorkflowExpansionIntent,
+        *,
+        expected_generation: int,
+        owner_id: str,
+        owner_fence: int,
+        updated_at: datetime,
+    ) -> WorkflowPublicationResult: ...
+
+    async def get_workflow_expansion(self, expansion_id: str) -> WorkflowExpansion | None: ...
