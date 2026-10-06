@@ -26,6 +26,11 @@ from neuro_code.domain.checkpoints import (
     WorkspaceFileKind,
     WorkspaceFileScope,
 )
+from neuro_code.domain.completed_dag_adoption import (
+    CompletedDagAdoptionSource,
+    CompletedDagSourceKind,
+    WorkflowAdoptionSourceRef,
+)
 from neuro_code.domain.worktree import WorktreeId, WorktreeRepositoryIdentity
 
 MAX_RESULT_ADOPTION_ID_BYTES = 128
@@ -385,13 +390,14 @@ class ResultAdoptionPlan:
     parent_workspace_root: Path
     parent_repository: WorktreeRepositoryIdentity
     parent_head_sha: str
-    swarm_run_id: str
+    swarm_run_id: str | None
     dag_id: str
     dag_generation: int
     dag_definition_fingerprint: str
     sources: tuple[ResultAdoptionSource, ...]
     targets: tuple[ResultAdoptionTarget, ...]
     created_at: datetime
+    completed_source: CompletedDagAdoptionSource | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -402,10 +408,23 @@ class ResultAdoptionPlan:
         for value, name in (
             (self.parent_session_id, "adoption parent session id"),
             (self.parent_head_sha, "adoption parent HEAD"),
-            (self.swarm_run_id, "adoption swarm run id"),
             (self.dag_id, "adoption DAG id"),
         ):
             _safe_identifier(value, field_name=name, limit=512)
+        if self.completed_source is None:
+            if not isinstance(self.swarm_run_id, str):
+                raise ValueError("adoption Swarm identity is required")
+            _safe_identifier(self.swarm_run_id, field_name="adoption swarm run id", limit=512)
+        elif (
+            not isinstance(self.completed_source, CompletedDagAdoptionSource)
+            or self.completed_source.kind is not CompletedDagSourceKind.WORKFLOW
+            or self.swarm_run_id is not None
+            or self.completed_source.parent_session_id != self.parent_session_id
+            or self.completed_source.dag_id != self.dag_id
+            or self.completed_source.dag_generation != self.dag_generation
+            or self.completed_source.dag_definition_fingerprint != self.dag_definition_fingerprint
+        ):
+            raise ValueError("adoption completed source does not match plan identity")
         object.__setattr__(
             self,
             "parent_workspace_root",
@@ -465,7 +484,7 @@ class ResultAdoptionPlan:
         return f"adopt-{uuid.uuid4().hex}"
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "adoption_id": self.adoption_id,
             "parent_session_id": self.parent_session_id,
             "parent_workspace_root": str(self.parent_workspace_root),
@@ -484,6 +503,25 @@ class ResultAdoptionPlan:
             "targets": [target.to_dict() for target in self.targets],
             "created_at": self.created_at.isoformat(),
         }
+
+        if self.completed_source is not None:
+            del payload["swarm_run_id"]
+            payload["completed_source"] = self.completed_source.to_dict()
+        return payload
+
+    @property
+    def source(self) -> CompletedDagAdoptionSource:
+        if self.completed_source is not None:
+            return self.completed_source
+        assert self.swarm_run_id is not None
+        return CompletedDagAdoptionSource(
+            CompletedDagSourceKind.SWARM,
+            self.swarm_run_id,
+            self.parent_session_id,
+            self.dag_id,
+            self.dag_generation,
+            self.dag_definition_fingerprint,
+        )
 
     @property
     def fingerprint(self) -> str:
@@ -510,13 +548,16 @@ class ResultAdoptionPlan:
             parent_workspace_root=Path(str(raw.get("parent_workspace_root"))),
             parent_repository=repository,
             parent_head_sha=str(raw.get("parent_head_sha")),
-            swarm_run_id=str(raw.get("swarm_run_id")),
+            swarm_run_id=raw.get("swarm_run_id"),
             dag_id=str(raw.get("dag_id")),
             dag_generation=dag_generation,
             dag_definition_fingerprint=str(raw.get("dag_definition_fingerprint")),
             sources=tuple(ResultAdoptionSource.from_dict(value) for value in sources_raw),
             targets=tuple(ResultAdoptionTarget.from_dict(value) for value in targets_raw),
             created_at=datetime.fromisoformat(str(raw.get("created_at"))),
+            completed_source=CompletedDagAdoptionSource.from_dict(raw["completed_source"])
+            if "completed_source" in raw
+            else None,
         )
 
 
@@ -525,7 +566,8 @@ class ResultAdoptionRequest:
     """Explicit internal request; the service generates the plan from durable evidence."""
 
     adoption_id: str
-    swarm_run_id: str
+    swarm_run_id: str | None = None
+    workflow_source: WorkflowAdoptionSourceRef | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -533,7 +575,15 @@ class ResultAdoptionRequest:
             is None
         ):
             raise ValueError("adoption id must use the adopt- prefix")
-        _safe_identifier(self.swarm_run_id, field_name="adoption swarm run id", limit=512)
+        if self.workflow_source is None:
+            if not isinstance(self.swarm_run_id, str):
+                raise ValueError("adoption Swarm identity is required")
+            _safe_identifier(self.swarm_run_id, field_name="adoption swarm run id", limit=512)
+        elif (
+            not isinstance(self.workflow_source, WorkflowAdoptionSourceRef)
+            or self.swarm_run_id is not None
+        ):
+            raise ValueError("adoption request must select exactly one typed source")
 
 
 __all__ = [

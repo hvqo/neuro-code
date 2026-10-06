@@ -23,6 +23,7 @@ from neuro_code.application.ports.configuration import AppConfig
 from neuro_code.application.ports.result_adoption import ResultAdoptionStore
 from neuro_code.application.ports.task_dag import TaskDagStore
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
+from neuro_code.application.ports.workflow_projection import WorkflowProjectionStore
 from neuro_code.application.ports.writable_subagent import WritableSubagentLeaseStore
 from neuro_code.application.providers.service import (
     ProviderChangeService,
@@ -41,6 +42,7 @@ from neuro_code.application.sessions.selection import (
 )
 from neuro_code.application.sessions.summary import SessionSummaryQueryService
 from neuro_code.application.tools.service import SessionToolOutputArtifactApplicationService
+from neuro_code.application.workflows.completed_dag_adoption import CompletedDagSourceAdapters
 from neuro_code.application.workflows.plan_execution import (
     PlanExecutionController,
     PlanExecutionService,
@@ -201,7 +203,12 @@ class CompositionServicesMixin(CompositionRootMixin):
         parent_reader = LocalParentWorkspaceProjectionReader(git=git, state=state)
         return ResultAdoptionApplicationService(
             store=cast(ResultAdoptionStore, self.store),
-            swarms=cast(AgentSwarmStore, self.store),
+            source_adapter=CompletedDagSourceAdapters(
+                swarms=cast(AgentSwarmStore, self.store),
+                dags=cast(TaskDagStore, self.store),
+                projections=cast(WorkflowProjectionStore, self.store),
+                leases=cast(WritableSubagentLeaseStore, self.store),
+            ),
             dags=cast(TaskDagStore, self.store),
             leases=cast(WritableSubagentLeaseStore, self.store),
             worktrees=worktrees,
