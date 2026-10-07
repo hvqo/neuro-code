@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 
 from neuro_code.application.agents.profiles import (
     EXPLORER_AGENT_PROFILE,
-    WRITABLE_WORKER_AGENT_PROFILE,
 )
 from neuro_code.application.runtime.agent import AgentRunResult, EventSink
 from neuro_code.application.sessions.binding import ConversationBinding
@@ -35,6 +34,7 @@ from neuro_code.application.workflows.writable_subagent import (
     RunWritableSubagentRequest,
     WritableSubagentRuntime,
     WritableSubagentRuntimeFactory,
+    resolve_writable_execution_profile,
 )
 from neuro_code.domain.conversation.prompt_continuity import ModelRequestSource
 from neuro_code.domain.parent_context_relay import ParentContextRelay
@@ -302,18 +302,32 @@ class CompositionWritableSubagentRuntimeFactory(WritableSubagentRuntimeFactory):
             cwd=workspace_binding.primary_root,
             sandbox_profile=capabilities.capabilities.sandbox_profile,
         )
+        profile = resolve_writable_execution_profile(request)
         binding = await self._composition.create_binding(
             config=selected_config,
             resume_id=child_session_id,
             additional_workspace_roots=workspace_binding.additional_roots,
             capabilities=capabilities.capabilities,
-            agent_profile=WRITABLE_WORKER_AGENT_PROFILE,
+            agent_profile=profile,
             enable_background_tasks=False,
             final_output_gate_enabled=False,
             normal_requirements_enabled=False,
             parent_context_relay=relay,
             dag_result_relay=request.dependency_result_relay,
         )
+        if request.workflow_execution_intent is not None:
+            try:
+                effective = binding.effective_agent_binding
+                if effective is None or effective.profile != profile:
+                    raise ConfigurationError("Workflow binding profile identity mismatch")
+                required = set(request.workflow_execution_intent.member.required_capabilities)
+                if not required <= effective.capability_resolution.effective:
+                    raise ConfigurationError(
+                        "Workflow required capabilities unavailable in effective binding"
+                    )
+            except BaseException:
+                await binding.close()
+                raise
         return _CompositionWritableSubagentRuntime(binding, child_session_id, capabilities)
 
 

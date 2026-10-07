@@ -16,6 +16,7 @@ import pytest
 
 from neuro_code.application.ports.workflow_publication import WorkflowPublicationStore
 from neuro_code.application.ports.workflow_state import WorkflowStateError
+from neuro_code.domain.agents.profile import AgentCapability
 from neuro_code.domain.task_dag import TaskDag, TaskDagNode, TaskDagNodeState, TaskDagState
 from neuro_code.domain.workflows import compile_workflow
 from neuro_code.domain.workflows.publication import ExpansionMember, WorkflowExpansionIntent
@@ -85,7 +86,17 @@ def intent(
     run, *, mapped=False, count=1, expansion_id="expansion-1", step_id=None, prompt="inspect source"
 ):
     keys = tuple(f"item-{i:02}" for i in range(count)) if mapped else ("batch",)
-    members = tuple(ExpansionMember(key, "work", f"node-{i}", INPUT) for i, key in enumerate(keys))
+    members = tuple(
+        ExpansionMember(
+            key,
+            "work",
+            f"node-{i}",
+            INPUT,
+            "writable_worker",
+            (AgentCapability.WORKSPACE_READ, AgentCapability.WORKSPACE_WRITE),
+        )
+        for i, key in enumerate(keys)
+    )
     dag = TaskDag.create(
         dag_id="dag-" + expansion_id,
         parent_session_id=run.parent_session_id,
@@ -548,7 +559,7 @@ async def test_migration_36_to_37_preserves_dw2_state(tmp_path):
         connection.execute("UPDATE schema_meta SET version=36")
     await asyncio.gather(store.initialize(), SqliteSessionStore(store.database_path).initialize())
     assert await store.get_workflow_run(run.run_id) == run
-    assert SCHEMA_VERSION == 38
+    assert SCHEMA_VERSION == 39
     with closing(sqlite3.connect(store.database_path)) as connection:
         assert connection.execute("SELECT version FROM schema_meta").fetchone() == (SCHEMA_VERSION,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -627,7 +638,14 @@ async def test_full_template_coverage_and_dependencies_within_each_fanout_item(t
         )
     ).run
     members = tuple(
-        ExpansionMember(key, task, key + ":" + task, INPUT)
+        ExpansionMember(
+            key,
+            task,
+            key + ":" + task,
+            INPUT,
+            "writable_worker",
+            (AgentCapability.WORKSPACE_READ, AgentCapability.WORKSPACE_WRITE),
+        )
         for key in ("中文", "目标")
         for task in ("alpha", "zeta")
     )

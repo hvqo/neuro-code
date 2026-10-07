@@ -1446,3 +1446,38 @@ def _ensure_workflow_projection_schema(connection: sqlite3.Connection) -> None:
                 BEFORE {operation} ON {table}
                 BEGIN SELECT RAISE(ABORT, 'immutable result fact'); END
             """)
+
+
+def _ensure_workflow_interpreter_schema(connection: sqlite3.Connection) -> None:
+    """DW5a uses the existing transaction owner; no mutable VM/control stack."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_run_inputs (
+            run_id TEXT PRIMARY KEY REFERENCES workflow_runs(run_id) ON DELETE RESTRICT,
+            input_json TEXT NOT NULL,
+            input_fingerprint TEXT NOT NULL
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_step_outputs (
+            run_id TEXT NOT NULL,
+            step_key TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('projection', 'fake_activity', 'empty_map')),
+            source_id TEXT NOT NULL,
+            source_fingerprint TEXT NOT NULL,
+            input_fingerprint TEXT NOT NULL,
+            output_json TEXT,
+            output_fingerprint TEXT NOT NULL,
+            generation INTEGER NOT NULL CHECK (generation > 0),
+            CHECK ((kind = 'projection' AND output_json IS NULL) OR (kind != 'projection' AND output_json IS NOT NULL)),
+            PRIMARY KEY (run_id, step_key),
+            FOREIGN KEY (run_id, step_key) REFERENCES workflow_step_instances(run_id, instance_key) ON DELETE RESTRICT,
+            FOREIGN KEY (run_id, generation) REFERENCES workflow_transition_journal(run_id, generation) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+        )
+    """)
+    for table in ("workflow_run_inputs", "workflow_step_outputs"):
+        for operation in ("UPDATE", "DELETE"):
+            connection.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_immutable_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, 'immutable interpreter fact'); END
+            """)

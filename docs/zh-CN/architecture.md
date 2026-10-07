@@ -2594,3 +2594,7 @@ Execution Efficiency 是现有 Agent loop 上有界、按回合创建的建议�
 Schema 38 保存精确 terminal worker-result evidence，并从 DW3 已绑定 DAG 产生 immutable、带 scope 的 projection。复用 DW1 output schema 与冻结成员映射，preview/截断 response 不能冒充完整结果。Run/Step/Budget/Journal 不变，不新增验证或执行权威。参见 [ADR 0199](adr/0199-dw4a-typed-result-projection.md)。
 
 DW4b 通过 typed Swarm/Workflow completed-DAG source adapters 复用既有 Result Adoption。旧 Swarm plan JSON/fingerprint 不变，Workflow plan 绑定精确 DW4a Projection；不推进控制状态，不构成验证通过。参见 [ADR 0200](adr/0200-dw4b-completed-dag-adoption.md)。
+
+## DW5a 持久化 Workflow 控制
+
+`DurableWorkflowInterpreter` 每次显式 tick 只执行一个有界控制动作，沿用 DW2 ownership/CAS、DW3 immutable DAG publication、DW4a exact projection。Schema 39 增加不可变 typed run input 与 step output/projection linkage。Branch/Repeat 从 durable facts 恢复，Map 冻结确定性 members，parent Activity 仅为纯 fake。控制流耗尽进入等待 completion requirements 的 WAITING，不等于 verification PASS。不新增 scheduler、真实 Activity 或 CLI/TUI 入口。见 [ADR 0201](adr/0201-dw5a-durable-workflow-interpreter.md)。

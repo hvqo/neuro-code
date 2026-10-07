@@ -7,6 +7,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
+from neuro_code.domain.agents.profile import AgentCapability
 from neuro_code.domain.task_dag import MAX_TASK_DAG_NODES, TaskDag, TaskDagNode, TaskDagState
 from neuro_code.domain.workflows.state import (
     StepIdentity,
@@ -33,12 +34,76 @@ class ExpansionMember:
     task_id: str
     node_id: str
     input_fingerprint: str
+    # None only represents legacy, non-executable publication facts.
+    profile_ref: str | None = None
+    required_capabilities: tuple[AgentCapability, ...] = ()
 
     def __post_init__(self) -> None:
         bounded_text(self.member_key)
         identifier(self.task_id)
         bounded_text(self.node_id)
         fingerprint(self.input_fingerprint)
+        if self.profile_ref is not None:
+            identifier(self.profile_ref)
+        if (
+            type(self.required_capabilities) is not tuple
+            or not all(isinstance(c, AgentCapability) for c in self.required_capabilities)
+            or len(set(self.required_capabilities)) != len(self.required_capabilities)
+        ):
+            raise ValueError("execution capabilities must be a unique immutable typed tuple")
+        if self.profile_ref is None and self.required_capabilities:
+            raise ValueError("execution capabilities require an exact profile")
+        object.__setattr__(self, "required_capabilities", tuple(sorted(self.required_capabilities)))
+
+    @property
+    def payload(self) -> dict[str, object]:
+        data: dict[str, object] = {
+            "member_key": self.member_key,
+            "task_id": self.task_id,
+            "node_id": self.node_id,
+            "input_fingerprint": self.input_fingerprint,
+        }
+        if self.profile_ref is not None:
+            data.update(
+                profile_ref=self.profile_ref,
+                required_capabilities=[c.value for c in self.required_capabilities],
+            )
+        return data
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowNodeExecutionIntent:
+    """Exact durable provenance and intent; never a permission/capability grant."""
+
+    run_id: str
+    expansion_id: str
+    dag_id: str
+    step: StepIdentity
+    member: ExpansionMember
+    parent_session_id: str
+
+    def __post_init__(self) -> None:
+        identifier(self.run_id)
+        identifier(self.expansion_id)
+        bounded_text(self.dag_id)
+        bounded_text(self.parent_session_id)
+        if not isinstance(self.step, StepIdentity) or not isinstance(self.member, ExpansionMember):
+            raise ValueError("execution intent requires canonical step/member")
+        if self.member.profile_ref is None:
+            raise ValueError("Workflow node has no durable execution intent")
+
+    @property
+    def fingerprint(self) -> str:
+        return digest(
+            {
+                "run_id": self.run_id,
+                "expansion_id": self.expansion_id,
+                "dag_id": self.dag_id,
+                "step": asdict(self.step),
+                "member": self.member.payload,
+                "parent_session_id": self.parent_session_id,
+            }
+        )
 
 
 def freeze_members(members: tuple[ExpansionMember, ...]) -> tuple[ExpansionMember, ...]:
@@ -89,7 +154,7 @@ class WorkflowExpansionIntent:
 
     @property
     def member_fingerprint(self) -> str:
-        return digest([asdict(m) for m in self.members])
+        return digest([m.payload for m in self.members])
 
     @property
     def identity_fingerprint(self) -> str:
@@ -111,7 +176,7 @@ class WorkflowExpansionIntent:
             "run_id": self.run_id,
             "step": asdict(self.step),
             "input_fingerprint": self.input_fingerprint,
-            "members": [asdict(m) for m in self.members],
+            "members": [m.payload for m in self.members],
             "member_fingerprint": self.member_fingerprint,
             "identity_fingerprint": self.identity_fingerprint,
             "dag_id": self.dag.dag_id,

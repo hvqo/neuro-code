@@ -916,7 +916,7 @@ def workflow_output_schema(step: TaskBatch | Map) -> FieldSchema:
     raise TypeError("result projection requires TaskBatch or Map")
 
 
-def _activity_output(activity: ActivityKind) -> FieldSchema:
+def activity_output_schema(activity: ActivityKind) -> FieldSchema:
     match activity:
         case ActivityKind.ADOPT:
             return _object(status=_STRING, parent_workspace_changed=_BOOLEAN)
@@ -1145,7 +1145,7 @@ class _Validator(_Decoder):
                 generated += len(step.tasks)
             elif isinstance(step, Activity):
                 self.check_bindings(step.inputs, scope, f"{location}.inputs", None)
-                scope[step.step_id] = _activity_output(step.activity)
+                scope[step.step_id] = activity_output_schema(step.activity)
             elif isinstance(step, Branch):
                 names = {name for name, _ in step.paths}
                 if {step.then_path, step.else_path} != names or step.then_path == step.else_path:

@@ -197,7 +197,7 @@ def _project_facts(
         }
         facts.append(
             {
-                "member": asdict(member),
+                "member": member.payload,
                 "node": asdict(node),
                 "result_fingerprint": evidence_fingerprint,
                 "response_kind": "not_produced"
