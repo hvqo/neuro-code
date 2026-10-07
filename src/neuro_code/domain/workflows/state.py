@@ -311,6 +311,7 @@ class WorkflowEventKind(StrEnum):
     CONSUMED = "budget_consumed"
     RECONCILED = "budget_reconciled"
     PUBLISHED = "dag_published"
+    ACTIVITY = "activity"
 
 
 @dataclass(frozen=True, slots=True)

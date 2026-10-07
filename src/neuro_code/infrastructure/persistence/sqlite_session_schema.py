@@ -1457,11 +1457,24 @@ def _ensure_workflow_interpreter_schema(connection: sqlite3.Connection) -> None:
             input_fingerprint TEXT NOT NULL
         )
     """)
-    connection.execute("""
-        CREATE TABLE IF NOT EXISTS workflow_step_outputs (
+    _create_workflow_step_outputs(connection, "workflow_step_outputs")
+    for table in ("workflow_run_inputs", "workflow_step_outputs"):
+        for operation in ("UPDATE", "DELETE"):
+            connection.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_immutable_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, 'immutable interpreter fact'); END
+            """)
+
+
+def _create_workflow_step_outputs(connection: sqlite3.Connection, table: str) -> None:
+    if table not in {"workflow_step_outputs", "workflow_step_outputs_v40"}:
+        raise ValueError("invalid workflow output table")
+    connection.execute(f"""
+        CREATE TABLE IF NOT EXISTS {table} (
             run_id TEXT NOT NULL,
             step_key TEXT NOT NULL,
-            kind TEXT NOT NULL CHECK (kind IN ('projection', 'fake_activity', 'empty_map')),
+            kind TEXT NOT NULL CHECK (kind IN ('projection', 'fake_activity', 'empty_map', 'activity')),
             source_id TEXT NOT NULL,
             source_fingerprint TEXT NOT NULL,
             input_fingerprint TEXT NOT NULL,
@@ -1474,10 +1487,86 @@ def _ensure_workflow_interpreter_schema(connection: sqlite3.Connection) -> None:
             FOREIGN KEY (run_id, generation) REFERENCES workflow_transition_journal(run_id, generation) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
         )
     """)
-    for table in ("workflow_run_inputs", "workflow_step_outputs"):
+
+
+def _ensure_workflow_activity_schema(connection: sqlite3.Connection) -> None:
+    """One bounded Activity attempt, immutable result, and local fact journal."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_activity_attempts (
+            invocation_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            step_key TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('ready','claimed','running','completed','failed','blocked','indeterminate')),
+            revision INTEGER NOT NULL CHECK (revision >= 0),
+            snapshot_json TEXT NOT NULL,
+            snapshot_fingerprint TEXT NOT NULL,
+            created_generation INTEGER NOT NULL CHECK (created_generation > 0),
+            UNIQUE (run_id, step_key),
+            FOREIGN KEY (run_id, step_key) REFERENCES workflow_step_instances(run_id, instance_key)
+                ON DELETE RESTRICT,
+            FOREIGN KEY (run_id, created_generation)
+                REFERENCES workflow_transition_journal(run_id, generation)
+                ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_activity_results (
+            invocation_id TEXT PRIMARY KEY REFERENCES workflow_activity_attempts(invocation_id)
+                ON DELETE RESTRICT,
+            payload_json TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_activity_events (
+            invocation_id TEXT NOT NULL REFERENCES workflow_activity_attempts(invocation_id)
+                ON DELETE RESTRICT,
+            revision INTEGER NOT NULL CHECK (revision >= 0),
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL,
+            PRIMARY KEY (invocation_id, revision)
+        )
+    """)
+    for table in ("workflow_activity_results", "workflow_activity_events"):
         for operation in ("UPDATE", "DELETE"):
             connection.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {table}_immutable_{operation.lower()}
                 BEFORE {operation} ON {table}
-                BEGIN SELECT RAISE(ABORT, 'immutable interpreter fact'); END
+                BEGIN SELECT RAISE(ABORT, 'immutable workflow activity fact'); END
             """)
+    connection.execute("""
+        CREATE TRIGGER IF NOT EXISTS workflow_activity_attempts_guard_update
+        BEFORE UPDATE ON workflow_activity_attempts
+        WHEN OLD.invocation_id != NEW.invocation_id OR OLD.run_id != NEW.run_id
+          OR OLD.step_key != NEW.step_key OR OLD.created_generation != NEW.created_generation
+          OR NEW.revision != OLD.revision + 1
+          OR json_extract(OLD.snapshot_json, '$.invocation') != json_extract(NEW.snapshot_json, '$.invocation')
+          OR NOT ((OLD.state = 'ready' AND NEW.state = 'claimed')
+            OR (OLD.state = 'claimed' AND NEW.state IN ('running','failed','blocked','indeterminate'))
+            OR (OLD.state = 'running' AND NEW.state IN ('completed','failed','blocked','indeterminate')))
+        BEGIN SELECT RAISE(ABORT, 'immutable invocation or illegal Activity transition'); END
+    """)
+    connection.execute("""
+        CREATE TRIGGER IF NOT EXISTS workflow_activity_attempts_immutable_delete
+        BEFORE DELETE ON workflow_activity_attempts
+        BEGIN SELECT RAISE(ABORT, 'immutable workflow activity attempt'); END
+    """)
+
+
+def _migrate_workflow_activity_schema(connection: sqlite3.Connection) -> None:
+    """Rebuild only the output CHECK; preserve every schema-39 row verbatim."""
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'workflow_step_outputs'"
+    ).fetchone()
+    if row is None:
+        _ensure_workflow_interpreter_schema(connection)
+    elif "'activity'" not in row[0]:
+        _create_workflow_step_outputs(connection, "workflow_step_outputs_v40")
+        connection.execute(
+            "INSERT INTO workflow_step_outputs_v40 SELECT * FROM workflow_step_outputs"
+        )
+        connection.execute("DROP TABLE workflow_step_outputs")
+        connection.execute("ALTER TABLE workflow_step_outputs_v40 RENAME TO workflow_step_outputs")
+        _ensure_workflow_interpreter_schema(connection)
+    _ensure_workflow_activity_schema(connection)

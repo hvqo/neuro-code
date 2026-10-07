@@ -138,7 +138,7 @@ async def test_atomic_rollback_and_commit_before_ack_keep_exact_intent(tmp_path)
     assert (
         await reopened.get_workflow_node_execution_intent(proposal.dag.dag_id, "node-0")
     ).member == proposal.members[0]
-    assert SCHEMA_VERSION == 39
+    assert SCHEMA_VERSION == 40
 
 
 @pytest.mark.parametrize("change", ["profile", "caps", "node", "digest"])
@@ -412,6 +412,7 @@ async def test_production_composition_consumes_publication_before_first_model(
             publication=app.store,
             projections=app.store,
             dags=app.store,
+            activities=app.store,
         )
         await tick(app.store, interpreter)
         await tick(app.store, interpreter)

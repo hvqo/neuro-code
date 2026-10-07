@@ -1226,7 +1226,7 @@ async def test_schema_28_to_29_result_adoption_migration_is_idempotent_and_lossl
 
     migrated = SqliteSessionStore(database)
     await migrated.initialize()
-    assert SCHEMA_VERSION == 39
+    assert SCHEMA_VERSION == 40
     assert await migrated.get_session(session_id) is not None
 
     def schema_snapshot() -> tuple[tuple[str, str | None], ...]:

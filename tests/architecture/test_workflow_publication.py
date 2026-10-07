@@ -559,7 +559,7 @@ async def test_migration_36_to_37_preserves_dw2_state(tmp_path):
         connection.execute("UPDATE schema_meta SET version=36")
     await asyncio.gather(store.initialize(), SqliteSessionStore(store.database_path).initialize())
     assert await store.get_workflow_run(run.run_id) == run
-    assert SCHEMA_VERSION == 39
+    assert SCHEMA_VERSION == 40
     with closing(sqlite3.connect(store.database_path)) as connection:
         assert connection.execute("SELECT version FROM schema_meta").fetchone() == (SCHEMA_VERSION,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []

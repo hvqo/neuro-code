@@ -11,12 +11,22 @@ from unittest.mock import patch
 
 import pytest
 
+from neuro_code.application.ports.workflow_interpreter import FakeActivityInvocation
 from neuro_code.application.ports.workflow_state import WorkflowStateError
+from neuro_code.application.workflows.fake_workflow_activity import (
+    DeterministicFakeWorkflowActivity,
+)
 from neuro_code.application.workflows.workflow_interpreter import DurableWorkflowInterpreter
+from neuro_code.domain.workflows.activity import WorkflowActivityResult, WorkflowActivityState
 from neuro_code.domain.workflows.definition import compile_workflow
-from neuro_code.domain.workflows.interpreter import OutputKind, expansion_id, typed_json
+from neuro_code.domain.workflows.interpreter import (
+    OutputKind,
+    expansion_id,
+    invocation_id,
+    typed_json,
+)
 from neuro_code.domain.workflows.publication import canonical, digest
-from neuro_code.domain.workflows.state import StepIdentity, WorkflowStatus
+from neuro_code.domain.workflows.state import BudgetAmounts, StepIdentity, WorkflowStatus
 from neuro_code.infrastructure.persistence import sqlite_session_workflow_interpreter as owner
 from neuro_code.infrastructure.persistence.sqlite_session import SCHEMA_VERSION, SqliteSessionStore
 from tests.architecture.test_workflow_projection import END, finish
@@ -33,7 +43,13 @@ def activity(step_id, kind="parent.verify", inputs=None):
 
 def engine(store, **kwargs):
     return DurableWorkflowInterpreter(
-        state=store, facts=store, publication=store, projections=store, dags=store, **kwargs
+        state=store,
+        facts=store,
+        publication=store,
+        projections=store,
+        dags=store,
+        activities=store,
+        **kwargs,
     )
 
 
@@ -79,9 +95,56 @@ async def tick(store, interpreter=None):
     return result
 
 
-async def drive(store, *, limit=50, interpreter=None):
+async def external_activity_result(store):
+    """Test-only owner; Interpreter never invokes this helper."""
+    run = await store.get_workflow_run("run")
+    step = next(s for s in run.steps if s.identity == run.position)
+    key = invocation_id(run.run_id, step.identity, step.input_fingerprint)
+    attempt = await store.claim_workflow_activity(
+        key,
+        expected_revision=0,
+        owner_id="activity-owner",
+        reserved=BudgetAmounts(),
+        updated_at=END,
+    )
+    attempt = await store.start_workflow_activity(
+        key,
+        expected_revision=attempt.revision,
+        owner_id=attempt.owner_id,
+        owner_fence=attempt.owner_fence,
+        updated_at=END,
+    )
+    invocation = attempt.invocation
+    value = DeterministicFakeWorkflowActivity().evaluate(
+        FakeActivityInvocation(
+            key, run.run_id, step.identity, invocation.activity, invocation.request_json
+        )
+    )
+    result = WorkflowActivityResult(
+        key,
+        invocation.request_fingerprint,
+        invocation.activity,
+        WorkflowActivityState.COMPLETED,
+        "test-result:" + key,
+        digest(value),
+        BudgetAmounts(),
+        END,
+        value,
+    )
+    return await store.finish_workflow_activity(
+        result,
+        expected_revision=attempt.revision,
+        owner_id=attempt.owner_id,
+        owner_fence=attempt.owner_fence,
+    )
+
+
+async def drive(store, *, limit=80, interpreter=None):
     for _ in range(limit):
         result = await tick(store, interpreter)
+        if result.action == "activity_waiting":
+            await external_activity_result(store)
+            continue
         if not result.progressed:
             return result
     raise AssertionError("bounded test driver did not settle")
@@ -111,7 +174,7 @@ async def reopen(store):
     return new
 
 
-async def test_sequence_fake_activities_and_completion_is_only_waiting(tmp_path):
+async def test_sequence_external_activities_and_completion_is_only_waiting(tmp_path):
     data = source()
     data["steps"] = [
         activity("adopt", "parent.adopt"),
@@ -128,7 +191,7 @@ async def test_sequence_fake_activities_and_completion_is_only_waiting(tmp_path)
         await store.get_workflow_step_output("run", StepIdentity(name))
         for name in ("adopt", "verify", "repair")
     ]
-    assert all(o.kind is OutputKind.FAKE_ACTIVITY for o in outputs)
+    assert all(o.kind is OutputKind.ACTIVITY for o in outputs)
     assert all(json.loads(o.output_json)["status"] == "fake" for o in outputs)
     assert json.loads(outputs[0].output_json)["parent_workspace_changed"] is False
     assert result.run.ledger.committed.generated_tasks == 0
@@ -173,6 +236,8 @@ async def test_branch_persisted_selection_skips_other_path(tmp_path, condition, 
     store = await setup(tmp_path, data)
     await tick(store)
     await tick(store)
+    await external_activity_result(store)
+    await tick(store)
     result = await tick(store)
     assert result.action == "record_branch"
     store = await reopen(store)  # committed decision, lost client acknowledgement
@@ -199,6 +264,9 @@ async def test_repeat_post_body_durable_iterations_and_limit(tmp_path, target):
     for _ in range(30):
         result = await tick(store)
         store = await reopen(store)  # every fact can lose its acknowledgement
+        if result.action == "activity_waiting":
+            await external_activity_result(store)
+            continue
         if not result.progressed:
             break
     run = await store.get_workflow_run("run")
@@ -392,7 +460,10 @@ async def test_concurrent_tick_and_owner_replacement_have_no_duplicate_output(tm
         )
     assert (await tick(store)).action == "stopped"  # reclaim requires explicit reconciliation
     with closing(sqlite3.connect(store.database_path)) as connection:
-        assert connection.execute("SELECT count(*) FROM workflow_step_outputs").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM workflow_step_outputs").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT count(*) FROM workflow_activity_attempts").fetchone()[0] == 1
+        )
 
 
 async def test_output_transaction_rollback_and_commit_before_ack(tmp_path):
@@ -400,6 +471,8 @@ async def test_output_transaction_rollback_and_commit_before_ack(tmp_path):
     data["steps"] = [activity("verify")]
     store = await setup(tmp_path, data)
     await tick(store)
+    await tick(store)
+    await external_activity_result(store)
     before = await store.get_workflow_run("run")
     with (
         patch.object(owner, "_append_event", side_effect=RuntimeError("crash")),
@@ -464,6 +537,8 @@ async def test_step_output_tamper_and_conflicting_replay_rejected(tmp_path):
     store = await setup(tmp_path, data)
     await tick(store)
     await tick(store)
+    await external_activity_result(store)
+    await tick(store)
     output = await store.get_workflow_step_output("run", StepIdentity("verify"))
     run = await store.get_workflow_run("run")
     replay = await store.commit_workflow_step_output(
@@ -499,7 +574,7 @@ async def test_schema_38_upgrade_retains_previous_run_and_snapshot(tmp_path):
         connection.execute("DROP TABLE workflow_run_inputs")
         connection.execute("UPDATE schema_meta SET version = 38")
     store = await reopen(store)
-    assert SCHEMA_VERSION == 39
+    assert SCHEMA_VERSION == 40
     assert await store.get_workflow_run("run") == before
     with pytest.raises(WorkflowStateError, match="missing"):
         await tick(store)  # no invented input for legacy runs
@@ -554,7 +629,9 @@ async def test_repeat_task_budget_retained_after_restart(tmp_path):
         await terminal_projection(store, StepIdentity("implement", iteration))
         assert (await tick(store)).action == "consume_projection"
         await tick(store)  # initialize verify
-        await tick(store)  # fake verify
+        await tick(store)  # publish verify
+        await external_activity_result(store)
+        await tick(store)  # consume durable verify
         await tick(store)  # next iteration or repeat exit
         store = await reopen(store)
     result = await drive(store)
@@ -616,7 +693,10 @@ async def test_control_commit_before_lost_ack_restarts_without_duplicate_fact(tm
     data = source("branch" if event_kind == "branch_decision" else "repeat")
     store = await setup(tmp_path, data)
     await tick(store)
-    await tick(store)  # fake result / Repeat RUNNING
+    await tick(store)  # publish invocation / Repeat RUNNING
+    if event_kind == "branch_decision":
+        await external_activity_result(store)
+        await tick(store)
     original = store.transition_workflow_run
 
     async def lost_ack(run_id, change, **kwargs):
@@ -749,18 +829,35 @@ async def test_map_runtime_bounds_fail_closed_even_with_untrusted_port(tmp_path,
         assert connection.execute("SELECT count(*) FROM task_dags").fetchone()[0] == 0
 
 
-async def test_invalid_fake_schema_result_transaction_rejected(tmp_path):
+async def test_invalid_completed_activity_output_transaction_rejected(tmp_path):
     data = source()
     data["steps"] = [activity("verify")]
     store = await setup(tmp_path, data)
     await tick(store)
+    await tick(store)
+    run = await store.get_workflow_run("run")
+    key = invocation_id("run", run.position, run.steps[0].input_fingerprint)
+    attempt = await store.claim_workflow_activity(
+        key, expected_revision=0, owner_id="external", reserved=BudgetAmounts(), updated_at=END
+    )
+    attempt = await store.start_workflow_activity(
+        key, expected_revision=1, owner_id="external", owner_fence=1, updated_at=END
+    )
     before = await store.get_workflow_run("run")
-
-    class InvalidFake:
-        def evaluate(self, invocation):
-            return canonical({"status": "PASS", "workspace_generation": "not integer"})
-
+    invalid = WorkflowActivityResult(
+        key,
+        attempt.invocation.request_fingerprint,
+        attempt.invocation.activity,
+        WorkflowActivityState.COMPLETED,
+        "source",
+        "a" * 64,
+        BudgetAmounts(),
+        END,
+        canonical({"status": "PASS", "workspace_generation": "not integer"}),
+    )
     with pytest.raises(WorkflowStateError):
-        await tick(store, engine(store, activity=InvalidFake()))
+        await store.finish_workflow_activity(
+            invalid, expected_revision=2, owner_id="external", owner_fence=1
+        )
     assert await store.get_workflow_run("run") == before
     assert await store.get_workflow_step_output("run", StepIdentity("verify")) is None

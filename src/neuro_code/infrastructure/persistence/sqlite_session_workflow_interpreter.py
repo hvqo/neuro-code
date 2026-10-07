@@ -10,6 +10,7 @@ from datetime import datetime
 
 from neuro_code.application.ports.workflow_state import WorkflowStateError
 from neuro_code.domain.task_dag import TaskDagState
+from neuro_code.domain.workflows.activity import WorkflowActivityState
 from neuro_code.domain.workflows.definition import Activity, Map, TaskBatch
 from neuro_code.domain.workflows.interpreter import (
     OutputKind,
@@ -33,6 +34,7 @@ from neuro_code.domain.workflows.state import (
 from neuro_code.infrastructure.persistence.sqlite_session_connection import (
     _SqliteSessionPersistenceContext,
 )
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_activity import _load_attempt
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_projection import (
     _project_facts,
     _read_projection,
@@ -42,6 +44,7 @@ from neuro_code.infrastructure.persistence.sqlite_session_workflow_publication i
 )
 from neuro_code.infrastructure.persistence.sqlite_session_workflows import (
     _append_event,
+    _exceeds_ceiling,
     _guard,
     _load_definition,
     _load_run,
@@ -148,11 +151,19 @@ class WorkflowInterpreterMixin(_SqliteSessionPersistenceContext):
                     or updated_at < run.updated_at
                 ):
                     raise WorkflowStateError("run cannot consume result", kind="protocol")
+                if output.kind is OutputKind.ACTIVITY and (
+                    not run.ledger.committed.known
+                    or _exceeds_ceiling(run.ledger)
+                    or run.waiting_reason != "activity:" + output.source_id
+                ):
+                    raise WorkflowStateError(
+                        "activity consumption budget/waiting differs", kind="needs_attention"
+                    )
                 _validate_output(connection, run, output)
                 old = next((s for s in run.steps if s.identity == output.step), None)
                 expected_status = (
                     WorkflowStatus.WAITING
-                    if output.kind is OutputKind.PROJECTION
+                    if output.kind in {OutputKind.PROJECTION, OutputKind.ACTIVITY}
                     else WorkflowStatus.READY
                 )
                 if (
@@ -187,7 +198,13 @@ class WorkflowInterpreterMixin(_SqliteSessionPersistenceContext):
                     }
                 )
                 _append_event(
-                    connection, proposed, "output:" + output.step.key, WorkflowEventKind.STEP, fact
+                    connection,
+                    proposed,
+                    "output:" + output.step.key,
+                    WorkflowEventKind.ACTIVITY
+                    if output.kind is OutputKind.ACTIVITY
+                    else WorkflowEventKind.STEP,
+                    fact,
                 )
                 connection.execute(
                     "INSERT INTO workflow_step_outputs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -236,7 +253,23 @@ def _validate_output(
     if not isinstance(declared, Activity | Map | TaskBatch):
         raise WorkflowStateError("step cannot produce this output", kind="protocol")
     validate_step_output(declared, output)
-    if output.kind is OutputKind.PROJECTION:
+    if output.kind is OutputKind.ACTIVITY:
+        if not isinstance(declared, Activity):
+            raise WorkflowStateError("activity output requires Activity step", kind="integrity")
+        attempt = _load_attempt(connection, output.source_id)
+        if (
+            attempt is None
+            or attempt.state is not WorkflowActivityState.COMPLETED
+            or attempt.result is None
+            or attempt.invocation.run_id != run.run_id
+            or attempt.invocation.step != output.step
+            or attempt.invocation.input_fingerprint != output.input_fingerprint
+            or attempt.invocation.activity is not declared.activity
+            or attempt.result.fingerprint != output.source_fingerprint
+            or attempt.result.output_json != output.output_json
+        ):
+            raise WorkflowStateError("durable activity result linkage mismatch", kind="integrity")
+    elif output.kind is OutputKind.PROJECTION:
         publication = _load_publication(connection, expansion_id(run.run_id, output.step))
         if publication is None or publication.dag.state is not TaskDagState.COMPLETED:
             raise WorkflowStateError("exact completed publication missing", kind="integrity")
@@ -306,7 +339,15 @@ def _load_output(
         or linked is None
         or linked.status is not WorkflowStatus.COMPLETED
         or linked.input_fingerprint != result.input_fingerprint
-        or event != (WorkflowEventKind.STEP.value, fact)
+        or event
+        != (
+            (
+                WorkflowEventKind.ACTIVITY
+                if kind is OutputKind.ACTIVITY
+                else WorkflowEventKind.STEP
+            ).value,
+            fact,
+        )
         or row[6] > run.generation
     ):
         raise WorkflowStateError("output snapshot/journal linkage mismatch", kind="integrity")
