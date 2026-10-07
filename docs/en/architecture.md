@@ -3880,3 +3880,5 @@ A prepared, typed expansion publishes a fresh immutable Task DAG and durable Wor
 ## DW4a typed result projection
 
 Schema 38 adds exact terminal worker-result evidence and immutable, scoped projections from DW3-bound DAGs. DW1 output schemas and frozen member bindings determine output; previews/truncated responses cannot substitute for exact response. Run/Step/budget/journal remain unchanged; no verification or execution authority is introduced. See [ADR 0199](adr/0199-dw4a-typed-result-projection.md).
+
+DW4b adds typed Swarm/Workflow completed-DAG source adapters to the existing Result Adoption core. Legacy Swarm plan JSON/fingerprints remain unchanged; Workflow plans bind exact DW4a projections without advancing control state or verification. See [ADR 0200](adr/0200-dw4b-completed-dag-adoption.md).

@@ -1469,6 +1469,7 @@ def test_canonical_ports_are_the_only_port_modules() -> None:
         "neuro_code.application.ports.client_filesystem",
         "neuro_code.application.ports.client_terminal",
         "neuro_code.application.ports.checkpoints",
+        "neuro_code.application.ports.completed_dag_adoption",
         "neuro_code.application.ports.configuration",
         "neuro_code.application.ports.context_rollover",
         "neuro_code.application.ports.git_inspection",

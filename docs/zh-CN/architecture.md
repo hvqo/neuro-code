@@ -2592,3 +2592,5 @@ Execution Efficiency 是现有 Agent loop 上有界、按回合创建的建议�
 ## DW4a Typed Result Projection
 
 Schema 38 保存精确 terminal worker-result evidence，并从 DW3 已绑定 DAG 产生 immutable、带 scope 的 projection。复用 DW1 output schema 与冻结成员映射，preview/截断 response 不能冒充完整结果。Run/Step/Budget/Journal 不变，不新增验证或执行权威。参见 [ADR 0199](adr/0199-dw4a-typed-result-projection.md)。
+
+DW4b 通过 typed Swarm/Workflow completed-DAG source adapters 复用既有 Result Adoption。旧 Swarm plan JSON/fingerprint 不变，Workflow plan 绑定精确 DW4a Projection；不推进控制状态，不构成验证通过。参见 [ADR 0200](adr/0200-dw4b-completed-dag-adoption.md)。

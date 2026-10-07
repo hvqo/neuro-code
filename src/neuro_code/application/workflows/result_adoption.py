@@ -1,6 +1,6 @@
 """Bounded durable adoption of preserved writable-worker results.
 
-This workflow consumes only durable Swarm/DAG/lease/checkpoint projections and
+This workflow consumes only durable completed-DAG/lease/checkpoint projections and
 the live managed worker projection.  It never interprets a worker response or
 performs a raw filesystem write.  Parent mutations are delegated to the
 runtime-owned permission/workspace/sandbox port one target at a time.
@@ -23,6 +23,7 @@ from neuro_code.application.ports.checkpoints import (
     WorkspaceCheckpointApplication,
     WorkspaceCheckpointError,
 )
+from neuro_code.application.ports.completed_dag_adoption import CompletedDagAdoptionSourceAdapter
 from neuro_code.application.ports.result_adoption import (
     RESULT_ADOPTION_POST_APPLY_CONCURRENT_MODIFICATION,
     ParentWorkspaceProjectionReader,
@@ -39,11 +40,12 @@ from neuro_code.application.ports.task_dag import TaskDagStore
 from neuro_code.application.ports.worktree import WorktreeError
 from neuro_code.application.ports.writable_subagent import WritableSubagentLeaseStore
 from neuro_code.application.runtime.process_liveness import owner_is_alive
+from neuro_code.application.workflows.completed_dag_adoption import SwarmCompletedDagSourceAdapter
 from neuro_code.application.workflows.subagent_capabilities import (
     WRITABLE_SUBAGENT_WRITE_TOOL_NAMES,
     SubagentCapabilitySet,
 )
-from neuro_code.domain.agent_swarm import AgentSwarmResult, AgentSwarmRunState
+from neuro_code.domain.agent_swarm import AgentSwarmResult
 from neuro_code.domain.checkpoints import (
     CheckpointState,
     WorkspaceFileEntry,
@@ -51,6 +53,7 @@ from neuro_code.domain.checkpoints import (
     WorkspaceProjection,
     workspace_projection_fingerprint,
 )
+from neuro_code.domain.completed_dag_adoption import CompletedDagSourceKind
 from neuro_code.domain.result_adoption import (
     MAX_RESULT_ADOPTION_LEASE_SECONDS,
     MAX_RESULT_ADOPTION_PATH_BYTES,
@@ -65,7 +68,7 @@ from neuro_code.domain.result_adoption import (
     ResultAdoptionTargetState,
     workspace_entry_fingerprint,
 )
-from neuro_code.domain.task_dag import TaskDagNodeKind, TaskDagNodeState, TaskDagState
+from neuro_code.domain.task_dag import TaskDagNodeKind, TaskDagNodeState
 from neuro_code.domain.worktree import WorktreeOwnership, WorktreeState
 from neuro_code.domain.writable_subagent import WritableSubagentWorkspaceState
 
@@ -198,7 +201,8 @@ class ResultAdoptionApplicationService:
         self,
         *,
         store: ResultAdoptionStore,
-        swarms: AgentSwarmStore,
+        swarms: AgentSwarmStore | None = None,
+        source_adapter: CompletedDagAdoptionSourceAdapter | None = None,
         dags: TaskDagStore,
         leases: WritableSubagentLeaseStore,
         worktrees: ResultAdoptionWorktreePort,
@@ -264,8 +268,13 @@ class ResultAdoptionApplicationService:
         if not 0 < float(lease_seconds) <= MAX_RESULT_ADOPTION_LEASE_SECONDS:
             raise ValueError("result adoption lease duration is out of bounds")
         self._store = store
-        self._swarms = swarms
-        self._dags = dags
+        if source_adapter is None:
+            if swarms is None:
+                raise ResultAdoptionError(
+                    "completed DAG source adapter is required", kind="configuration"
+                )
+            source_adapter = SwarmCompletedDagSourceAdapter(swarms=swarms, dags=dags)
+        self._source_adapter = source_adapter
         self._leases = leases
         self._worktrees = worktrees
         self._checkpoints = checkpoints
@@ -315,16 +324,43 @@ class ResultAdoptionApplicationService:
         existing = await self._store.get_result_adoption(request.adoption_id)
         if existing is not None:
             self._assert_existing_request(existing, request)
+            await self._recheck_workflow_record(existing, request)
             return existing
         plan = await self._build_plan(request)
         now = self._clock().astimezone(UTC)
-        return await self._store.insert_result_adoption(
-            plan,
-            owner_pid=self._owner_pid,
-            owner_token=self._owner_token,
-            now=now,
-            lease_expires_at=now + timedelta(seconds=self._lease_seconds),
+        try:
+            return await self._store.insert_result_adoption(
+                plan,
+                owner_pid=self._owner_pid,
+                owner_token=self._owner_token,
+                now=now,
+                lease_expires_at=now + timedelta(seconds=self._lease_seconds),
+            )
+        except ResultAdoptionError as error:
+            if request.workflow_source is None or error.kind != "integrity":
+                raise
+            # Concurrent prepare may differ only in its creation timestamp.
+            # Never relax source, repository or generated-target equality.
+            current = await self._store.get_result_adoption(request.adoption_id)
+            if current is None or replace(plan, created_at=current.plan.created_at) != current.plan:
+                raise
+            self._assert_existing_request(current, request)
+            await self._recheck_workflow_record(current, request)
+            return current
+
+    async def _recheck_workflow_record(
+        self, record: ResultAdoptionRecord, request: ResultAdoptionRequest
+    ) -> None:
+        # Terminal replay reads a verified durable fact, not execution authority.
+        # Request identity is checked before this call; live resources may be gone.
+        if record.state.terminal or request.workflow_source is None:
+            return
+        resolved = await self._source_adapter.resolve(
+            request, parent_session_id=self._parent_session_id
         )
+        if resolved.source != record.plan.source:
+            raise ResultAdoptionError("adoption source changed after preparation", kind="integrity")
+        self._assert_parent_identity(await self._inspect_parent(), record.plan)
 
     async def adopt(
         self,
@@ -404,37 +440,30 @@ class ResultAdoptionApplicationService:
     ) -> None:
         if (
             record.plan.adoption_id != request.adoption_id
-            or record.plan.swarm_run_id != request.swarm_run_id
+            or record.plan.source.kind
+            is not (
+                CompletedDagSourceKind.WORKFLOW
+                if request.workflow_source is not None
+                else CompletedDagSourceKind.SWARM
+            )
+            or record.plan.source.workflow != request.workflow_source
+            or (
+                request.workflow_source is None
+                and record.plan.source.source_id != request.swarm_run_id
+            )
             or record.plan.parent_session_id != self._parent_session_id
             or record.plan.parent_workspace_root != self._parent_root
         ):
             raise ResultAdoptionError(
-                "adoption identity is bound to a different parent or swarm",
+                "adoption identity is bound to a different parent or completed DAG source",
                 kind="integrity",
             )
 
     async def _build_plan(self, request: ResultAdoptionRequest) -> ResultAdoptionPlan:
-        run = await self._swarms.get_swarm_run(request.swarm_run_id)
-        if run is None:
-            raise ResultAdoptionError("completed Swarm run is missing", kind="unmanaged")
-        if run.state is not AgentSwarmRunState.COMPLETED:
-            raise ResultAdoptionError("Swarm run is not completed", kind="stale_source")
-        if run.parent_session_id != self._parent_session_id or run.current_dag_id is None:
-            raise ResultAdoptionError("Swarm parent identity does not match", kind="integrity")
-        if run.current_dag_generation is None or run.current_dag_definition_fingerprint is None:
-            raise ResultAdoptionError(
-                "completed Swarm DAG identity is incomplete", kind="integrity"
-            )
-        dag = await self._dags.get_task_dag(run.current_dag_id)
-        if dag is None:
-            raise ResultAdoptionError("completed source DAG is missing", kind="unmanaged")
-        if (
-            dag.state is not TaskDagState.COMPLETED
-            or dag.parent_session_id != self._parent_session_id
-            or dag.generation != run.current_dag_generation
-            or dag.definition_fingerprint != run.current_dag_definition_fingerprint
-        ):
-            raise ResultAdoptionError("source DAG identity or state is stale", kind="stale_source")
+        resolved = await self._source_adapter.resolve(
+            request, parent_session_id=self._parent_session_id
+        )
+        dag = resolved.dag
         if not 1 <= len(dag.nodes) <= MAX_RESULT_ADOPTION_SOURCES:
             raise ResultAdoptionError(
                 "source worker count exceeds the adoption bound", kind="bounds"
@@ -613,19 +642,28 @@ class ResultAdoptionApplicationService:
                     "parent HEAD no longer matches the worker base commit",
                     kind="stale_source",
                 )
+        if request.workflow_source is not None:
+            rechecked = await self._source_adapter.resolve(
+                request, parent_session_id=self._parent_session_id
+            )
+            if rechecked != resolved:
+                raise ResultAdoptionError(
+                    "Workflow source changed during preparation", kind="stale_source"
+                )
         return ResultAdoptionPlan(
             adoption_id=request.adoption_id,
             parent_session_id=self._parent_session_id,
             parent_workspace_root=self._parent_root,
             parent_repository=parent.repository,
             parent_head_sha=parent.repository.head_sha,
-            swarm_run_id=run.swarm_run_id,
+            swarm_run_id=request.swarm_run_id,
             dag_id=dag.dag_id,
             dag_generation=dag.generation,
             dag_definition_fingerprint=dag.definition_fingerprint,
             sources=tuple(source_values),
             targets=targets,
             created_at=self._clock().astimezone(UTC),
+            completed_source=resolved.source if request.workflow_source is not None else None,
         )
 
     async def _verify_parent(self, plan: ResultAdoptionPlan, *, allow_desired: bool) -> None:
