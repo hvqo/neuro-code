@@ -1514,6 +1514,7 @@ def test_canonical_ports_are_the_only_port_modules() -> None:
         "neuro_code.application.ports.workflow_state",
         "neuro_code.application.ports.workflow_publication",
         "neuro_code.application.ports.workflow_projection",
+        "neuro_code.application.ports.workflow_interpreter",
     }
     assert {
         module for module in modules if module.startswith("neuro_code.application.ports")
@@ -1563,6 +1564,7 @@ def test_canonical_persistence_modules_are_the_only_persistence_implementations(
         "neuro_code.infrastructure.persistence.sqlite_session_workflows",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_publication",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_projection",
+        "neuro_code.infrastructure.persistence.sqlite_session_workflow_interpreter",
         "neuro_code.infrastructure.persistence.sqlite_session_dag_results",
         "neuro_code.infrastructure.persistence.ui_preferences",
         "neuro_code.infrastructure.persistence.project_memory_files",
