@@ -52,6 +52,8 @@ from neuro_code.domain.workflows.state import (
     timestamp,
 )
 
+CONTROL_FLOW_EXHAUSTED_REASON = "control_flow_exhausted: completion requirements pending"
+
 
 @dataclass(frozen=True, slots=True)
 class WorkflowAdvanceResult:
@@ -104,7 +106,7 @@ class DurableWorkflowInterpreter:
             )
         if run.status not in {WorkflowStatus.RUNNING, WorkflowStatus.WAITING}:
             return WorkflowAdvanceResult(run, "stopped", False)
-        if run.waiting_reason == "control_flow_exhausted: completion requirements pending":
+        if run.waiting_reason == CONTROL_FLOW_EXHAUSTED_REASON:
             return WorkflowAdvanceResult(run, "completion_pending", False)
         if not run.ledger.committed.known:
             raise WorkflowStateError("budget requires reconciliation", kind="needs_attention")
@@ -130,7 +132,7 @@ class DurableWorkflowInterpreter:
                 WorkflowChange(
                     WorkflowEventKind.TRANSITION,
                     status=WorkflowStatus.WAITING,
-                    waiting_reason="control_flow_exhausted: completion requirements pending",
+                    waiting_reason=CONTROL_FLOW_EXHAUSTED_REASON,
                 ),
                 action.kind.value,
                 updated_at,
@@ -402,7 +404,16 @@ class DurableWorkflowInterpreter:
                     tuple(node_ids[dependency] for dependency in task.depends_on),
                     task.route,
                 )
-                members.append(ExpansionMember(key, task.task_id, node.node_id, digest(inputs)))
+                members.append(
+                    ExpansionMember(
+                        key,
+                        task.task_id,
+                        node.node_id,
+                        digest(inputs),
+                        task.profile_ref,
+                        task.required_capabilities,
+                    )
+                )
                 nodes.append(node)
         dag = TaskDag.create(
             dag_id="dag:" + digest([exp_id]),

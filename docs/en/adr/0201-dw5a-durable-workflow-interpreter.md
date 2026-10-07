@@ -30,8 +30,9 @@ immutable UPDATE/DELETE triggers. Input is canonical, DW1-schema-validated JSON;
 its SHA-256 must equal the existing Run input fingerprint. Freeze it using
 `put_workflow_input` after creation, before any ownership claim. A crash between
 creation and input attachment leaves a non-executable Run; no caller dictionary
-or invented default replaces missing durable input. Legacy runs remain readable
-but cannot execute without their original immutable snapshot contract.
+or invented default replaces missing durable input. Generation-0 runs without input are uninitialized durable facts. A future entrypoint
+must attach the same immutable input before claim/execution. Legacy runs remain
+readable but cannot execute without their original immutable snapshot contract.
 
 InputRef reads that snapshot. TaskBatch/Map ResultRef reads the exact DW4a
 projection linked to the consumed step, revalidating Run/Expansion/DAG/member/
@@ -52,7 +53,26 @@ Expansion/node/DAG IDs bind the Run and StepIdentity. DAG creation time uses the
 Run's durable creation time, so retries do not change canonical publication.
 Task prompts retain the declared template and append canonical inputs as data;
 this is not an expression/template execution engine. Profile/capability declarations
-remain intent in the immutable definition and confer no additional authority.
+are frozen in each immutable Expansion member alongside member/task/node and input
+identity, not prompt instructions. Their canonical payload participates in the
+member, publication and journal fingerprints. DW3 commits DAG, these bindings,
+Run/Step WAITING, budget and journal in the same transaction; no sidecar write or
+new schema is needed. Old publications retain their exact historical JSON/digests
+but missing execution intent makes them non-executable, without rewriting records.
+
+Before Worker launch the Task DAG store resolves the exact durable node intent
+and checks publication/Run/Step/DAG/member/journal linkage. Writable Subagent
+rechecks that exact intent and parent session before allocating execution resources.
+The existing built-in Profile catalog resolves the requested ID; only writable-worker
+role with managed-worktree policy is eligible. Unknown custom IDs and incompatible
+built-ins fail closed, never default to writable_worker. No custom registry is added.
+The existing create_binding receives the exact profile and unchanged Writable grant.
+Before any model call, EffectiveAgentBinding must retain that profile identity and
+include every required capability. Required capabilities confer no grant: parent,
+Permission, Sandbox, provider, platform, runtime and profile ceilings still intersect.
+A rejected launch becomes the existing FAILED node outcome, without retry, replan
+or verification interpretation. Non-Workflow DAGs retain their default writable
+profile and scheduler behavior; no automatic Workflow execution entry is added.
 
 Map freezes the bounded typed collection before publication. Each member key
 contains its zero-padded source ordinal and item digest, preserving array order
@@ -101,15 +121,23 @@ from the persisted branch, iteration, publication, consumed projection or activi
 result, without a duplicate DAG, logical activity or generated-task charge. Reads
 check schema, digest, provenance and step/journal linkage and reject tampering.
 
+## Journal payload contract
+
+STEP is a discriminated payload family, not a promise that every event contains
+`change`. Consumers must dispatch by `operation`: DW2 `transition` carries `change`,
+DW5a `consume_typed_output` carries typed output linkage. Future consumers must not
+unconditionally read `payload["change"]`. No event-kind redesign is needed here.
+
 ## End boundary and exclusions
 
 Exhausting control flow enters WAITING with
-`control_flow_exhausted: completion requirements pending`. Further ticks are static.
+`control_flow_exhausted: completion requirements pending` (the single
+`CONTROL_FLOW_EXHAUSTED_REASON` constant). Further ticks are static.
 It is not Workflow COMPLETED, verification PASS or permission to adopt. DW1
 completion requirements are not evaluated by this slice. Task DAG COMPLETED,
 worker response, schema-valid output and fake status never prove business success.
 
-No scheduler/Leader/Worker change, real parent activity, filesystem mutation,
+No scheduler/Leader control change, additional execution engine, real parent activity, filesystem mutation,
 Planner/UltraCode wiring, model judge, CLI/TUI/Trace, plugin or hook is added.
 DW5b must separately define real Activity execution/recovery and verification
 consumption, retaining the existing adoption engine and authority boundaries.
@@ -123,3 +151,9 @@ within-member dependencies, exact projection consumption, failure states, owner
 fencing, concurrent publication/results, generated-task exhaustion, atomic rollback,
 all five commit-before-ACK windows and tampered input/projection/output. Existing
 DW1–DW4b, migration, adoption, scheduler and UltraCode regressions remain gates.
+
+Execution-intent regressions also exercise profile-only/capability-only identity
+changes, restart/replay, atomic rollback after DAG insertion, legacy missing intent,
+tampering, exact binding and effective-capability rejection at each ceiling. A real
+composition test proves the resolved built-in reaches create_binding and missing
+runtime capability/unknown profile stops before the provider's first model call.

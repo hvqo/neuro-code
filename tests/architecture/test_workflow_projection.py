@@ -15,6 +15,7 @@ import pytest
 from neuro_code.application.ports.task_dag import TaskDagError
 from neuro_code.application.ports.workflow_projection import WorkflowProjectionStore
 from neuro_code.application.ports.workflow_state import WorkflowStateError
+from neuro_code.domain.agents.profile import AgentCapability
 from neuro_code.domain.checkpoints import CheckpointId
 from neuro_code.domain.conversation.messages import Role
 from neuro_code.domain.parent_context_relay import ParentContextRelay, ParentContextRelayItem
@@ -511,8 +512,22 @@ async def test_multiple_tasks_map_response_by_frozen_task_binding(tmp_path):
 
     # IDs and prompts deliberately differ from task order/names.
     members = (
-        ExpansionMember("batch", "work", "unrelated-a", INPUT),
-        ExpansionMember("batch", "alpha", "unrelated-z", INPUT),
+        ExpansionMember(
+            "batch",
+            "work",
+            "unrelated-a",
+            INPUT,
+            "writable_worker",
+            (AgentCapability.WORKSPACE_READ, AgentCapability.WORKSPACE_WRITE),
+        ),
+        ExpansionMember(
+            "batch",
+            "alpha",
+            "unrelated-z",
+            INPUT,
+            "writable_worker",
+            (AgentCapability.WORKSPACE_READ, AgentCapability.WORKSPACE_WRITE),
+        ),
     )
     dag = TaskDag.create(
         dag_id="two-dag",

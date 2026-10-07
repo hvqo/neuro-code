@@ -172,3 +172,7 @@ motion 和滚动行为不变。参见 [ADR 0192](adr/0192-message-local-closed-f
 ## DW5a 内部持久化控制
 
 Session schema 39 从 schema 38 升级，不重写已有 Workflow/adoption records。缺少原始 typed input snapshot 的旧 Run 仍可读取，但 Interpreter fail closed；输入必须在 claim ownership 前冻结。DW1 reference/output 契约、DW3 Task DAG 上限、DW4a exact response、DW4b adoption recovery 保持不变。内部 tick API 不接 scheduler、真实 parent Activity、CLI/TUI 或 verification completion path。见 [ADR 0201](adr/0201-dw5a-durable-workflow-interpreter.md)。
+
+Workflow DAG publication 在 immutable Expansion member 中冻结每节点 exact Profile/
+capability intent（schema 39 不变）。旧 publication fact 仍可读取，缺 intent 不得执行；
+普通 Task DAG/Swarm/UltraCode 行为及现有 Permission/Sandbox/grant ceiling 保持不变。

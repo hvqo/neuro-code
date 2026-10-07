@@ -15,6 +15,7 @@ from neuro_code.application.workflows.completed_dag_adoption import (
     WorkflowCompletedDagSourceAdapter,
 )
 from neuro_code.application.workflows.result_adoption import ResultAdoptionApplicationService
+from neuro_code.domain.agents.profile import AgentCapability
 from neuro_code.domain.completed_dag_adoption import (
     CompletedDagAdoptionSource,
     CompletedDagSourceKind,
@@ -104,7 +105,12 @@ async def fixture(tmp_path, *, mapped=False, state=NodeState.COMPLETED, **kwargs
     ).run
     members = tuple(
         ExpansionMember(
-            f"item-{i}" if mapped else "batch", "work" if mapped else f"work-{i}", n.node_id, INPUT
+            f"item-{i}" if mapped else "batch",
+            "work" if mapped else f"work-{i}",
+            n.node_id,
+            INPUT,
+            "writable_worker",
+            (AgentCapability.WORKSPACE_READ, AgentCapability.WORKSPACE_WRITE),
         )
         for i, n in enumerate(f.graph.dag.nodes)
     )

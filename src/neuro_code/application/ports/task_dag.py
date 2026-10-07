@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
+from neuro_code.application.ports.workflow_publication import WorkflowExecutionIntentStore
 from neuro_code.domain.task_dag import (
     TaskDag,
     TaskDagNode,
@@ -22,7 +23,7 @@ class TaskDagError(Exception):
         super().__init__(message[:1_000])
 
 
-class TaskDagStore(Protocol):
+class TaskDagStore(WorkflowExecutionIntentStore, Protocol):
     """Insert-only definitions and CAS lifecycle for one task DAG."""
 
     async def insert_task_dag(self, dag: TaskDag, /) -> TaskDag: ...

@@ -9,11 +9,13 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime
 
 from neuro_code.application.ports.workflow_state import WorkflowStateError
+from neuro_code.domain.agents.profile import AgentCapability
 from neuro_code.domain.workflows.definition import Map, TaskBatch, WorkflowDefinition
 from neuro_code.domain.workflows.publication import (
     ExpansionMember,
     WorkflowExpansion,
     WorkflowExpansionIntent,
+    WorkflowNodeExecutionIntent,
     WorkflowPublicationResult,
     canonical,
     digest,
@@ -213,6 +215,37 @@ class WorkflowPublicationMixin(_SqliteSessionPersistenceContext):
 
         return await run_blocking(lambda: _guard(read))
 
+    async def get_workflow_node_execution_intent(
+        self, dag_id: str, node_id: str
+    ) -> WorkflowNodeExecutionIntent | None:
+        def read() -> WorkflowNodeExecutionIntent | None:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN")
+                row = connection.execute(
+                    "SELECT expansion_id FROM workflow_expansions WHERE dag_id = ?", (dag_id,)
+                ).fetchone()
+                if row is None:
+                    return None  # Existing non-Workflow scheduler path.
+                publication = _load_publication(connection, row[0])
+                if publication is None:
+                    raise WorkflowStateError("Workflow publication is missing", kind="integrity")
+                expansion = publication.expansion
+                member = next((m for m in expansion.members if m.node_id == node_id), None)
+                if member is None or member.profile_ref is None:
+                    raise WorkflowStateError(
+                        "Workflow node execution intent is missing", kind="integrity"
+                    )
+                return WorkflowNodeExecutionIntent(
+                    expansion.run_id,
+                    expansion.expansion_id,
+                    expansion.dag_id,
+                    expansion.step,
+                    member,
+                    publication.dag.parent_session_id,
+                )
+
+        return await run_blocking(lambda: _guard(read))
+
 
 def _validate_members(definition: WorkflowDefinition, intent: WorkflowExpansionIntent) -> None:
     declared = _validate_position(definition, intent.step)
@@ -239,6 +272,10 @@ def _validate_members(definition: WorkflowDefinition, intent: WorkflowExpansionI
     for member in intent.members:
         node = intent.dag.node(member.node_id)
         template = templates[member.task_id]
+        if member.profile_ref != template.profile_ref or member.required_capabilities != tuple(
+            sorted(template.required_capabilities)
+        ):
+            raise WorkflowStateError("execution intent differs from TaskSpec", kind="protocol")
         dependencies = {bindings[(member.member_key, d)] for d in template.depends_on}
         if node.kind is not template.route or set(node.dependencies) != dependencies:
             raise WorkflowStateError(
@@ -277,8 +314,18 @@ def _load_publication(
         return None
     data = json.loads(row[5])
     step = StepIdentity(**data["step"])
-    members = freeze_members(tuple(ExpansionMember(**m) for m in data["members"]))
-    member_fp = digest([asdict(m) for m in members])
+    members = freeze_members(
+        tuple(
+            ExpansionMember(
+                **{k: v for k, v in m.items() if k != "required_capabilities"},
+                required_capabilities=tuple(
+                    AgentCapability(c) for c in m.get("required_capabilities", ())
+                ),
+            )
+            for m in data["members"]
+        )
+    )
+    member_fp = digest([m.payload for m in members])
     identity_fp = digest(
         {
             "run_id": data["run_id"],
@@ -343,6 +390,23 @@ def _load_publication(
         raise WorkflowStateError(
             "expansion DAG/run/budget/journal linkage mismatch", kind="integrity"
         )
+    if any(m.profile_ref is not None for m in members):
+        definition = _load_definition(connection, run.definition_fingerprint)
+        if definition is None:
+            raise WorkflowStateError("execution definition is missing", kind="integrity")
+        declared = _validate_position(definition, step)
+        batch = declared.batch if isinstance(declared, Map) else declared
+        if not isinstance(batch, TaskBatch):
+            raise WorkflowStateError("execution intent has no TaskBatch", kind="integrity")
+        templates = {t.task_id: t for t in batch.tasks}
+        for m in members:
+            template = templates.get(m.task_id)
+            if (
+                template is None
+                or m.profile_ref != template.profile_ref
+                or (m.required_capabilities != tuple(sorted(template.required_capabilities)))
+            ):
+                raise WorkflowStateError("persisted execution intent mismatch", kind="integrity")
     expansion = WorkflowExpansion(
         expansion_id,
         run.run_id,

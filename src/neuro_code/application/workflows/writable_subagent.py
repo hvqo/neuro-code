@@ -18,9 +18,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
+from neuro_code.application.agents.profiles import (
+    WRITABLE_WORKER_AGENT_PROFILE,
+    builtin_agent_profile,
+)
 from neuro_code.application.ports.checkpoints import WorkspaceCheckpointApplication
 from neuro_code.application.ports.parent_context_relay import ParentContextRelayStore
 from neuro_code.application.ports.storage import SessionStore
+from neuro_code.application.ports.workflow_publication import WorkflowExecutionIntentStore
 from neuro_code.application.ports.worktree import WorktreeError
 from neuro_code.application.ports.writable_subagent import (
     WritableSubagentLeaseError,
@@ -39,6 +44,7 @@ from neuro_code.application.workflows.subagent_capabilities import (
     resolve_writable_subagent_capability,
     writable_subagent_request,
 )
+from neuro_code.domain.agents.profile import AgentProfile, AgentRole, WorkspaceWriteMode
 from neuro_code.domain.checkpoints import (
     CheckpointCreateRequest,
     CheckpointState,
@@ -53,6 +59,7 @@ from neuro_code.domain.session_tasks import (
     SubagentLink,
 )
 from neuro_code.domain.task_dag_result_relay import TaskDagDependencyResultRelay
+from neuro_code.domain.workflows.publication import WorkflowNodeExecutionIntent
 from neuro_code.domain.worktree import (
     WorktreeCreateRequest,
     WorktreeId,
@@ -222,6 +229,7 @@ class RunWritableSubagentRequest:
     prompt: str
     max_steps: int = 8
     dependency_result_relay: TaskDagDependencyResultRelay | None = None
+    workflow_execution_intent: WorkflowNodeExecutionIntent | None = None
 
     def __post_init__(self) -> None:
         _safe_identifier(self.parent_session_id, field_name="parent_session_id")
@@ -247,6 +255,26 @@ class RunWritableSubagentRequest:
             TaskDagDependencyResultRelay,
         ):
             raise TypeError("writable dependency result relay must be canonical")
+        if self.workflow_execution_intent is not None and not isinstance(
+            self.workflow_execution_intent, WorkflowNodeExecutionIntent
+        ):
+            raise TypeError("Workflow execution intent must be canonical")
+
+
+def resolve_writable_execution_profile(request: RunWritableSubagentRequest) -> AgentProfile:
+    """Resolve intent through the existing catalog, without granting any authority."""
+    intent = request.workflow_execution_intent
+    if intent is None:
+        return WRITABLE_WORKER_AGENT_PROFILE
+    assert intent.member.profile_ref is not None
+    profile = builtin_agent_profile(intent.member.profile_ref)
+    if (
+        profile.role is not AgentRole.WRITABLE_WORKER
+        or not profile.workspace_policy.read
+        or profile.workspace_policy.write_mode is not WorkspaceWriteMode.MANAGED_WORKTREE
+    ):
+        raise ConfigurationError("Workflow profile is incompatible with writable worker route")
+    return profile
 
 
 @dataclass(frozen=True, slots=True)
@@ -435,6 +463,10 @@ class WritableSubagentApplicationService:
             raise ConfigurationError(
                 "DAG dependency result relay requires an exact DAG execution identity"
             )
+        if request.workflow_execution_intent is not None:
+            raise ConfigurationError(
+                "Workflow execution intent requires exact DAG execution identity"
+            )
         if not self._initialized:
             raise ConfigurationError("writable subagent service is not initialized")
         requested = writable_subagent_request(
@@ -464,6 +496,20 @@ class WritableSubagentApplicationService:
             raise ConfigurationError("writable execution identity must be canonical")
         if request.parent_session_id != self._parent_session_id:
             raise ConfigurationError("writable subagent request parent session does not match")
+        durable = await cast(
+            WorkflowExecutionIntentStore, self._store
+        ).get_workflow_node_execution_intent(execution_identity.dag_id, execution_identity.node_id)
+        if durable != request.workflow_execution_intent:
+            raise ConfigurationError("Workflow execution intent differs from durable publication")
+        if request.workflow_execution_intent is not None:
+            intent = request.workflow_execution_intent
+            if (
+                intent.dag_id != execution_identity.dag_id
+                or intent.member.node_id != execution_identity.node_id
+                or intent.parent_session_id != self._parent_session_id
+            ):
+                raise ConfigurationError("Workflow execution intent does not match DAG node")
+            resolve_writable_execution_profile(request)
         if request.dependency_result_relay is not None and (
             request.dependency_result_relay.dag_id != execution_identity.dag_id
             or request.dependency_result_relay.target_node_id != execution_identity.node_id

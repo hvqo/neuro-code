@@ -747,12 +747,16 @@ class TaskDagApplicationService:
             parent_task_id=parent_task_id,
         )
         try:
+            execution_intent = await self._dag_store.get_workflow_node_execution_intent(
+                dag.dag_id, node.node_id
+            )
             await worker.initialize()
             result = await worker.run_subagent_with_execution_identity(
                 RunWritableSubagentRequest(
                     parent_session_id=self._parent_session_id,
                     prompt=node.prompt,
                     dependency_result_relay=dependency_relay,
+                    workflow_execution_intent=execution_intent,
                 ),
                 execution_identity=identity,
                 sink=sink,

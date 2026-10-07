@@ -176,3 +176,8 @@ scroll behavior are unchanged. See [ADR 0192](adr/0192-message-local-closed-fenc
 ## DW5a internal durable control
 
 Session schema 39 upgrades schema 38 without rewriting existing Workflow/adoption records. Legacy runs without original typed input snapshots remain readable but fail closed for interpretation; inputs must be frozen before ownership claim. DW1 reference/output contracts, DW3 Task DAG limits, DW4a exact responses and DW4b adoption recovery remain unchanged. This internal tick API has no scheduler, real parent Activity, CLI/TUI or verification completion path. See [ADR 0201](adr/0201-dw5a-durable-workflow-interpreter.md).
+
+Workflow DAG publication now freezes exact per-node Profile/capability intent in
+immutable Expansion members (schema 39 unchanged). Legacy publication facts remain
+readable; missing intent cannot execute. Non-Workflow Task DAG/Swarm/UltraCode behavior
+and existing Permission/Sandbox/grant ceilings remain unchanged.

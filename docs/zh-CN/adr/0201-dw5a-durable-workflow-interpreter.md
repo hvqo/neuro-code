@@ -26,7 +26,8 @@ UPDATE/DELETE 的不可变 trigger。输入是通过 DW1 schema 验证的 canoni
 SHA-256 必须等于已有 Run input fingerprint。创建 Run 后、claim ownership 前使用
 `put_workflow_input` 固化。创建与附加输入之间 crash 会留下不可执行 Run；缺少输入时
 不使用调用方临时字典或默认值伪造恢复语义。旧 Run 仍可读取，没有原始不可变输入
-snapshot contract 时不得执行。
+snapshot contract 时不得执行。Generation=0 且缺输入的 Run 是 uninitialized durable fact；
+未来 entrypoint 必须先附加相同 immutable input，再 claim/execution。
 
 InputRef 从 snapshot 读取。TaskBatch/Map ResultRef 只读取已消费 step 精确绑定的
 DW4a Projection，重新验证 Run/Expansion/DAG/member/node evidence；不回退到 preview、
@@ -42,7 +43,22 @@ Map item 内有效。Literal/ArtifactRef 仅是数据，完整性引用不读取
 新 immutable Task DAG 并调用 DW3。Expansion/node/DAG ID 绑定 Run 与 StepIdentity；
 DAG creation time 使用 Run 的持久化创建时间，避免 retry 改变 canonical publication。
 Task prompt 保留声明模板，附加 canonical 输入数据，不执行表达式或模板引擎。
-Profile/capability 声明仍是不可变 Definition 中的 intent，不授予额外 authority。
+Profile/capability 声明与 member/task/node、input identity 一起冻结到不可变 Expansion
+member，不拼接到 prompt 充当绑定。Canonical payload 参与 member、publication、journal
+fingerprint。DW3 在同一事务提交 DAG、上述绑定、Run/Step WAITING、budget、journal；
+不增加 sidecar 双写或 schema。旧 publication 保持原历史 JSON/digest，不重写 records，
+但缺少 execution intent 时不可执行。
+
+Worker 启动前，Task DAG store 读取 exact durable node intent，验证 publication/Run/
+Step/DAG/member/journal linkage。Writable Subagent 在分配执行资源前重新核对 exact
+intent 与 parent session。复用现有 built-in Profile catalog，只接受 writable-worker role
+及 managed-worktree policy；未知 custom ID、不兼容 built-in 均 fail closed，绝不 fallback。
+不新增 custom registry。现有 create_binding 接收 exact profile 和未扩大的 Writable grant。
+首次 model call 前检查 EffectiveAgentBinding 的 profile identity 与 required capability
+子集。Required capabilities 不是 grant；parent、Permission、Sandbox、provider、platform、
+runtime、profile ceiling 仍求交。拒绝启动使用已有 FAILED node 语义，不 retry/replan，
+不解释为 verification failure。普通非 Workflow DAG 保持默认 writable profile 和 scheduler
+行为，不增加自动 Workflow execution 入口。
 
 Map 在发布前冻结有界 typed collection。member key 包含补零原始序号及 item digest，
 保留 array 顺序并区分重复值。Node ID 绑定 member/task，dependency 限于同一 member，
@@ -80,15 +96,22 @@ Verification。稳定 invocation ID 绑定 Run、step 和 resolved input。Commi
 Activity result 推导下一动作，不重复创建 DAG、逻辑 Activity 或 generated-task 计费。
 读取验证 schema、digest、provenance 和 step/journal linkage，拒绝篡改。
 
+## Journal payload 契约
+
+STEP 是 discriminated payload family，不保证每个事件都存在 `change`。Consumer 必须
+按 `operation` 分派：DW2 `transition` 含 `change`，DW5a `consume_typed_output` 含 typed
+output linkage。未来 consumer 不得无条件读取 `payload["change"]`；本轮不重构 event kind。
+
 ## 结束边界与排除项
 
 控制流耗尽进入 WAITING，原因为
-`control_flow_exhausted: completion requirements pending`，后续 tick 静止。
+`control_flow_exhausted: completion requirements pending`，统一为单一命名常量
+`CONTROL_FLOW_EXHAUSTED_REASON`，后续 tick 静止。
 它不是 Workflow COMPLETED、verification PASS 或 adoption 授权。本阶段不评估 DW1
 completion requirements。Task DAG COMPLETED、worker response、schema-valid output 和
 fake status 都不证明业务成功。
 
-不修改 scheduler/Leader/Worker，不接真实 parent Activity、filesystem mutation、
+不修改 scheduler/Leader 控制，不增加执行引擎，不接真实 parent Activity、filesystem mutation、
 Planner/UltraCode、model judge、CLI/TUI/Trace、Plugin/Hook。DW5b 必须单独定义真实
 Activity 的执行/恢复与 verification 消费，继续复用现有 adoption engine 和权限边界。
 本轮不修复 Issue #165/#167/#169/#171。
@@ -100,3 +123,8 @@ Activity 的执行/恢复与 verification 消费，继续复用现有 adoption e
 Projection consumption、失败终态、owner fencing、并发发布/结果、预算耗尽、事务
 回滚、五类 commit-before-ACK 窗口，以及 input/projection/output tamper。
 既有 DW1–DW4b、migration、adoption、scheduler、UltraCode 回归仍为门禁。
+
+Execution-intent 回归额外覆盖仅 profile/capability 改动的 identity 区别、restart/replay、
+DAG insert 后原子回滚、旧 publication 缺 intent 拒绝、篡改、exact binding 与各 ceiling
+收窄后的 required capability 拒绝。真实 composition 测试证明 exact built-in 到达
+create_binding，未知 profile/缺少 runtime capability 在首次 model call 前停止。
