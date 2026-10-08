@@ -9,6 +9,7 @@ from pathlib import Path
 
 from neuro_code.application.ports.workflow_adoption import (
     adoption_activity_state,
+    adoption_recovery_usage,
     adoption_terminal_digest,
 )
 from neuro_code.application.ports.workflow_state import WorkflowStateError
@@ -21,7 +22,6 @@ from neuro_code.domain.workflows.activity import (
 from neuro_code.domain.workflows.definition import ActivityKind
 from neuro_code.domain.workflows.publication import canonical, digest
 from neuro_code.domain.workflows.state import (
-    BudgetAmounts,
     WorkflowEventKind,
     WorkflowFailure,
     WorkflowStatus,
@@ -40,7 +40,10 @@ from neuro_code.infrastructure.persistence.sqlite_session_workflow_activity impo
     _run,
     _settle_terminal,
 )
-from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_facts import _request
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_facts import (
+    _request,
+    _verify_durable_source,
+)
 from neuro_code.infrastructure.persistence.sqlite_session_workflows import (
     _append_event,
     _guard,
@@ -67,7 +70,6 @@ class WorkflowAdoptionMixin(_SqliteSessionPersistenceContext):
         parent_session_id: str,
         parent_workspace_root: str,
         updated_at: datetime,
-        usage: BudgetAmounts | None = None,
     ) -> WorkflowActivityAttempt:
         identifier(invocation_id)
         identifier(parent_session_id)
@@ -91,6 +93,7 @@ class WorkflowAdoptionMixin(_SqliteSessionPersistenceContext):
                     or record.plan.parent_workspace_root != Path(parent_workspace_root)
                 ):
                     raise WorkflowStateError("ADOPT terminal binding differs", kind="integrity")
+                _verify_durable_source(connection, current, record, request)
                 if (
                     not current.state.terminal
                     and current.state is not WorkflowActivityState.RUNNING
@@ -101,14 +104,9 @@ class WorkflowAdoptionMixin(_SqliteSessionPersistenceContext):
                 if current.result is not None:
                     amounts = current.result.usage
                 else:
-                    amounts = (
-                        usage
-                        if usage is not None
-                        else BudgetAmounts(
-                            tool_calls=None if record.plan.targets else 0,
-                            wall_milliseconds=None,
-                        )
-                    )
+                    # Target revisions prove neither exact port invocation count
+                    # nor wall usage. Do not manufacture precision from them.
+                    amounts = adoption_recovery_usage(record)
                 if (
                     amounts.generated_tasks,
                     amounts.model_calls,
@@ -138,8 +136,6 @@ class WorkflowAdoptionMixin(_SqliteSessionPersistenceContext):
                         current.result.output_json,
                     ) != (record.adoption_id, proof, state, output):
                         raise WorkflowStateError("ADOPT terminal proof differs", kind="integrity")
-                    if usage is not None and usage != amounts:
-                        raise WorkflowStateError("ADOPT accounting conflict", kind="conflict")
                     return current
                 run = _run(connection, current.invocation.run_id)
                 result = WorkflowActivityResult(

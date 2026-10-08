@@ -5,14 +5,21 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
+from datetime import datetime
 
+from neuro_code.application.ports.result_adoption import ResultAdoptionRecord
 from neuro_code.application.ports.workflow_adoption import (
     adoption_activity_state,
+    adoption_recovery_usage,
     adoption_terminal_digest,
     workflow_adoption_id,
 )
 from neuro_code.application.ports.workflow_state import WorkflowStateError
-from neuro_code.domain.completed_dag_adoption import WorkflowAdoptionSourceRef
+from neuro_code.domain.completed_dag_adoption import (
+    CompletedDagAdoptionSource,
+    CompletedDagSourceKind,
+    WorkflowAdoptionSourceRef,
+)
 from neuro_code.domain.result_adoption import ResultAdoptionRequest
 from neuro_code.domain.workflows.activity import WorkflowActivityAttempt, WorkflowActivityState
 from neuro_code.domain.workflows.definition import Activity, ActivityKind, Map, ResultRef, TaskBatch
@@ -22,10 +29,14 @@ from neuro_code.domain.workflows.interpreter import (
     expansion_id,
     validate_step_output,
 )
+from neuro_code.domain.workflows.projection import WorkflowResultProjection, projection_identity
 from neuro_code.domain.workflows.publication import canonical, digest
 from neuro_code.domain.workflows.state import StepIdentity, WorkflowEventKind, WorkflowStatus
 from neuro_code.infrastructure.persistence.sqlite_session_result_adoption import (
     _load_result_adoption,
+)
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_publication import (
+    _load_publication,
 )
 from neuro_code.infrastructure.persistence.sqlite_session_workflows import (
     _load_definition,
@@ -135,6 +146,144 @@ def _request(
     return ResultAdoptionRequest(workflow_adoption_id(invocation, source), workflow_source=source)
 
 
+def _verify_durable_source(
+    connection: sqlite3.Connection,
+    attempt: WorkflowActivityAttempt,
+    record: ResultAdoptionRecord,
+    request: ResultAdoptionRequest,
+) -> None:
+    """Cross-check frozen SQLite provenance, never live execution resources.
+
+    The consumed output pins the immutable Projection fingerprint. Its source
+    snapshot binds terminal generations and worker facts; DW3 independently
+    pins members, definition and publication journal. A rehashed plan cannot
+    substitute its own DAG or worker identities for those historical facts.
+    """
+    ref = request.workflow_source
+    assert ref is not None
+    publication = _load_publication(connection, ref.expansion_id)
+    row = connection.execute(
+        "SELECT projection_id, run_id, parent_session_id, step_key, dag_id, source_json, "
+        "output_json, source_fingerprint, projection_fingerprint, created_at "
+        "FROM workflow_result_projections WHERE expansion_id = ?",
+        (ref.expansion_id,),
+    ).fetchone()
+    if publication is None or row is None:
+        raise WorkflowStateError("ADOPT immutable provenance is missing", kind="integrity")
+    expansion, run, dag = publication.expansion, publication.run, publication.dag
+    projection = WorkflowResultProjection(
+        row[0],
+        row[1],
+        row[2],
+        ref.expansion_id,
+        expansion.step,
+        row[4],
+        row[5],
+        row[6],
+        datetime.fromisoformat(row[9]),
+    )
+    if (
+        run.run_id != attempt.invocation.run_id
+        or run.parent_session_id != attempt.invocation.parent_session_id
+        or projection.projection_id != projection_identity(expansion.identity_fingerprint)
+        or projection.projection_id != ref.projection_id
+        or projection.fingerprint != ref.projection_fingerprint
+        or projection.fingerprint != row[8]
+        or projection.source_fingerprint != row[7]
+        or projection.run_id != run.run_id
+        or projection.parent_session_id != run.parent_session_id
+        or row[3] != expansion.step.key
+        or projection.dag_id != expansion.dag_id
+        or record.adoption_id != request.adoption_id
+    ):
+        raise WorkflowStateError("ADOPT immutable projection linkage differs", kind="integrity")
+    facts = json.loads(projection.source_json)
+    if (
+        facts["version"] != 1
+        or facts["run_id"] != run.run_id
+        or facts["parent_session_id"] != run.parent_session_id
+        or facts["definition_fingerprint"] != run.definition_fingerprint
+        or facts["expansion_id"] != expansion.expansion_id
+        or facts["expansion_identity"] != expansion.identity_fingerprint
+        or facts["step"] != asdict(expansion.step)
+        or facts["input_fingerprint"] != expansion.input_fingerprint
+        or facts["member_fingerprint"] != expansion.member_fingerprint
+        or facts["dag_id"] != expansion.dag_id
+        or facts["dag_definition_fingerprint"] != expansion.dag_definition_fingerprint
+        or facts["max_parallel"] != dag.max_parallel
+        or facts["dag_state"] != "completed"
+    ):
+        raise WorkflowStateError("ADOPT frozen expansion source differs", kind="integrity")
+    expected = CompletedDagAdoptionSource(
+        CompletedDagSourceKind.WORKFLOW,
+        projection.projection_id,
+        run.parent_session_id,
+        expansion.dag_id,
+        facts["dag_generation"],
+        expansion.dag_definition_fingerprint,
+        ref,
+        projection.source_fingerprint,
+    )
+    if record.plan.source != expected:
+        raise WorkflowStateError("ADOPT frozen DAG source differs", kind="integrity")
+    nodes = facts["nodes"]
+    if len(nodes) != len(expansion.members) or len(record.plan.sources) != len(nodes):
+        raise WorkflowStateError("ADOPT frozen member count differs", kind="integrity")
+    # Plan sources follow DAG order, while the projection follows frozen members.
+    sources = {source.node_id: source for source in record.plan.sources}
+    if set(sources) != {member.node_id for member in expansion.members}:
+        raise WorkflowStateError("ADOPT frozen node identities differ", kind="integrity")
+    for member, fact in zip(expansion.members, nodes, strict=True):
+        node, worker = fact["node"], fact["worker_linkage"]
+        source = sources[member.node_id]
+        if (
+            fact["member"] != member.payload
+            or node["node_id"] != member.node_id
+            or node["state"] != "completed"
+            or node["prompt"] != dag.node(member.node_id).prompt
+            or node["dependencies"] != list(dag.node(member.node_id).dependencies)
+            or node["kind"] != dag.node(member.node_id).kind.value
+            or worker is None
+            or worker["task"][0] != run.parent_session_id
+            or worker["task"][1:] != ["completed", "subagent"]
+            or source.parent_repository != record.plan.parent_repository
+            or source.base_commit_sha != record.plan.parent_head_sha
+            or {
+                "parent_task_id": source.parent_task_id,
+                "child_session_id": source.child_session_id,
+                "lease_id": source.lease_id,
+                "worktree_id": source.worktree_id.value,
+                "baseline_checkpoint_id": source.baseline_checkpoint_id.value,
+                "final_workspace_fingerprint": source.final_workspace_fingerprint,
+            }
+            != {
+                key: node[key]
+                for key in (
+                    "parent_task_id",
+                    "child_session_id",
+                    "lease_id",
+                    "worktree_id",
+                    "baseline_checkpoint_id",
+                    "final_workspace_fingerprint",
+                )
+            }
+            or {
+                "base_commit_sha": source.base_commit_sha,
+                "capability_fingerprint": source.capability_fingerprint,
+                "grant_fingerprint": source.grant_fingerprint,
+            }
+            != {
+                key: worker[key]
+                for key in (
+                    "base_commit_sha",
+                    "capability_fingerprint",
+                    "grant_fingerprint",
+                )
+            }
+        ):
+            raise WorkflowStateError("ADOPT frozen worker source differs", kind="integrity")
+
+
 def _verify_terminal_adopt(
     connection: sqlite3.Connection, attempt: WorkflowActivityAttempt
 ) -> None:
@@ -149,14 +298,10 @@ def _verify_terminal_adopt(
         or record.plan.parent_session_id != attempt.invocation.parent_session_id
     ):
         raise WorkflowStateError("ADOPT underlying terminal evidence missing", kind="integrity")
+    _verify_durable_source(connection, attempt, record, request)
     amounts = attempt.result.usage
-    if (
-        amounts.generated_tasks,
-        amounts.model_calls,
-        amounts.input_tokens,
-        amounts.output_tokens,
-    ) != (0, 0, 0, 0):
-        raise WorkflowStateError("ADOPT execution usage differs", kind="integrity")
+    if amounts != adoption_recovery_usage(record):
+        raise WorkflowStateError("ADOPT has no trusted known execution usage", kind="integrity")
     proof = digest([adoption_terminal_digest(record), asdict(amounts)])
     state = adoption_activity_state(record.state)
     output = (

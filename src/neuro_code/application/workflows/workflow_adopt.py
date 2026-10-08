@@ -157,15 +157,12 @@ class WorkflowAdoptActivityAdapter:
             tuple[str, _BoundedAdoptionMutation, ResultAdoptionApplicationService] | None
         ) = None
 
-    async def _settle(
-        self, attempt: WorkflowActivityAttempt, usage: BudgetAmounts | None = None
-    ) -> WorkflowAdoptOutcome:
+    async def _settle(self, attempt: WorkflowActivityAttempt) -> WorkflowAdoptOutcome:
         terminal = await self.facts.reconcile_workflow_adoption(
             attempt.invocation.invocation_id,
             parent_session_id=self.parent_session_id,
             parent_workspace_root=str(self.parent_root),
             updated_at=self.clock(),
-            usage=usage,
         )
         return WorkflowAdoptOutcome(terminal, "terminal")
 
@@ -266,14 +263,4 @@ class WorkflowAdoptActivityAdapter:
                     )
                     return WorkflowAdoptOutcome(attempt, "needs_attention")
                 return WorkflowAdoptOutcome(attempt, "waiting_underlying")
-            usage = (
-                BudgetAmounts(
-                    tool_calls=bounded.calls,
-                    wall_milliseconds=max(
-                        0, int((self.clock() - attempt.updated_at).total_seconds() * 1000)
-                    ),
-                )
-                if fresh
-                else None
-            )
-            return await self._settle(attempt, usage)
+            return await self._settle(attempt)

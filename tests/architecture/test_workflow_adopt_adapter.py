@@ -62,6 +62,41 @@ def adapter(f, *, store=None, mutation=None, **kwargs):
     )
 
 
+async def resume_after_explicit_accounting(f, key):
+    """Simulate a separate authorized accounting decision, never adapter inference."""
+    from neuro_code.domain.workflows.state import WorkflowChange, WorkflowEventKind
+
+    attempt = await f.store.get_workflow_activity(key)
+    run = await f.store.get_workflow_run("workflow-run")
+    await f.store.transition_workflow_run(
+        run.run_id,
+        WorkflowChange(
+            WorkflowEventKind.RECONCILED,
+            reservation_id=attempt.reservation_id,
+            amounts=BudgetAmounts(tool_calls=len(f.mutation.calls), wall_milliseconds=1000),
+        ),
+        expected_generation=run.generation,
+        owner_id=run.owner_id,
+        owner_fence=run.owner_fence,
+        request_id="explicit-accounting",
+        updated_at=END + timedelta(seconds=2),
+    )
+    run = await f.store.get_workflow_run(run.run_id)
+    await f.store.transition_workflow_run(
+        run.run_id,
+        WorkflowChange(
+            WorkflowEventKind.TRANSITION,
+            status=WorkflowStatus.WAITING,
+            waiting_reason="activity:" + key,
+        ),
+        expected_generation=run.generation,
+        owner_id=run.owner_id,
+        owner_fence=run.owner_fence,
+        request_id="explicit-resume",
+        updated_at=END + timedelta(seconds=2),
+    )
+
+
 @pytest.mark.parametrize("mapped", [False, True])
 async def test_real_adopt_and_later_consume(tmp_path, mapped):
     f, key = await ready(tmp_path, mapped=mapped)
@@ -72,13 +107,24 @@ async def test_real_adopt_and_later_consume(tmp_path, mapped):
     )
     assert f.parent.current("U.txt").content == b"unrelated dirty\n"
     assert result.attempt.result.usage.model_calls == 0
-    assert result.attempt.result.usage.tool_calls == len(f.mutation.calls)
+    assert result.attempt.result.usage.tool_calls is None
+    assert result.attempt.result.usage.wall_milliseconds is None
     assert len(f.mutation.calls) > 0
     run = await f.store.get_workflow_run("workflow-run")
-    assert run.status is WorkflowStatus.WAITING
+    assert run.status is WorkflowStatus.NEEDS_ATTENTION
     before = len(f.mutation.calls)
     assert (await adapter(f).run_once(key)).attempt == result.attempt
     assert len(f.mutation.calls) == before
+    stopped = await engine(f.store).advance_once(
+        run.run_id,
+        expected_generation=run.generation,
+        owner_id=run.owner_id,
+        owner_fence=run.owner_fence,
+        updated_at=END + timedelta(seconds=2),
+    )
+    assert stopped.action == "stopped"
+    await resume_after_explicit_accounting(f, key)
+    run = await f.store.get_workflow_run(run.run_id)
     outcome = await engine(f.store).advance_once(
         run.run_id,
         expected_generation=run.generation,
@@ -616,6 +662,7 @@ async def test_claimed_owner_is_not_borrowed(tmp_path):
 async def test_consume_ack_loss_does_not_redispatch_or_reaccount(tmp_path):
     f, key = await ready(tmp_path)
     await adapter(f).run_once(key)
+    await resume_after_explicit_accounting(f, key)
     real = f.store.commit_workflow_step_output
 
     async def lost_ack(*args, **kwargs):
@@ -667,3 +714,270 @@ async def test_expired_dispatch_ceiling_allows_only_existing_desired_image_obser
     assert result.attempt.state is State.COMPLETED
     assert result.attempt.result.usage.tool_calls is None
     assert len(f.mutation.calls) == calls
+
+
+@pytest.mark.parametrize(
+    "forged",
+    [
+        BudgetAmounts(),
+        BudgetAmounts(tool_calls=1),
+        BudgetAmounts(tool_calls=100),
+        BudgetAmounts(wall_milliseconds=100),
+    ],
+)
+async def test_reopened_terminal_reconciliation_cannot_accept_caller_usage(tmp_path, forged):
+    f, key = await ready(tmp_path)
+    with (
+        patch.object(f.store, "reconcile_workflow_adoption", side_effect=RuntimeError("crash")),
+        pytest.raises(RuntimeError),
+    ):
+        await adapter(f).run_once(key)
+    assert len(f.mutation.calls) == 2
+    reopened = SqliteSessionStore(f.store.database_path)
+    before = await reopened.get_workflow_run("workflow-run")
+    with pytest.raises(TypeError, match="usage"):
+        await reopened.reconcile_workflow_adoption(
+            key,
+            parent_session_id=f.binding.runner.session_id,
+            parent_workspace_root=str(f.binding.workspace_root),
+            updated_at=END,
+            usage=forged,
+        )
+    assert await reopened.get_workflow_run("workflow-run") == before
+    result = await adapter(f, store=reopened).run_once(key)
+    assert result.attempt.result.usage.tool_calls is None
+    assert result.attempt.result.usage.wall_milliseconds is None
+    assert (
+        await reopened.get_workflow_run("workflow-run")
+    ).status is WorkflowStatus.NEEDS_ATTENTION
+    assert len(f.mutation.calls) == 2
+
+
+@pytest.mark.parametrize("field", ["adoption_id", "dispatch_identity", "measurement"])
+async def test_caller_receipt_fields_are_not_accounting_authority(tmp_path, field):
+    f, key = await ready(tmp_path)
+    with pytest.raises(TypeError, match=field):
+        await f.store.reconcile_workflow_adoption(
+            key,
+            parent_session_id=f.binding.runner.session_id,
+            parent_workspace_root=str(f.binding.workspace_root),
+            updated_at=END,
+            **{field: "fabricated-or-stale"},
+        )
+    assert (await f.store.get_workflow_activity(key)).state is State.READY
+    assert f.mutation.calls == []
+
+
+async def test_unknown_invocation_cannot_reconcile_another_adoption(tmp_path):
+    f, key = await ready(tmp_path)
+    await adapter(f).run_once(key)
+    before = await f.store.get_workflow_run("workflow-run")
+    with pytest.raises(WorkflowStateError):
+        await f.store.reconcile_workflow_adoption(
+            "wrong-invocation",
+            parent_session_id=f.binding.runner.session_id,
+            parent_workspace_root=str(f.binding.workspace_root),
+            updated_at=END,
+        )
+    assert await f.store.get_workflow_run("workflow-run") == before
+
+
+@pytest.mark.parametrize("terminal_activity", [False, True])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "dag_id",
+        "dag_generation",
+        "dag_definition_fingerprint",
+        "projection_source_fingerprint",
+        "expansion_id",
+        "projection_id",
+        "parent_session_id",
+        "node_id",
+        "child_session_id",
+        "lease_id",
+        "worktree_id",
+        "baseline_checkpoint_id",
+        "final_workspace_fingerprint",
+        "base_commit_sha",
+        "capability_fingerprint",
+        "grant_fingerprint",
+    ],
+)
+async def test_rehashed_plan_cannot_replace_frozen_provenance(tmp_path, field, terminal_activity):
+    import hashlib
+    import json
+    from contextlib import closing
+
+    f, key = await ready(tmp_path)
+    if terminal_activity:
+        await adapter(f).run_once(key)
+    else:
+        with (
+            patch.object(f.store, "reconcile_workflow_adoption", side_effect=RuntimeError("crash")),
+            pytest.raises(RuntimeError),
+        ):
+            await adapter(f).run_once(key)
+    request = await f.store.get_workflow_adoption_request(key)
+    with closing(f.store._connect()) as c, c:
+        row = c.execute(
+            "SELECT plan_json FROM result_adoptions WHERE adoption_id = ?", (request.adoption_id,)
+        ).fetchone()
+        plan = json.loads(row[0])
+        if field == "dag_id":
+            plan[field] = plan["completed_source"][field] = "nonexistent-forged-dag"
+        elif field == "dag_generation":
+            plan[field] += 1
+            plan["completed_source"][field] = plan[field]
+        elif field == "dag_definition_fingerprint":
+            plan[field] = plan["completed_source"][field] = "f" * 64
+        elif field == "projection_source_fingerprint":
+            plan["completed_source"][field] = "f" * 64
+        elif field in {"expansion_id", "projection_id"}:
+            plan["completed_source"]["workflow"][field] = "forged-" + field
+            if field == "projection_id":
+                plan["completed_source"]["source_id"] = "forged-" + field
+        elif field == "parent_session_id":
+            wrong_parent = c.execute(
+                "SELECT id FROM sessions WHERE id != ? LIMIT 1",
+                (f.binding.runner.session_id,),
+            ).fetchone()[0]
+            plan[field] = plan["completed_source"][field] = wrong_parent
+            c.execute(
+                "UPDATE result_adoptions SET parent_session_id = ? WHERE adoption_id = ?",
+                (wrong_parent, request.adoption_id),
+            )
+        elif field == "baseline_checkpoint_id":
+            plan["sources"][0][field] = "cp-forged"
+        else:
+            plan["sources"][0][field] = (
+                "f" * (40 if field == "base_commit_sha" else 64)
+                if "fingerprint" in field or field == "base_commit_sha"
+                else "forged-" + field
+            )
+        payload = json.dumps(plan, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        # Deliberately repair the self-hash: rejection must use an independent anchor.
+        c.execute(
+            "UPDATE result_adoptions SET plan_json = ?, plan_fingerprint = ? WHERE adoption_id = ?",
+            (payload, hashlib.sha256(payload.encode()).hexdigest(), request.adoption_id),
+        )
+    reopened = SqliteSessionStore(f.store.database_path)
+    calls = len(f.mutation.calls)
+    with pytest.raises(WorkflowStateError):
+        await adapter(f, store=reopened).run_once(key)
+    if terminal_activity:
+        with pytest.raises(WorkflowStateError):
+            await reopened.get_workflow_activity(key)
+    assert len(f.mutation.calls) == calls
+
+
+async def test_missing_frozen_projection_fails_closed_without_live_fallback(tmp_path):
+    from contextlib import closing
+
+    f, key = await ready(tmp_path)
+    await adapter(f).run_once(key)
+    with closing(f.store._connect()) as c, c:
+        c.execute("DROP TRIGGER workflow_result_projections_immutable_delete")
+        c.execute("DELETE FROM workflow_result_projections")
+    with pytest.raises(WorkflowStateError, match="provenance"):
+        await f.store.get_workflow_activity(key)
+
+
+async def test_terminal_history_uses_frozen_provenance_not_live_lease(tmp_path):
+    from contextlib import closing
+
+    f, key = await ready(tmp_path)
+    await adapter(f).run_once(key)
+    before = await f.store.get_workflow_activity(key)
+    calls = len(f.mutation.calls)
+    f.worktrees.snapshots.clear()
+    f.checkpoints.checkpoints.clear()
+    f.parent.repository = replace(f.parent.repository, head_sha="f" * 40)
+    with closing(f.store._connect()) as c, c:
+        c.execute("UPDATE writable_subagent_leases SET state = 'orphaned'")
+    reopened = SqliteSessionStore(f.store.database_path)
+    with patch.object(
+        reopened, "get_workflow_result_projection", side_effect=AssertionError("live revalidation")
+    ):
+        assert (await adapter(f, store=reopened).run_once(key)).attempt == before
+    assert len(f.mutation.calls) == calls
+
+
+@pytest.mark.parametrize(
+    ("field", "amount"), [("tool_calls", 0), ("tool_calls", 100), ("wall_milliseconds", 0)]
+)
+async def test_rehashed_known_usage_cannot_become_a_measurement_fact(tmp_path, field, amount):
+    import json
+    from contextlib import closing
+
+    from neuro_code.application.ports.workflow_adoption import adoption_terminal_digest
+    from neuro_code.domain.workflows.publication import digest
+
+    f, key = await ready(tmp_path)
+    outcome = await adapter(f).run_once(key)
+    request = await f.store.get_workflow_adoption_request(key)
+    record = await f.store.get_result_adoption(request.adoption_id)
+    with closing(f.store._connect()) as c, c:
+        for trigger in (
+            "workflow_activity_attempts_guard_update",
+            "workflow_activity_events_immutable_update",
+            "workflow_activity_results_immutable_update",
+            "workflow_transition_journal_immutable",
+        ):
+            c.execute("DROP TRIGGER " + trigger)
+        data = json.loads(
+            c.execute(
+                "SELECT snapshot_json FROM workflow_activity_attempts WHERE invocation_id = ?",
+                (key,),
+            ).fetchone()[0]
+        )
+        data["result"]["usage"][field] = amount
+        data["result"]["source_fingerprint"] = digest(
+            [adoption_terminal_digest(record), data["result"]["usage"]]
+        )
+        snapshot_fp = digest(data)
+        c.execute(
+            "UPDATE workflow_activity_attempts SET snapshot_json = ?, snapshot_fingerprint = ? WHERE invocation_id = ?",
+            (canonical(data), snapshot_fp, key),
+        )
+        event = json.loads(
+            c.execute(
+                "SELECT payload_json FROM workflow_activity_events WHERE invocation_id = ? AND revision = 3",
+                (key,),
+            ).fetchone()[0]
+        )
+        event["snapshot_fingerprint"] = snapshot_fp
+        c.execute(
+            "UPDATE workflow_activity_events SET payload_json = ?, payload_fingerprint = ? WHERE invocation_id = ? AND revision = 3",
+            (canonical(event), digest(event), key),
+        )
+        c.execute(
+            "UPDATE workflow_activity_results SET payload_json = ?, payload_fingerprint = ? WHERE invocation_id = ?",
+            (canonical(data["result"]), digest(data["result"]), key),
+        )
+        reservation_id = outcome.attempt.reservation_id
+        budget = json.loads(
+            c.execute(
+                "SELECT snapshot_json FROM workflow_budget_reservations WHERE reservation_id = ?",
+                (reservation_id,),
+            ).fetchone()[0]
+        )
+        budget["consumed"][field] = amount
+        c.execute(
+            "UPDATE workflow_budget_reservations SET snapshot_json = ? WHERE reservation_id = ?",
+            (canonical(budget), reservation_id),
+        )
+        request_id = "activity-settle:" + key
+        fact = json.loads(
+            c.execute(
+                "SELECT payload_json FROM workflow_transition_journal WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()[0]
+        )
+        fact["amounts"][field] = amount
+        c.execute(
+            "UPDATE workflow_transition_journal SET payload_json = ?, payload_fingerprint = ? WHERE request_id = ?",
+            (canonical(fact), digest(fact), request_id),
+        )
+    with pytest.raises(WorkflowStateError, match="trusted known"):
+        await SqliteSessionStore(f.store.database_path).get_workflow_activity(key)

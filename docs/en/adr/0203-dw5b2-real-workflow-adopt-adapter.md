@@ -83,20 +83,39 @@ result additionally binds exact invocation/request. Mapping is:
 
 Pre-plan validation errors remain errors, not fabricated terminal adoption evidence.
 
-The successful bounded first-dispatch path counts actual mutation-port invocations
-and elapsed wall time; generated tasks, model calls and tokens are provably zero.
-After crash/restart, operation/wall measurement is unknown and remains `None` (an
-empty plan can prove zero operations). The existing Run ledger settles once,
-retains true overrun/unknown facts, and cannot reopen a cancelled Run. Existing
-explicit reconciliation can refine only unknown ledger fields. Immutable original
-Activity result/proof is retained; there is no second accounting system.
+Schema 40 has no independently persisted dispatch-measurement receipt. Target
+revisions bound attempts but do not prove how many mutation-port calls happened:
+a crash can precede dispatch or follow a write before its ACK. Neither revisions
+nor an adapter-local counter establish durable measured wall time. We therefore
+remove the public `usage` argument entirely rather than accept caller amounts,
+ordinary receipts/dataclasses or self-hashed execution identities as proof.
+
+Both normal first execution and historical reconciliation retain operation/wall
+usage as `None`; an empty frozen plan independently proves zero operations, but
+wall usage remains unknown. Generated tasks, model calls and tokens are zero.
+There is currently **no trusted known operation/wall settlement path**. Successful
+adoption still yields a durable COMPLETED Activity, but unknown accounting puts
+the Run in NEEDS_ATTENTION and prevents automatic Interpreter consumption. A
+separate authorized, evidence-backed ledger reconciliation and explicit resume
+are required before a later Interpreter tick can consume that fact. This is a
+conservative product limitation, not an assertion of precise usage or automatic
+recovery. A future trusted execution-measurement seam would be necessary to enable
+known first-execution accounting; this repair does not create one or a second
+ledger. Existing unknown/overrun accounting and cancelled-Run behavior are retained.
+Reconciliation can refine only unknown ledger fields; immutable result/proof
+continues to record the original unknown usage.
 
 Terminal reconciliation is owner-independent historical fact reading. It checks
-exact source/parent binding and persisted integrity, without requiring a live
-Projection lookup, lease, worktree, checkpoint or original parent HEAD. It neither
-claims ownership nor mutates the workspace. Nonterminal recovery still validates
-all live sources and parent identity, then relies on the existing adoption core's
-owner liveness/lease/CAS. Another live core owner remains busy.
+exact source/parent binding and persisted integrity, without requiring live
+Projection validation, lease, worktree, checkpoint or original parent HEAD. It
+cross-checks the immutable SQLite Expansion and publication journal, consumed
+output, Projection fingerprint/source snapshot, exact DAG generation/definition,
+frozen members and worker identities. Rehashing a modified adoption plan cannot
+replace those independent anchors. Missing history fails closed. No new ownership
+or workspace mutation occurs. Terminal recovery reads enforce the same provenance
+and conservative-usage invariants. Nonterminal recovery still validates live
+sources and parent identity, then uses existing core owner liveness/lease/CAS.
+Another live core owner remains busy.
 
 ## Crash boundaries
 

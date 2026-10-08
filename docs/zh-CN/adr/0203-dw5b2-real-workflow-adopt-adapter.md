@@ -74,17 +74,31 @@ Activity result 另绑定 exact invocation/request。映射如下：
 
 创建 plan 之前的校验错误继续返回错误，不虚构 terminal adoption evidence。
 
-成功的有界首次 dispatch 记录实际 mutation-port 调用数和 wall time；generated tasks、
-model calls 和 tokens 可证明为零。Crash/restart 后丢失的 operation/wall 测量保留为
-`None`（空 plan 可证明零 operations）。既有 Run ledger 仅结算一次，保留真实 overrun/
-unknown，不能重新打开 CANCELLED Run。既有显式 reconciliation 只能补未知 ledger 字段；
-原 immutable Activity result/proof 不变，不增加第二套账本。
+Schema 40 没有独立持久化的 dispatch 计量凭据。Target revision 只能约束尝试上限，
+无法证明实际 mutation-port 调用数：crash 可能发生在 dispatch 前，也可能发生在写入后、
+ACK 前。Revision 和 Adapter 本地计数也无法建立 durable wall-time 计量事实。
+因此移除公共 `usage` 参数，不接受调用方 amounts、普通 receipt/dataclass 或自算 hash
+作为可信计量证明。
 
-Terminal reconciliation 是不依赖 Activity owner 的历史事实读取，检查 exact source/
-parent binding 与持久化完整性，不要求 live Projection 查询、lease、worktree、checkpoint
-或原 parent HEAD，既不 claim ownership，也不 mutation workspace。
-Nonterminal recovery 继续严格检查全部 live sources 与 parent identity，并依赖既有
-adoption core owner liveness/lease/CAS。另一活跃 core owner 仍返回 busy。
+首次正常执行和历史 reconciliation 都保留 operation/wall usage 为 `None`；空的冻结
+plan 能独立证明零 operations，但 wall usage 仍为 unknown。Generated tasks、model
+calls 和 tokens 为零。当前**没有可信的已知 operation/wall 结算路径**：成功 adoption
+仍生成 durable COMPLETED Activity，但未知用量让 Run 进入 NEEDS_ATTENTION，阻止
+Interpreter 自动消费。必须先进行独立、经过授权且有证据支持的 ledger reconciliation，
+再显式 resume，后续独立 tick 才能消费。这是保守的产品限制，不是精确计量或自动恢复
+承诺。未来需要可信的执行计量接缝才能启用已知首次执行结算；本轮不新增该机制或第二套
+账本。既有 unknown/overrun accounting 与 CANCELLED Run 语义保持；reconciliation
+只能补未知 ledger 字段，immutable result/proof 保留原始 unknown。
+
+Terminal reconciliation 是不依赖 Activity owner 的历史事实读取。它检查 exact source/
+parent binding，不要求 live Projection 校验、lease、worktree、checkpoint 或原 parent
+HEAD。通过 immutable SQLite Expansion/publication journal、consumed output、
+Projection fingerprint/source snapshot，独立验证 exact DAG generation/definition、
+frozen members 与 worker identities。重算修改后的 adoption plan fingerprint 不能替代
+这些独立锚点；历史锚点缺失则 fail closed。不 claim ownership，不 mutation workspace。
+Terminal recovery read 同样执行 provenance 与保守 usage 校验。Nonterminal recovery
+继续严格检查 live source 和 parent identity，复用既有 core owner liveness/lease/CAS；
+另一活跃 core owner 仍返回 busy。
 
 ## Crash 边界
 

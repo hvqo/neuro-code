@@ -73,6 +73,11 @@ def adoption_terminal_digest(record: ResultAdoptionRecord) -> str:
     )
 
 
+def adoption_recovery_usage(record: ResultAdoptionRecord) -> BudgetAmounts:
+    """Schema 40 has no trusted dispatch measurement; target revision is not usage."""
+    return BudgetAmounts(tool_calls=None if record.plan.targets else 0, wall_milliseconds=None)
+
+
 def adoption_activity_state(state: ResultAdoptionState) -> WorkflowActivityState:
     return {
         ResultAdoptionState.COMPLETED: WorkflowActivityState.COMPLETED,
@@ -92,13 +97,13 @@ class WorkflowAdoptionStore(Protocol):
         parent_session_id: str,
         parent_workspace_root: str,
         updated_at: datetime,
-        usage: BudgetAmounts | None = None,
     ) -> WorkflowActivityAttempt:
         """Read the exact underlying terminal fact and atomically settle once.
 
-        Measured usage is supplied only by the bounded first-dispatch adapter.
-        Restart reconciliation has no measurement and retains unknown operation
-        usage. Neither path claims execution ownership or invokes mutation.
+        No caller-supplied usage is accepted. Schema 40 has no independently
+        verifiable operation/wall measurement, so reconciliation retains unknown
+        usage (only an empty plan proves zero operations). Neither path claims
+        execution ownership or invokes mutation.
         """
         ...
 
