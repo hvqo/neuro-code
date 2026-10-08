@@ -189,4 +189,8 @@ New Activity steps publish a durable invocation and wait for an independently fe
 external owner; the production Interpreter no longer executes a default fake.
 Claim/reservation and terminal result/settlement share existing SQLite transactions
 and the Run budget ledger. No real ADOPT/VERIFY/REPAIR adapter or authority change
-is introduced. See [ADR 0202](adr/0202-dw5b1-durable-workflow-activity-protocol.md).
+is introduced. Activity reservations/results require `generated_tasks=0`; DW3
+retains generated-task accounting ownership. Before RUNNING, terminal model/tool/
+token usage must be exactly zero, while elapsed wall time is allowed. Writes and
+recovery reject invalid records; RUNNING unknown/overrun accounting remains valid.
+See [ADR 0202](adr/0202-dw5b1-durable-workflow-activity-protocol.md).

@@ -183,4 +183,7 @@ Schema 39→40 保持既有 output JSON/fingerprint，包括 FAKE_ACTIVITY。
 新 Activity Step 发布 durable invocation，等待独立 owner/fence 的外部 owner；
 production Interpreter 不再执行默认 fake。Claim/reservation 和 terminal result/
 settlement 复用既有 SQLite transaction 与 Run budget ledger。不引入真实
-ADOPT/VERIFY/REPAIR adapter 或权限变化。见 [ADR 0202](adr/0202-dw5b1-durable-workflow-activity-protocol.md)。
+ADOPT/VERIFY/REPAIR adapter 或权限变化。Activity reservation/result 必须满足
+`generated_tasks=0`，生成任务计费仍归 DW3。进入 RUNNING 前的 terminal model/tool/
+token usage 必须严格为零，允许记录 wall time。写入和恢复拒绝非法记录；RUNNING
+的 unknown/overrun accounting 仍有效。见 [ADR 0202](adr/0202-dw5b1-durable-workflow-activity-protocol.md)。
