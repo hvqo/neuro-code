@@ -15,6 +15,7 @@ from neuro_code.domain.workflows.activity import (
     WorkflowActivityInvocation,
     WorkflowActivityResult,
     WorkflowActivityState,
+    validate_activity_budget,
 )
 from neuro_code.domain.workflows.definition import (
     Activity,
@@ -592,6 +593,7 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
         timestamp(updated_at)
         if not isinstance(reserved, BudgetAmounts) or not reserved.known:
             raise ValueError("activity claim requires known upper bounds")
+        validate_activity_budget(reserved)
 
         def claim() -> WorkflowActivityAttempt:
             with closing(self._connect()) as connection, connection:
@@ -751,6 +753,9 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                     raise WorkflowStateError(
                         "completed result requires start boundary", kind="protocol"
                     )
+                validate_activity_budget(
+                    result.usage, pre_dispatch=current.state is WorkflowActivityState.CLAIMED
+                )
                 if result.terminal_at < run.updated_at or result.terminal_at < (
                     current.updated_at or current.invocation.created_at
                 ):

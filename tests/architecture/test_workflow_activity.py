@@ -753,3 +753,195 @@ async def test_artifact_request_is_exact_and_domain_types_are_bounded(tmp_path):
         replace(attempt, revision=5)
     with pytest.raises(ValueError, match=r"activity|result"):
         replace(result(await start(store, await claim(store, attempt))), state=State.READY)
+
+
+PRE_DISPATCH_TERMINALS = (State.FAILED, State.BLOCKED, State.INDETERMINATE)
+EXECUTION_DIMENSIONS = ("model_calls", "tool_calls", "input_tokens", "output_tokens")
+
+
+@pytest.mark.parametrize("state", PRE_DISPATCH_TERMINALS)
+@pytest.mark.parametrize("field", EXECUTION_DIMENSIONS)
+@pytest.mark.parametrize("amount", [1, None])
+async def test_claimed_terminal_execution_usage_rejected_before_accounting(
+    tmp_path, state, field, amount
+):
+    store, attempt = await ready(tmp_path)
+    attempt = await claim(store, attempt)
+    before = await store.get_workflow_run("run")
+    before_counts = counts(store)
+    value = result(attempt, state, usage=BudgetAmounts(**{field: amount}))
+    with (
+        patch.object(owner, "_budget_change", side_effect=AssertionError("accounting started")),
+        pytest.raises(WorkflowStateError) as rejected,
+    ):
+        await finish(store, attempt, value)
+    assert "pre-dispatch" in str(rejected.value.__cause__)
+    assert await store.get_workflow_run("run") == before
+    assert await store.get_workflow_activity(value.invocation_id) == attempt
+    assert counts(store) == before_counts
+    # Frozen domain construction also rejects a terminal fact without RUNNING.
+    with pytest.raises(ValueError, match="pre-dispatch"):
+        replace(attempt, state=state, revision=2, result=value, updated_at=END)
+
+
+@pytest.mark.parametrize("state", PRE_DISPATCH_TERMINALS)
+async def test_claimed_terminal_zero_execution_and_preparation_wall_time_allowed(tmp_path, state):
+    store, attempt = await ready(tmp_path)
+    attempt = await claim(store, attempt)
+    value = result(attempt, state, usage=BudgetAmounts(wall_milliseconds=7))
+    terminal = await finish(store, attempt, value)
+    store = await reopen(store)
+    assert await store.get_workflow_activity(value.invocation_id) == terminal
+    assert (await store.get_workflow_run("run")).ledger.committed == value.usage
+    before = counts(store)
+    assert await finish(store, attempt, value) == terminal
+    assert counts(store) == before
+    with closing(sqlite3.connect(store.database_path)) as connection:
+        assert [
+            r[0]
+            for r in connection.execute(
+                "SELECT kind FROM workflow_activity_events ORDER BY revision"
+            )
+        ] == ["ready", "claimed", state.value]
+
+
+@pytest.mark.parametrize("amount", [1, None])
+async def test_activity_generated_task_reservation_rejected_without_writes(tmp_path, amount):
+    store, attempt = await ready(tmp_path)
+    before = await store.get_workflow_run("run")
+    before_counts = counts(store)
+    with (
+        patch.object(owner, "_budget_change", side_effect=AssertionError("accounting started")),
+        pytest.raises(ValueError, match=r"generated_tasks|known.*bounds"),
+    ):
+        await claim(store, attempt, reserved=BudgetAmounts(generated_tasks=amount))
+    assert await store.get_workflow_run("run") == before
+    assert await store.get_workflow_activity(attempt.invocation.invocation_id) == attempt
+    assert counts(store) == before_counts
+    claimed = await claim(store, attempt)
+    with pytest.raises(ValueError, match=r"generated_tasks|known.*bounds"):
+        replace(claimed, reserved=BudgetAmounts(generated_tasks=amount))
+
+
+@pytest.mark.parametrize("amount", [1, None])
+@pytest.mark.parametrize(
+    ("running", "state"),
+    [
+        *[(False, state) for state in PRE_DISPATCH_TERMINALS],
+        *[(True, state) for state in (*PRE_DISPATCH_TERMINALS, State.COMPLETED)],
+    ],
+)
+async def test_activity_generated_task_result_rejected_without_writes(
+    tmp_path, amount, running, state
+):
+    store, attempt = await ready(tmp_path)
+    attempt = await claim(store, attempt)
+    if running:
+        attempt = await start(store, attempt)
+    value = result(attempt, state, usage=BudgetAmounts())
+    invalid = BudgetAmounts(generated_tasks=amount)
+    with pytest.raises(ValueError, match="generated_tasks"):
+        replace(value, usage=invalid)
+    # A caller bypassing frozen dataclass validation must not bypass the store.
+    object.__setattr__(value, "usage", invalid)
+    before = await store.get_workflow_run("run")
+    before_counts = counts(store)
+    with (
+        patch.object(owner, "_budget_change", side_effect=AssertionError("accounting started")),
+        pytest.raises(WorkflowStateError) as rejected,
+    ):
+        await finish(store, attempt, value)
+    assert "generated_tasks" in str(rejected.value.__cause__)
+    assert await store.get_workflow_run("run") == before
+    assert await store.get_workflow_activity(value.invocation_id) == attempt
+    assert counts(store) == before_counts
+
+
+def tamper_activity_amount(store, *, target, field, amount):
+    """Recompute hashes/linkage so a digest mismatch cannot mask semantic rejection."""
+    with closing(sqlite3.connect(store.database_path)) as connection, connection:
+        connection.execute("DROP TRIGGER workflow_activity_attempts_guard_update")
+        connection.execute("DROP TRIGGER workflow_activity_events_immutable_update")
+        connection.execute("DROP TRIGGER workflow_transition_journal_immutable")
+        key, payload = connection.execute(
+            "SELECT invocation_id, snapshot_json FROM workflow_activity_attempts"
+        ).fetchone()
+        data = json.loads(payload)
+        amounts = data["reserved"] if target == "reserved" else data["result"]["usage"]
+        amounts[field] = amount
+        snapshot_fingerprint = digest(data)
+        connection.execute(
+            "UPDATE workflow_activity_attempts SET snapshot_json = ?, snapshot_fingerprint = ?",
+            (canonical(data), snapshot_fingerprint),
+        )
+        revision, event_json = connection.execute(
+            "SELECT revision, payload_json FROM workflow_activity_events ORDER BY revision DESC LIMIT 1"
+        ).fetchone()
+        event = json.loads(event_json)
+        event["snapshot_fingerprint"] = snapshot_fingerprint
+        connection.execute(
+            "UPDATE workflow_activity_events SET payload_json = ?, payload_fingerprint = ? WHERE revision = ?",
+            (canonical(event), digest(event), revision),
+        )
+        budget_json = connection.execute(
+            "SELECT snapshot_json FROM workflow_budget_reservations"
+        ).fetchone()[0]
+        budget = json.loads(budget_json)
+        budget["reserved" if target == "reserved" else "consumed"][field] = amount
+        connection.execute(
+            "UPDATE workflow_budget_reservations SET snapshot_json = ?", (canonical(budget),)
+        )
+        operation = (
+            WorkflowEventKind.RESERVED if target == "reserved" else WorkflowEventKind.CONSUMED
+        )
+        generation, journal_json = connection.execute(
+            "SELECT generation, payload_json FROM workflow_transition_journal WHERE kind = ?",
+            (operation.value,),
+        ).fetchone()
+        fact = json.loads(journal_json)
+        fact["amounts"][field] = amount
+        connection.execute(
+            "UPDATE workflow_transition_journal SET payload_json = ?, payload_fingerprint = ? WHERE generation = ?",
+            (canonical(fact), digest(fact), generation),
+        )
+        if target == "usage":
+            connection.execute("DROP TRIGGER workflow_activity_results_immutable_update")
+            connection.execute(
+                "UPDATE workflow_activity_results SET payload_json = ?, payload_fingerprint = ? WHERE invocation_id = ?",
+                (canonical(data["result"]), digest(data["result"]), key),
+            )
+
+
+@pytest.mark.parametrize("state", PRE_DISPATCH_TERMINALS)
+@pytest.mark.parametrize("field", EXECUTION_DIMENSIONS)
+@pytest.mark.parametrize("amount", [1, None])
+async def test_rehashed_claimed_terminal_execution_usage_tamper_fails_closed(
+    tmp_path, state, field, amount
+):
+    store, attempt = await ready(tmp_path)
+    attempt = await claim(store, attempt)
+    await finish(store, attempt, result(attempt, state, usage=BudgetAmounts()))
+    tamper_activity_amount(store, target="usage", field=field, amount=amount)
+    store = await reopen(store)
+    with pytest.raises(WorkflowStateError) as rejected:
+        await store.get_workflow_activity(attempt.invocation.invocation_id)
+    assert "pre-dispatch" in str(rejected.value.__cause__)
+
+
+@pytest.mark.parametrize("target", ["reserved", "usage"])
+@pytest.mark.parametrize("amount", [1, None])
+async def test_rehashed_activity_generated_tasks_tamper_fails_closed(tmp_path, target, amount):
+    store, attempt = await ready(tmp_path)
+    attempt = await claim(store, attempt)
+    if target == "usage":
+        attempt = await start(store, attempt)
+        await finish(store, attempt)
+    tamper_activity_amount(store, target=target, field="generated_tasks", amount=amount)
+    store = await reopen(store)
+    with pytest.raises(WorkflowStateError) as rejected:
+        await store.get_workflow_activity(attempt.invocation.invocation_id)
+    assert isinstance(rejected.value.__cause__, ValueError)
+    expected = (
+        "known upper bounds" if target == "reserved" and amount is None else "generated_tasks"
+    )
+    assert expected in str(rejected.value.__cause__)

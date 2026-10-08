@@ -50,6 +50,20 @@ can mean nothing actually started, but the protocol conservatively assumes effec
 may have started. Process disappearance is never evidence for retry. Future
 adapters must prove their own operation's outcome or record INDETERMINATE.
 
+The legal adapter sequence is: atomically claim and reserve budget; commit RUNNING;
+confirm that commit succeeded and this is an authorized first dispatch rather than
+historical replay; only then invoke the underlying ADOPT/VERIFY/REPAIR operation.
+Before RUNNING, FAILED/BLOCKED/INDETERMINATE results must report exact integer zero
+for generated tasks, model/tool calls and input/output tokens. Positive or unknown
+values are rejected before accounting or state writes; pre-dispatch wall time may
+be nonzero. Domain reconstruction also rejects such invalid persisted facts, even
+when their fingerprints and journal linkage have been recomputed.
+
+Zero pre-dispatch execution usage is a necessary guard, not proof that no external
+effect occurred. Future adapters must still prove first-dispatch identity, enforce
+meaningful pre-dispatch ceilings and define durable underlying recovery semantics.
+The generic protocol cannot substitute a start ACK replay for those proofs.
+
 Exact claim/start ACK replays return an existing fact; a RUNNING replay is not
 permission to execute twice. Terminal replay checks persisted invocation, result,
 schema, budget and journal integrity, without requiring a live execution process
@@ -78,7 +92,12 @@ followed by ACK loss can be reopened and read without another invocation or char
 
 ## Budget and terminal consumption
 
-The port reuses `BudgetAmounts`, `BudgetReservation` and Run ceiling. An owner
+The port reuses `BudgetAmounts`, `BudgetReservation` and Run ceiling. Activity
+reservations and terminal usage must have `generated_tasks` equal to exact integer
+zero: Activities do not publish Task DAGs. Nonzero/unknown values fail closed on
+construction, writes and recovery reads. DW3 retains generated-task publication
+accounting; the global `BudgetAmounts` contract and schema 40 remain unchanged.
+An owner
 must reserve known upper bounds at claim before dispatch; exceeding the ceiling
 rolls back claim. Publication itself has no model/tool consumption. Adapters must
 explicitly report `None` for unknown usage rather than filling missing usage with
@@ -118,3 +137,9 @@ immutable terminal evidence, request/result tamper, typed schemas, unknown/overr
 budget, cancellation before dispatch, historical replay, and schema-39 fake output
 compatibility. DW5a control and existing Workflow/Task DAG/Swarm/UltraCode gates
 remain required.
+
+P1 regressions cover every pre-dispatch failure state and model/tool/token dimension
+(positive/unknown rejection, zero usage and nonzero wall time), Activity generated-task
+ownership, zero writes on rejection and rehashed snapshot/result/journal/ledger tamper.
+RUNNING unknown usage, overrun, terminal replay and reconciliation retain their
+existing accounting and recovery tests.

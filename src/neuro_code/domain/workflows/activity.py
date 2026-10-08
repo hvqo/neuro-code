@@ -34,6 +34,16 @@ class WorkflowActivityState(StrEnum):
         return self in {self.COMPLETED, self.FAILED, self.BLOCKED, self.INDETERMINATE}
 
 
+def validate_activity_budget(amounts: BudgetAmounts, *, pre_dispatch: bool = False) -> None:
+    """Activity cannot publish tasks or report execution before RUNNING."""
+    if not isinstance(amounts, BudgetAmounts):
+        raise TypeError("activity budget must be canonical")
+    if type(amounts.generated_tasks) is not int or amounts.generated_tasks != 0:
+        raise ValueError("activity generated_tasks must be exactly zero")
+    if pre_dispatch and any(type(value) is not int or value != 0 for value in amounts.values[1:5]):
+        raise ValueError("pre-dispatch activity execution usage must be exactly zero")
+
+
 @dataclass(frozen=True, slots=True)
 class WorkflowActivityInvocation:
     invocation_id: str
@@ -114,6 +124,7 @@ class WorkflowActivityResult:
             raise ValueError("activity result must have a terminal typed state")
         if not isinstance(self.usage, BudgetAmounts):
             raise TypeError("activity usage must be canonical")
+        validate_activity_budget(self.usage)
         if self.output_json is not None and not isinstance(self.output_json, str):
             raise TypeError("activity output must be canonical JSON text")
         if (self.output_json is None) == (self.state is WorkflowActivityState.COMPLETED):
@@ -198,6 +209,8 @@ class WorkflowActivityAttempt:
             not isinstance(self.reserved, BudgetAmounts) or not self.reserved.known
         ):
             raise ValueError("activity reservation must have known bounds")
+        if self.reserved is not None:
+            validate_activity_budget(self.reserved)
         if (self.result is None) == self.state.terminal:
             raise ValueError("terminal activity requires exactly one result")
         if self.result is not None and not isinstance(self.result, WorkflowActivityResult):
@@ -210,3 +223,5 @@ class WorkflowActivityAttempt:
             or self.result.terminal_at != now
         ):
             raise ValueError("activity result differs from invocation")
+        if self.result is not None:
+            validate_activity_budget(self.result.usage, pre_dispatch=self.revision == 2)
