@@ -56,7 +56,7 @@ END = NOW + timedelta(seconds=30)
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "workflows"
 
 
-def service(f, *, store=None, mutation=None):
+def service(f, *, store=None, mutation=None, clock=None):
     store = store or f.store
     return ResultAdoptionApplicationService(
         store=store,
@@ -70,10 +70,20 @@ def service(f, *, store=None, mutation=None):
         parent_reader=f.parent,
         mutation=mutation or f.mutation,
         parent_binding=f.binding,
+        **({"clock": clock} if clock is not None else {}),
     )
 
 
-async def fixture(tmp_path, *, mapped=False, state=NodeState.COMPLETED, **kwargs):
+async def fixture(
+    tmp_path,
+    *,
+    mapped=False,
+    state=NodeState.COMPLETED,
+    with_activity=False,
+    activity_ceiling=None,
+    activity_source=None,
+    **kwargs,
+):
     f = await _make_fixture(tmp_path, **kwargs)
     data = json.loads(
         (FIXTURES / ("map.json" if mapped else "minimal.json")).read_text(encoding="utf-8")
@@ -81,18 +91,47 @@ async def fixture(tmp_path, *, mapped=False, state=NodeState.COMPLETED, **kwargs
     if not mapped:
         task = data["steps"][0]["tasks"][0]
         data["steps"][0]["tasks"] = [dict(task, task_id=f"work-{i}") for i in range(2)]
+    if with_activity:
+        from neuro_code.domain.workflows.interpreter import expansion_id
+
+        data["steps"].append(
+            {
+                "kind": "Activity",
+                "step_id": "adopt",
+                "activity": "parent.adopt",
+                "inputs": {
+                    "source": activity_source
+                    or {
+                        "kind": "result",
+                        "step_id": "expand" if mapped else "implement",
+                        "field_path": ["items" if mapped else "tasks"],
+                    }
+                },
+            }
+        )
     definition = compile_workflow(json.dumps(data))
+    source_identity = StepIdentity("expand" if mapped else "implement")
+    publication_id = (
+        expansion_id("workflow-run", source_identity) if with_activity else "workflow-expansion"
+    )
+    value = {"targets": ["item-0", "item-1"], "objective": "fixture"}
+    from neuro_code.domain.workflows.publication import canonical, digest
+
+    input_fp = digest(value) if with_activity else INPUT
     await f.store.insert_workflow_definition(definition)
     run = (
         await f.store.create_workflow_run(
             "workflow-run",
             definition_fingerprint=definition.fingerprint,
             parent_session_id=f.binding.runner.session_id,
-            input_fingerprint=INPUT,
+            input_fingerprint=input_fp,
             request_id="create",
             created_at=NOW,
+            ceiling=activity_ceiling,
         )
     ).run
+    if with_activity:
+        await f.store.put_workflow_input(run.run_id, canonical(value))
     run = (
         await f.store.claim_workflow_run(
             run.run_id,
@@ -108,7 +147,7 @@ async def fixture(tmp_path, *, mapped=False, state=NodeState.COMPLETED, **kwargs
             f"item-{i}" if mapped else "batch",
             "work" if mapped else f"work-{i}",
             n.node_id,
-            INPUT,
+            input_fp,
             "writable_worker",
             (AgentCapability.WORKSPACE_READ, AgentCapability.WORKSPACE_WRITE),
         )
@@ -123,10 +162,10 @@ async def fixture(tmp_path, *, mapped=False, state=NodeState.COMPLETED, **kwargs
     )
     await f.store.publish_workflow_expansion(
         WorkflowExpansionIntent(
-            "workflow-expansion",
+            publication_id,
             run.run_id,
             StepIdentity("expand" if mapped else "implement"),
-            INPUT,
+            input_fp,
             members,
             dag,
         ),
@@ -230,7 +269,7 @@ async def fixture(tmp_path, *, mapped=False, state=NodeState.COMPLETED, **kwargs
         expected_state=dag.state,
     )
     projection = await f.store.project_workflow_result(
-        "workflow-expansion",
+        publication_id,
         run_id=run.run_id,
         parent_session_id=run.parent_session_id,
         created_at=END,
