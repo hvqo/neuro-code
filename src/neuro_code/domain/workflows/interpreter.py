@@ -65,6 +65,7 @@ def typed_json(schema: FieldSchema, value: object) -> str:
 class OutputKind(StrEnum):
     PROJECTION = "projection"
     FAKE_ACTIVITY = "fake_activity"
+    ACTIVITY = "activity"
     EMPTY_MAP = "empty_map"
 
 
@@ -117,6 +118,8 @@ def validate_step_output(step: Activity | TaskBatch | Map, output: WorkflowStepO
     typed_json(schema, json.loads(output.output_json))
     if output.kind is OutputKind.FAKE_ACTIVITY and not isinstance(step, Activity):
         raise ValueError("fake output requires Activity")
+    if output.kind is OutputKind.ACTIVITY and not isinstance(step, Activity):
+        raise ValueError("durable activity output requires Activity")
     if output.kind is OutputKind.EMPTY_MAP and (
         not isinstance(step, Map) or output.output_json != canonical({"count": 0, "items": []})
     ):

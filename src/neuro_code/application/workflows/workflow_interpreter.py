@@ -6,17 +6,11 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from neuro_code.application.ports.task_dag import TaskDagStore
-from neuro_code.application.ports.workflow_interpreter import (
-    FakeActivityInvocation,
-    FakeWorkflowActivity,
-    WorkflowInterpreterStore,
-)
+from neuro_code.application.ports.workflow_activity import WorkflowActivityStore
+from neuro_code.application.ports.workflow_interpreter import WorkflowInterpreterStore
 from neuro_code.application.ports.workflow_projection import WorkflowProjectionStore
 from neuro_code.application.ports.workflow_publication import WorkflowPublicationStore
 from neuro_code.application.ports.workflow_state import WorkflowStateError, WorkflowStateStore
-from neuro_code.application.workflows.fake_workflow_activity import (
-    DeterministicFakeWorkflowActivity,
-)
 from neuro_code.application.workflows.workflow_control import (
     ActionKind,
     ControlAction,
@@ -25,6 +19,10 @@ from neuro_code.application.workflows.workflow_control import (
 )
 from neuro_code.application.workflows.workflow_values import WorkflowValues
 from neuro_code.domain.task_dag import TaskDag, TaskDagNode, TaskDagState
+from neuro_code.domain.workflows.activity import (
+    WorkflowActivityInvocation,
+    WorkflowActivityState,
+)
 from neuro_code.domain.workflows.definition import Activity, Branch, Map, Repeat, TaskBatch
 from neuro_code.domain.workflows.interpreter import (
     OutputKind,
@@ -71,14 +69,14 @@ class DurableWorkflowInterpreter:
         publication: WorkflowPublicationStore,
         projections: WorkflowProjectionStore,
         dags: TaskDagStore,
-        activity: FakeWorkflowActivity | None = None,
+        activities: WorkflowActivityStore,
     ) -> None:
         self.state = state
         self.store = facts
         self.publication = publication
         self.projections = projections
         self.dags = dags
-        self.activity = activity or DeterministicFakeWorkflowActivity()
+        self.activities = activities
 
     async def advance_once(
         self,
@@ -195,6 +193,8 @@ class DurableWorkflowInterpreter:
                 updated_at,
             )
         if action.kind is ActionKind.CONSUME:
+            if isinstance(step, Activity):
+                return await self._consume_activity(run, step, identity, updated_at)
             return await self._consume(run, identity, updated_at)
         payload = await self._inputs(action, values)
         input_fingerprint = digest(payload)
@@ -221,20 +221,32 @@ class DurableWorkflowInterpreter:
                 updated_at,
             )
         if isinstance(step, Activity):
-            source_id = invocation_id(run_id, identity, input_fingerprint)
-            invocation = FakeActivityInvocation(
-                source_id, run_id, identity, step.activity, canonical(payload)
-            )
-            output = WorkflowStepOutput(
+            request_json = canonical(payload)
+            invocation = WorkflowActivityInvocation(
+                invocation_id(run_id, identity, input_fingerprint),
                 run_id,
+                run.definition_fingerprint,
+                run.parent_session_id,
                 identity,
+                step.activity,
+                request_json,
+                digest(payload),
                 input_fingerprint,
-                OutputKind.FAKE_ACTIVITY,
-                source_id,
-                digest([source_id, input_fingerprint]),
-                self.activity.evaluate(invocation),
+                updated_at,
             )
-            return await self._output(run, output, "fake_activity", updated_at)
+            activity_publication = await self.activities.publish_workflow_activity(
+                invocation,
+                expected_generation=run.generation,
+                owner_id=owner_id,
+                owner_fence=owner_fence,
+                updated_at=updated_at,
+            )
+            if activity_publication.replayed:
+                raise WorkflowStateError(
+                    "activity invocation already exists outside ready control state",
+                    kind="conflict",
+                )
+            return WorkflowAdvanceResult(activity_publication.run, "publish_activity", True)
         assert isinstance(step, TaskBatch | Map)
         if isinstance(step, Map) and not payload:
             source_id = "empty:" + identity.key
@@ -343,6 +355,56 @@ class DurableWorkflowInterpreter:
             projection.output_json,
         )
         return await self._output(run, output, "consume_projection", now)
+
+    async def _consume_activity(
+        self, run: WorkflowRun, step: Activity, identity: StepIdentity, now: datetime
+    ) -> WorkflowAdvanceResult:
+        old = next((item for item in run.steps if item.identity == identity), None)
+        if old is None:
+            raise WorkflowStateError("waiting Activity step is missing", kind="integrity")
+        attempt = await self.activities.get_workflow_activity(
+            invocation_id(run.run_id, identity, old.input_fingerprint)
+        )
+        if attempt is None:
+            raise WorkflowStateError("waiting Activity has no durable invocation", kind="integrity")
+        invocation = attempt.invocation
+        if (
+            invocation.run_id != run.run_id
+            or invocation.step != identity
+            or invocation.activity is not step.activity
+            or invocation.input_fingerprint != old.input_fingerprint
+            or invocation.definition_fingerprint != run.definition_fingerprint
+            or invocation.parent_session_id != run.parent_session_id
+        ):
+            raise WorkflowStateError("Activity invocation binding differs", kind="integrity")
+        if not attempt.state.terminal:
+            return WorkflowAdvanceResult(run, "activity_waiting", False)
+        result = attempt.result
+        assert result is not None
+        if attempt.state is WorkflowActivityState.COMPLETED:
+            assert result.output_json is not None
+            output = WorkflowStepOutput(
+                run.run_id,
+                identity,
+                old.input_fingerprint,
+                OutputKind.ACTIVITY,
+                invocation.invocation_id,
+                result.fingerprint,
+                result.output_json,
+            )
+            return await self._output(run, output, "consume_activity", now)
+        assert run.owner_id is not None
+        consumed = await self.activities.consume_workflow_activity_failure(
+            invocation.invocation_id,
+            result.fingerprint,
+            expected_generation=run.generation,
+            owner_id=run.owner_id,
+            owner_fence=run.owner_fence,
+            updated_at=now,
+        )
+        return WorkflowAdvanceResult(
+            consumed.run, "activity_" + attempt.state.value, not consumed.replayed
+        )
 
     async def _inputs(self, action: ControlAction, values: WorkflowValues) -> object:
         step, identity = action.step, action.identity

@@ -937,6 +937,7 @@ class _Validator(_Decoder):
         self.budget = definition[3]
         self.definition_steps = definition[4]
         self.requirements = definition[5]
+        self.activity_inputs: dict[str, dict[str, FieldSchema]] = {}
 
     def index(self, steps: tuple[Step, ...], path: str) -> None:
         for i, step in enumerate(steps):
@@ -1144,7 +1145,17 @@ class _Validator(_Decoder):
                 scope[step.step_id] = workflow_output_schema(step)
                 generated += len(step.tasks)
             elif isinstance(step, Activity):
-                self.check_bindings(step.inputs, scope, f"{location}.inputs", None)
+                self.activity_inputs[step.step_id] = {
+                    name: schema
+                    for name, value in step.inputs
+                    if isinstance(value, InputRef | ResultRef | ItemRef)
+                    and (
+                        schema := self.resolve(
+                            value, scope, _property_path(f"{location}.inputs", name), None
+                        )
+                    )
+                    is not None
+                }
                 scope[step.step_id] = activity_output_schema(step.activity)
             elif isinstance(step, Branch):
                 names = {name for name, _ in step.paths}
@@ -1231,6 +1242,26 @@ class _Validator(_Decoder):
         for i, condition in enumerate(self.requirements):
             self.check_condition(condition, available, f"$.completion_requirements[{i}]")
         return tuple(self.errors)
+
+
+def activity_reference_schemas(
+    definition: WorkflowDefinition, step_id: str
+) -> dict[str, FieldSchema]:
+    """Reuse DW1 dominance/schema resolution for already validated Activity inputs."""
+    validator = _Validator(
+        (
+            definition.version,
+            definition.definition_id,
+            definition.input_schema,
+            definition.budget,
+            definition.steps,
+            definition.completion_requirements,
+        ),
+        (),
+    )
+    validator.index(definition.steps, "$.steps")
+    validator.walk(definition.steps, {}, "$.steps")
+    return validator.activity_inputs[step_id]
 
 
 def _immutable(value: object) -> bool:
