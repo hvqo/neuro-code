@@ -574,7 +574,7 @@ async def test_schema_38_upgrade_retains_previous_run_and_snapshot(tmp_path):
         connection.execute("DROP TABLE workflow_run_inputs")
         connection.execute("UPDATE schema_meta SET version = 38")
     store = await reopen(store)
-    assert SCHEMA_VERSION == 40
+    assert SCHEMA_VERSION == 41
     assert await store.get_workflow_run("run") == before
     with pytest.raises(WorkflowStateError, match="missing"):
         await tick(store)  # no invented input for legacy runs

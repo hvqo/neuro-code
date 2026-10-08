@@ -537,7 +537,7 @@ async def test_schema39_fake_output_preserved_without_rewrite(tmp_path):
         connection.execute("DROP TABLE workflow_activity_attempts")
         connection.execute("UPDATE schema_meta SET version = 39")
     store = await reopen(store)
-    assert SCHEMA_VERSION == 40
+    assert SCHEMA_VERSION == 41
     assert await store.get_workflow_step_output("run", step.identity) == old
     with closing(sqlite3.connect(store.database_path)) as connection:
         assert connection.execute("SELECT * FROM workflow_step_outputs").fetchall() == before

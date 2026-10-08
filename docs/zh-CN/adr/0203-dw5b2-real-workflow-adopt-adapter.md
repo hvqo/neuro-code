@@ -4,7 +4,7 @@
 
 - 状态：已接受的内部 Adapter
 - 日期：2026-10-08
-- 范围：仅真实 ADOPT；schema 保持 40
+- 范围：仅真实 ADOPT；schema 41（执行计量证据）
 
 ## 精确来源与身份
 
@@ -74,21 +74,56 @@ Activity result 另绑定 exact invocation/request。映射如下：
 
 创建 plan 之前的校验错误继续返回错误，不虚构 terminal adoption evidence。
 
-Schema 40 没有独立持久化的 dispatch 计量凭据。Target revision 只能约束尝试上限，
-无法证明实际 mutation-port 调用数：crash 可能发生在 dispatch 前，也可能发生在写入后、
-ACK 前。Revision 和 Adapter 本地计数也无法建立 durable wall-time 计量事实。
-因此移除公共 `usage` 参数，不接受调用方 amounts、普通 receipt/dataclass 或自算 hash
-作为可信计量证明。
+## 可信执行计量
 
-首次正常执行和历史 reconciliation 都保留 operation/wall usage 为 `None`；空的冻结
-plan 能独立证明零 operations，但 wall usage 仍为 unknown。Generated tasks、model
-calls 和 tokens 为零。当前**没有可信的已知 operation/wall 结算路径**：成功 adoption
-仍生成 durable COMPLETED Activity，但未知用量让 Run 进入 NEEDS_ATTENTION，阻止
-Interpreter 自动消费。必须先进行独立、经过授权且有证据支持的 ledger reconciliation，
-再显式 resume，后续独立 tick 才能消费。这是保守的产品限制，不是精确计量或自动恢复
-承诺。未来需要可信的执行计量接缝才能启用已知首次执行结算；本轮不新增该机制或第二套
-账本。既有 unknown/overrun accounting 与 CANCELLED Run 语义保持；reconciliation
-只能补未知 ledger 字段，immutable result/proof 保留原始 unknown。
+Schema 41 新增三个不可变证据表：`workflow_adoption_executions`、
+`workflow_adoption_dispatch_events`、`workflow_adoption_measurements`。
+它们保存执行证据，**不是第二套预算账本**；不重写旧 adoption 或 schema-40 Activity
+result，也不会把历史 unknown 自动改成精确用量。
+
+`execute_workflow_adoption()` 是窄的首次 dispatch 执行边界，在同一事务中提交
+CLAIMED → RUNNING 和 exact execution identity，绑定 invocation/request、确定性
+adoption ID、reservation、owner/fence 与 running revision。历史 RUNNING 即使持有
+原 owner token，也不能再次进入。入口只接收 composition 注入的真实 mutation 依赖和
+controller callback，不接收 amounts、用量时间戳或 receipt。Callback 使用原 Result
+Adoption engine 与受控计量 port。Live scope 还要求首次 CAS 后签发的进程内、不可
+序列化授权；用数据库 ID 构造 scope/receipt 或重启进程不能创建新的计量 writer。退出
+scope 即撤销授权；授权本身不证明调用，仍必须测量真实 entry/ACK 并校验 durable
+identity。依赖注入属于可信 composition，不是未受信任 plugin
+入口；能够替换 mutation 实现或改写全部数据库事实的任意进程不在此契约内。
+普通 hash 仅用于完整性，不是执行权威。
+
+Repository-owned scope 在 dispatch 前保存 intent，直接调用
+`WorkspaceMutationPort.apply()`，再单独保存返回/异常 ACK。实际进入 port 后的普通
+异常也计一次调用，无论是否改变文件；prepare/validation 不伪造 tool calls。
+Intent 本身不证明已经进入 port。Target revision 只用于发现遗漏的计量边界及保守限制
+上限，绝不转换为 usage。Callback 绕过计量 port 时，不能为其 APPLYING transition
+提交已知零用量。取消或不完整的 scope 不会被重新启动、重新封存。
+
+只有仍在运行的 scope 可在观察到 exact underlying terminal adoption 后完成计量。
+Wall usage 来自受控 `perf_counter_ns()`，按毫秒向上取整，覆盖已提交 RUNNING scope
+进入后至底层终态观察之间的准备、port 调用及其计量写入开销；不包含 claim 前检查和
+后续 Activity settlement。它不依赖调用方的 wall-clock timestamp。Pre-dispatch ceiling
+限制新调用，不截断已经进入的调用；实际 overrun 保留真实用量，由既有 ledger 安全地
+进入 NEEDS_ATTENTION。Generated tasks/model calls/tokens 保持 0。
+
+历史 reconciliation **不接受** `usage` 或 receipt。Known usage 只能在首次执行的 live
+scope 中结算，须校验不可变 execution identity、连续 intent/ACK 对、exact plan
+mutation 和 terminal adoption digest。完整 measurement、immutable Activity result、
+budget settlement、journal **在同一 SQLite 事务提交**。公共 reconciliation 可 replay
+已经提交的 terminal result，但不能用序列化 receipt 新建 known usage；孤立 measurement
+没有对应 Activity result 即非法，普通 hash 即使正确也 fail closed。
+
+执行或 terminal settlement 在该事务 commit 前崩溃时，tool/wall 保持 `None`；空 plan
+可独立证明零 port calls，但不能证明 wall usage。即使已有所有调用 ACK，没有完整原子
+结算也不能建立精确 wall 消耗。Commit 后 ACK 丢失则 replay 同一 known terminal fact，
+不执行、不重复扣费。Intent 条数、target revision、desired image 均不是执行 receipt。
+
+Measurement、Activity result、budget settlement、journal 在既有单事务提交，exact replay 不重复
+结算。正常两次或零次调用完成后，known-accounted Run 保持 WAITING；后续独立
+Interpreter tick 直接消费 output，无需人工 accounting/resume。Unknown 或 exceeded
+进入 NEEDS_ATTENTION；reconciliation 只补未知 ledger 字段，immutable Activity usage
+保留原始执行事实。Late accounting 不重新打开 CANCELLED/terminal Run。
 
 Terminal reconciliation 是不依赖 Activity owner 的历史事实读取。它检查 exact source/
 parent binding，不要求 live Projection 校验、lease、worktree、checkpoint 或原 parent
@@ -106,17 +141,17 @@ Terminal recovery read 同样执行 provenance 与保守 usage 校验。Nontermi
 |---|---|
 | RUNNING 已提交，无 adoption fact | 不根据 RUNNING replay 重新 dispatch；保留预留并 NEEDS_ATTENTION |
 | Plan 已提交，mutation 未开始 | 同一 adoption ID/plan，live validation 与既有 core ownership recovery |
-| Mutation 已发生，ACK 丢失 | 既有 target CAS 与 desired-image observation；不重复写已有 desired image |
-| Adoption terminal，Activity result 未提交 | 读取 terminal proof 并原子结算，无 live-resource 依赖或 mutation |
+| Intent 已保存／mutation 已发生但 ACK 丢失／scope 不完整 | Unknown accounting；既有 target CAS 与 desired-image observation 防止重复写 desired image |
+| Adoption terminal，Activity result 未提交 | 已有原子提交的 Activity result 按 known replay，否则 unknown；无 live-resource 依赖或 mutation |
 | Activity result 或 Interpreter consume ACK 丢失 | 精确 durable replay，不重复结算或 adoption |
 | 第三方修改 parent | 既有 three-way/conflict/indeterminate 检查，不覆盖新内容或无关脏文件 |
 
-结算失败时 budget、attempt、result、journal 一起回滚；底层 adoption terminal fact
+结算失败时 measurement、budget、attempt、result、journal 一起回滚；底层 adoption terminal fact
 仍可供下一次 reconciliation。不承诺跨数据库事务或 exactly-once 外部文件操作。
 
 ## 兼容与排除项
 
-Schema 40 不变，无 migration 或历史重写。不使用保留 source binding 的既有 DW5b-1
+Schema 40 → 41 只新增三个证据表与不可变约束，不重写历史。不使用保留 source binding 的既有 DW5b-1
 generic protocol fixtures 仍可读。Swarm/UltraCode 共用原样的 Result Adoption engine、
 owner 与 recovery 语义。DW3 task accounting、Interpreter two-phase 和 Runtime 不变。
 

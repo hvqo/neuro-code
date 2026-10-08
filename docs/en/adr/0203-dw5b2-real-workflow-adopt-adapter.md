@@ -4,7 +4,7 @@
 
 - Status: Accepted internal adapter
 - Date: 2026-10-08
-- Scope: real ADOPT only; schema remains 40
+- Scope: real ADOPT only; schema 41 (measurement evidence)
 
 ## Exact source and identity
 
@@ -83,27 +83,70 @@ result additionally binds exact invocation/request. Mapping is:
 
 Pre-plan validation errors remain errors, not fabricated terminal adoption evidence.
 
-Schema 40 has no independently persisted dispatch-measurement receipt. Target
-revisions bound attempts but do not prove how many mutation-port calls happened:
-a crash can precede dispatch or follow a write before its ACK. Neither revisions
-nor an adapter-local counter establish durable measured wall time. We therefore
-remove the public `usage` argument entirely rather than accept caller amounts,
-ordinary receipts/dataclasses or self-hashed execution identities as proof.
+## Trusted execution accounting
 
-Both normal first execution and historical reconciliation retain operation/wall
-usage as `None`; an empty frozen plan independently proves zero operations, but
-wall usage remains unknown. Generated tasks, model calls and tokens are zero.
-There is currently **no trusted known operation/wall settlement path**. Successful
-adoption still yields a durable COMPLETED Activity, but unknown accounting puts
-the Run in NEEDS_ATTENTION and prevents automatic Interpreter consumption. A
-separate authorized, evidence-backed ledger reconciliation and explicit resume
-are required before a later Interpreter tick can consume that fact. This is a
-conservative product limitation, not an assertion of precise usage or automatic
-recovery. A future trusted execution-measurement seam would be necessary to enable
-known first-execution accounting; this repair does not create one or a second
-ledger. Existing unknown/overrun accounting and cancelled-Run behavior are retained.
-Reconciliation can refine only unknown ledger fields; immutable result/proof
-continues to record the original unknown usage.
+Schema 41 adds three immutable evidence tables: `workflow_adoption_executions`,
+`workflow_adoption_dispatch_events` and `workflow_adoption_measurements`. These are
+execution evidence, **not a second budget ledger**. No existing adoption records
+or schema-40 Activity results are rewritten or retrospectively made precise.
+
+`execute_workflow_adoption()` is a narrow first-dispatch execution boundary. It
+atomically commits CLAIMED → RUNNING and an exact execution identity, binding the
+invocation/request, deterministic adoption ID, reservation, owner/fence and running
+revision. An existing RUNNING attempt cannot enter this boundary, even with its
+original owner token. It accepts the composition-owned mutation dependency and a
+controller callback, never amounts, caller timestamps for usage, or a receipt.
+The callback runs the **same** Result Adoption engine with an instrumented port.
+The live scope additionally requires a process-local, non-serializable authorization
+issued only after that first CAS. Constructing a scope/receipt from database IDs or
+reopening the process cannot create a new measurement writer. The authorization is
+revoked on scope exit; it alone does not prove a call, so actual entry/ACK measurement
+and durable identity checks are still required.
+Dependency injection is trusted composition, not an untrusted plugin API; an
+arbitrary process able to replace the mutation implementation or rewrite all DB
+facts is outside this contract. Ordinary hashes are integrity checks, not authority.
+
+The repository-owned scope writes an intent before dispatch, directly invokes
+`WorkspaceMutationPort.apply()`, and writes a separate return/exception ACK. An
+ordinary exception after actual port entry counts as a call, regardless of whether
+the filesystem changed. Pre-dispatch validation/preparation counts no tool calls.
+Intent alone proves no actual entry. Target revisions only detect missing measured
+boundaries and conservatively enforce ceilings; they are never converted to usage.
+A callback bypassing its measured port cannot seal known zero usage for those
+APPLYING transitions. A cancelled/incomplete scope is not restarted or resealed.
+
+Only the live scope can close measurement after observing the exact underlying
+terminal adoption. Wall usage is the ceiling-rounded elapsed `perf_counter_ns()`
+interval from committed RUNNING scope entry through preparation, port calls and
+underlying terminal observation. It includes operation receipt persistence overhead,
+not pre-claim checks or later Activity settlement. It is independent of the caller's
+wall-clock timestamp. Pre-dispatch checks bound new calls, not the duration of an
+already entered call; measured overruns retain actual elapsed usage and the existing
+ledger puts the Run into NEEDS_ATTENTION. Generated tasks/model calls/tokens stay 0.
+
+Historical reconciliation accepts **no** `usage`/receipt input. Known usage is
+settled only inside the live first-execution scope, after rechecking immutable
+execution identity, contiguous intent/ACK pairs, exact plan mutations and the
+terminal adoption digest. Completion measurement, immutable Activity result,
+budget settlement and journal commit **in one SQLite transaction**. The public
+reconciliation path can replay an already committed terminal result; it cannot
+create new known usage from a serialized receipt. An orphan measurement without
+its Activity result is invalid and fails closed, even if its ordinary hash matches.
+
+If execution or terminal settlement crashes before this transaction commits,
+operation/wall usage stays `None` (an empty plan independently proves zero port
+calls, but cannot prove wall usage). Even all ACKs without a completed atomic
+settlement do not establish precise wall consumption. After commit, ACK loss
+replays the same known terminal fact without new execution or charging. Neither
+intent count, target revision nor desired image is an execution receipt.
+
+Measurement + Activity result + budget settlement + journal commit in the
+existing single transaction. Exact replay does not charge again. A normal complete two-call or
+zero-call ADOPT leaves a known-accounted Run WAITING; the next independent Interpreter
+tick consumes its output without accounting/resume intervention. Unknown or exceeded
+accounting enters NEEDS_ATTENTION. Reconciliation fills only unknown ledger fields;
+immutable Activity usage remains its original execution fact. Late accounting never
+reopens a cancelled/terminal Run.
 
 Terminal reconciliation is owner-independent historical fact reading. It checks
 exact source/parent binding and persisted integrity, without requiring live
@@ -123,18 +166,19 @@ Another live core owner remains busy.
 |---|---|
 | RUNNING committed, no adoption fact | No redispatch based on RUNNING replay; NEEDS_ATTENTION with reservation retained |
 | Plan committed, before mutation | Same adoption ID/plan, live validation and existing core ownership recovery |
-| Mutation happened, ACK lost | Existing target CAS and desired-image observation; no duplicate write to that desired image |
-| Adoption terminal, Activity result absent | Read terminal proof and atomically settle; no live-resource requirement or mutation |
+| Intent persisted / mutation happened, ACK lost / incomplete scope | Unknown accounting; existing target CAS and desired-image observation prevent repeated writes to that desired image |
+| Adoption terminal, Activity result absent | Committed atomic Activity result: known replay; missing result: unknown. No live-resource requirement or mutation |
 | Activity result or Interpreter consumption ACK lost | Exact durable replay; no repeated settlement or adoption |
 | Third-party parent change | Existing three-way/conflict/indeterminate checks; never overwrite unrelated/new content |
 
-Settlement failure rolls back budget, attempt, result and journal together; the
+Settlement failure rolls back measurement, budget, attempt, result and journal together; the
 underlying adoption terminal fact remains available for the next reconciliation.
 No cross-database transaction or exactly-once external filesystem promise is made.
 
 ## Compatibility and exclusions
 
-Schema 40 is unchanged; no migration or historical rewrite. Generic DW5b-1 protocol
+Schema 40 → 41 creates only the three evidence tables and immutable constraints;
+no historical rewrite. Generic DW5b-1 protocol
 fixtures without the reserved source binding remain readable. Swarm/UltraCode use
 the same unmodified Result Adoption engine, owner and recovery semantics. DW3 task
 accounting, Interpreter two-phase behavior and Runtime are unchanged.

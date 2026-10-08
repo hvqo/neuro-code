@@ -10,7 +10,6 @@ from datetime import datetime
 from neuro_code.application.ports.result_adoption import ResultAdoptionRecord
 from neuro_code.application.ports.workflow_adoption import (
     adoption_activity_state,
-    adoption_recovery_usage,
     adoption_terminal_digest,
     workflow_adoption_id,
 )
@@ -300,7 +299,11 @@ def _verify_terminal_adopt(
         raise WorkflowStateError("ADOPT underlying terminal evidence missing", kind="integrity")
     _verify_durable_source(connection, attempt, record, request)
     amounts = attempt.result.usage
-    if amounts != adoption_recovery_usage(record):
+    from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_measurements import (
+        measured_adoption_usage,
+    )
+
+    if amounts != measured_adoption_usage(connection, attempt, record):
         raise WorkflowStateError("ADOPT has no trusted known execution usage", kind="integrity")
     proof = digest([adoption_terminal_digest(record), asdict(amounts)])
     state = adoption_activity_state(record.state)

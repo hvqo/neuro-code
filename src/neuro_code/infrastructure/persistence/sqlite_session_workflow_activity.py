@@ -409,6 +409,27 @@ def _settle_terminal(
     return terminal
 
 
+def _start_activity(
+    connection: sqlite3.Connection, current: WorkflowActivityAttempt, updated_at: datetime
+) -> WorkflowActivityAttempt:
+    run = _run(connection, current.invocation.run_id)
+    if (
+        run.status is not WorkflowStatus.WAITING
+        or run.waiting_reason != "activity:" + current.invocation.invocation_id
+        or updated_at < run.updated_at
+        or updated_at < (current.updated_at or current.invocation.created_at)
+    ):
+        raise WorkflowStateError("activity cannot cross start boundary", kind="protocol")
+    started = replace(
+        current,
+        state=WorkflowActivityState.RUNNING,
+        revision=current.revision + 1,
+        updated_at=updated_at,
+    )
+    _save_attempt(connection, started, expected_revision=current.revision)
+    return started
+
+
 class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
     async def consume_workflow_activity_failure(
         self,
@@ -722,24 +743,7 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                     raise WorkflowStateError(
                         "activity owner/fence is stale", kind="concurrent_modification"
                     )
-                run = _run(connection, current.invocation.run_id)
-                if (
-                    run.status is not WorkflowStatus.WAITING
-                    or run.waiting_reason != "activity:" + invocation_id
-                    or updated_at < run.updated_at
-                    or updated_at < (current.updated_at or current.invocation.created_at)
-                ):
-                    raise WorkflowStateError(
-                        "activity cannot cross start boundary", kind="protocol"
-                    )
-                started = replace(
-                    current,
-                    state=WorkflowActivityState.RUNNING,
-                    revision=current.revision + 1,
-                    updated_at=updated_at,
-                )
-                _save_attempt(connection, started, expected_revision=current.revision)
-                return started
+                return _start_activity(connection, current, updated_at)
 
         async with self._write_lock:
             return await run_blocking(lambda: _guard(start))

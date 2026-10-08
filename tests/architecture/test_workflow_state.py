@@ -148,6 +148,9 @@ async def test_v35_upgrade_preserves_session_and_is_idempotent(tmp_path):
         for table in (
             "workflow_activity_results",
             "workflow_activity_events",
+            "workflow_adoption_executions",
+            "workflow_adoption_dispatch_events",
+            "workflow_adoption_measurements",
             "workflow_activity_attempts",
             "workflow_step_outputs",
             "workflow_run_inputs",
@@ -186,6 +189,9 @@ async def test_v35_upgrade_preserves_session_and_is_idempotent(tmp_path):
             "workflow_activity_attempts",
             "workflow_activity_results",
             "workflow_activity_events",
+            "workflow_adoption_executions",
+            "workflow_adoption_dispatch_events",
+            "workflow_adoption_measurements",
         }
 
 
@@ -196,6 +202,9 @@ async def test_migration_failure_rolls_back_schema_and_version(tmp_path):
         for table in (
             "workflow_activity_results",
             "workflow_activity_events",
+            "workflow_adoption_executions",
+            "workflow_adoption_dispatch_events",
+            "workflow_adoption_measurements",
             "workflow_activity_attempts",
             "workflow_step_outputs",
             "workflow_run_inputs",

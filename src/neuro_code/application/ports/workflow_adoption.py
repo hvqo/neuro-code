@@ -1,10 +1,11 @@
 """Exact ADOPT binding and terminal-only reconciliation; no owner takeover."""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from datetime import datetime
 from typing import Protocol
 
-from neuro_code.application.ports.result_adoption import ResultAdoptionRecord
+from neuro_code.application.ports.result_adoption import ResultAdoptionRecord, WorkspaceMutationPort
 from neuro_code.domain.completed_dag_adoption import WorkflowAdoptionSourceRef
 from neuro_code.domain.result_adoption import (
     ResultAdoptionRequest,
@@ -74,7 +75,7 @@ def adoption_terminal_digest(record: ResultAdoptionRecord) -> str:
 
 
 def adoption_recovery_usage(record: ResultAdoptionRecord) -> BudgetAmounts:
-    """Schema 40 has no trusted dispatch measurement; target revision is not usage."""
+    """Absent complete controlled measurement, target revisions are not usage."""
     return BudgetAmounts(tool_calls=None if record.plan.targets else 0, wall_milliseconds=None)
 
 
@@ -100,10 +101,29 @@ class WorkflowAdoptionStore(Protocol):
     ) -> WorkflowActivityAttempt:
         """Read the exact underlying terminal fact and atomically settle once.
 
-        No caller-supplied usage is accepted. Schema 40 has no independently
-        verifiable operation/wall measurement, so reconciliation retains unknown
-        usage (only an empty plan proves zero operations). Neither path claims
+        No caller-supplied usage is accepted. Only repository-owned completed execution measurement can provide
+        known operation/wall usage; incomplete historical execution stays unknown.
+        Neither path claims
         execution ownership or invokes mutation.
+        """
+        ...
+
+    async def execute_workflow_adoption(
+        self,
+        invocation_id: str,
+        *,
+        expected_revision: int,
+        owner_id: str,
+        owner_fence: int,
+        updated_at: datetime,
+        mutation: WorkspaceMutationPort,
+        dispatch: Callable[[WorkflowActivityAttempt, WorkspaceMutationPort], Awaitable[None]],
+    ) -> WorkflowActivityAttempt:
+        """First-start CAS plus controlled port invocation/time measurement.
+
+        This execution boundary accepts neither amounts nor a caller receipt.
+        The real mutation dependency comes from trusted composition, as for the
+        existing adoption engine. Historical RUNNING replay cannot enter it.
         """
         ...
 

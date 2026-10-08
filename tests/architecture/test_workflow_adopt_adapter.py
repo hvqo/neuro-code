@@ -62,41 +62,6 @@ def adapter(f, *, store=None, mutation=None, **kwargs):
     )
 
 
-async def resume_after_explicit_accounting(f, key):
-    """Simulate a separate authorized accounting decision, never adapter inference."""
-    from neuro_code.domain.workflows.state import WorkflowChange, WorkflowEventKind
-
-    attempt = await f.store.get_workflow_activity(key)
-    run = await f.store.get_workflow_run("workflow-run")
-    await f.store.transition_workflow_run(
-        run.run_id,
-        WorkflowChange(
-            WorkflowEventKind.RECONCILED,
-            reservation_id=attempt.reservation_id,
-            amounts=BudgetAmounts(tool_calls=len(f.mutation.calls), wall_milliseconds=1000),
-        ),
-        expected_generation=run.generation,
-        owner_id=run.owner_id,
-        owner_fence=run.owner_fence,
-        request_id="explicit-accounting",
-        updated_at=END + timedelta(seconds=2),
-    )
-    run = await f.store.get_workflow_run(run.run_id)
-    await f.store.transition_workflow_run(
-        run.run_id,
-        WorkflowChange(
-            WorkflowEventKind.TRANSITION,
-            status=WorkflowStatus.WAITING,
-            waiting_reason="activity:" + key,
-        ),
-        expected_generation=run.generation,
-        owner_id=run.owner_id,
-        owner_fence=run.owner_fence,
-        request_id="explicit-resume",
-        updated_at=END + timedelta(seconds=2),
-    )
-
-
 @pytest.mark.parametrize("mapped", [False, True])
 async def test_real_adopt_and_later_consume(tmp_path, mapped):
     f, key = await ready(tmp_path, mapped=mapped)
@@ -107,23 +72,14 @@ async def test_real_adopt_and_later_consume(tmp_path, mapped):
     )
     assert f.parent.current("U.txt").content == b"unrelated dirty\n"
     assert result.attempt.result.usage.model_calls == 0
-    assert result.attempt.result.usage.tool_calls is None
-    assert result.attempt.result.usage.wall_milliseconds is None
+    assert result.attempt.result.usage.tool_calls == len(f.mutation.calls) == 2
+    assert result.attempt.result.usage.wall_milliseconds > 0
     assert len(f.mutation.calls) > 0
     run = await f.store.get_workflow_run("workflow-run")
-    assert run.status is WorkflowStatus.NEEDS_ATTENTION
+    assert run.status is WorkflowStatus.WAITING
     before = len(f.mutation.calls)
     assert (await adapter(f).run_once(key)).attempt == result.attempt
     assert len(f.mutation.calls) == before
-    stopped = await engine(f.store).advance_once(
-        run.run_id,
-        expected_generation=run.generation,
-        owner_id=run.owner_id,
-        owner_fence=run.owner_fence,
-        updated_at=END + timedelta(seconds=2),
-    )
-    assert stopped.action == "stopped"
-    await resume_after_explicit_accounting(f, key)
     run = await f.store.get_workflow_run(run.run_id)
     outcome = await engine(f.store).advance_once(
         run.run_id,
@@ -180,12 +136,10 @@ async def test_terminal_adoption_after_crash_reconciles_without_owner_or_resourc
     with patch.object(f.worktrees, "inspect", side_effect=AssertionError("live resource access")):
         result = await adapter(f, store=reopened).run_once(key)
     assert result.attempt.state is State.COMPLETED
-    assert result.attempt.result.usage.tool_calls is None
-    assert result.attempt.result.usage.wall_milliseconds is None
+    assert result.attempt.result.usage.tool_calls == calls == 2
+    assert result.attempt.result.usage.wall_milliseconds > 0
     assert len(f.mutation.calls) == calls
-    assert (
-        await reopened.get_workflow_run("workflow-run")
-    ).status is WorkflowStatus.NEEDS_ATTENTION
+    assert (await reopened.get_workflow_run("workflow-run")).status is WorkflowStatus.WAITING
 
 
 @pytest.mark.parametrize("kwargs", [{"overlap": True}, {"parent_conflict": True}])
@@ -297,15 +251,14 @@ async def test_plan_before_mutation_crash_recovers_with_same_plan(tmp_path):
 
 
 async def test_running_start_ack_loss_never_dispatches(tmp_path):
+    from neuro_code.infrastructure.persistence import (
+        sqlite_session_workflow_adoption_meter as meter,
+    )
+
     f, key = await ready(tmp_path)
-    real = f.store.start_workflow_activity
-
-    async def lost_ack(*args, **kwargs):
-        await real(*args, **kwargs)
-        raise RuntimeError("lost start ACK")
-
+    # RUNNING + execution identity committed; dispatch callback not entered.
     with (
-        patch.object(f.store, "start_workflow_activity", side_effect=lost_ack),
+        patch.object(meter, "_ExecutionMeter", side_effect=RuntimeError("lost start ACK")),
         pytest.raises(RuntimeError),
     ):
         await adapter(f).run_once(key)
@@ -572,7 +525,10 @@ async def test_reconciliation_settlement_rolls_back_as_one_transaction(tmp_path)
 
     f, key = await ready(tmp_path)
     with (
-        patch.object(f.store, "reconcile_workflow_adoption", side_effect=RuntimeError("crash")),
+        patch(
+            "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_meter._ExecutionMeter.complete",
+            side_effect=RuntimeError("crash before atomic result"),
+        ),
         pytest.raises(RuntimeError),
     ):
         await adapter(f).run_once(key)
@@ -633,11 +589,11 @@ async def test_wall_ceiling_stops_before_next_mutation(tmp_path):
     class ExpiringMutation(_RecordingMutation):
         async def apply(self, request, *, session_id):
             result = await super().apply(request, session_id=session_id)
-            ticks[0] += timedelta(milliseconds=101)
+            ticks[0] += timedelta(milliseconds=10001)
             return result
 
     mutation = ExpiringMutation(f.parent)
-    controller = adapter(f, mutation=mutation, max_wall_milliseconds=100)
+    controller = adapter(f, mutation=mutation, max_wall_milliseconds=10000)
     controller.clock = lambda: ticks[0]
     result = await controller.run_once(key)
     assert result.disposition == "needs_attention"
@@ -662,7 +618,6 @@ async def test_claimed_owner_is_not_borrowed(tmp_path):
 async def test_consume_ack_loss_does_not_redispatch_or_reaccount(tmp_path):
     f, key = await ready(tmp_path)
     await adapter(f).run_once(key)
-    await resume_after_explicit_accounting(f, key)
     real = f.store.commit_workflow_step_output
 
     async def lost_ack(*args, **kwargs):
@@ -745,11 +700,9 @@ async def test_reopened_terminal_reconciliation_cannot_accept_caller_usage(tmp_p
         )
     assert await reopened.get_workflow_run("workflow-run") == before
     result = await adapter(f, store=reopened).run_once(key)
-    assert result.attempt.result.usage.tool_calls is None
-    assert result.attempt.result.usage.wall_milliseconds is None
-    assert (
-        await reopened.get_workflow_run("workflow-run")
-    ).status is WorkflowStatus.NEEDS_ATTENTION
+    assert result.attempt.result.usage.tool_calls == 2
+    assert result.attempt.result.usage.wall_milliseconds > 0
+    assert (await reopened.get_workflow_run("workflow-run")).status is WorkflowStatus.WAITING
     assert len(f.mutation.calls) == 2
 
 
@@ -814,7 +767,10 @@ async def test_rehashed_plan_cannot_replace_frozen_provenance(tmp_path, field, t
         await adapter(f).run_once(key)
     else:
         with (
-            patch.object(f.store, "reconcile_workflow_adoption", side_effect=RuntimeError("crash")),
+            patch(
+                "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_meter._ExecutionMeter.complete",
+                side_effect=RuntimeError("crash before atomic result"),
+            ),
             pytest.raises(RuntimeError),
         ):
             await adapter(f).run_once(key)

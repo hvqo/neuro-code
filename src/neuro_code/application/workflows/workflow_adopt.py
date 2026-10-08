@@ -109,7 +109,12 @@ class _BoundedAdoptionMutation:
                 "ADOPT durable operation ceiling exhausted", kind="budget_exceeded"
             )
         self.calls += 1  # Counts port invocations, not causal writes or verification.
-        return await self.inner.apply(request, session_id=session_id)
+        try:
+            return await self.inner.apply(request, session_id=session_id)
+        except ResultAdoptionError as error:
+            if error.kind in {"budget_exceeded", "budget_unknown"}:
+                self.uncertain_ceiling = True
+            raise
 
 
 class WorkflowAdoptActivityAdapter:
@@ -221,46 +226,69 @@ class WorkflowAdoptActivityAdapter:
                     ),
                     updated_at=self.clock(),
                 )
-                # Only this call's READY -> CLAIMED CAS may cross the start boundary.
-                attempt = await self.activities.start_workflow_activity(
+
+            async def invoke(started: WorkflowActivityAttempt) -> WorkflowAdoptOutcome | None:
+                attempt = started
+                assert attempt.reserved is not None
+                assert attempt.updated_at is not None
+                bounded.attempt = attempt
+                bounded.limit = attempt.reserved.tool_calls or 0
+                bounded.deadline = attempt.updated_at + timedelta(
+                    milliseconds=attempt.reserved.wall_milliseconds or 0
+                )
+                if fresh and self.clock() >= bounded.deadline:
+                    await self.facts.mark_workflow_adoption_attention(
+                        invocation_id, expected_revision=attempt.revision, updated_at=self.clock()
+                    )
+                    return WorkflowAdoptOutcome(attempt, "needs_attention")
+                prepared = await service.prepare(request)
+                bounded.plan = prepared.plan
+                bounded.adoptions = self.adoptions
+                bounded.initial_versions = {t.target.path: t.version for t in prepared.targets}
+                if len(prepared.plan.targets) > bounded.limit:
+                    await self.facts.mark_workflow_adoption_attention(
+                        invocation_id, expected_revision=attempt.revision, updated_at=self.clock()
+                    )
+                    return WorkflowAdoptOutcome(attempt, "needs_attention")
+                try:
+                    record = await service.adopt(request)
+                except ResultAdoptionError as error:
+                    if error.kind != "busy":
+                        raise
+                    return WorkflowAdoptOutcome(attempt, "busy")
+                if not record.state.terminal:
+                    if bounded.uncertain_ceiling:
+                        await self.facts.mark_workflow_adoption_attention(
+                            invocation_id,
+                            expected_revision=attempt.revision,
+                            updated_at=self.clock(),
+                        )
+                        return WorkflowAdoptOutcome(attempt, "needs_attention")
+                    return WorkflowAdoptOutcome(attempt, "waiting_underlying")
+                return None
+
+            if fresh:
+                pending: WorkflowAdoptOutcome | None = None
+
+                async def dispatch(
+                    started: WorkflowActivityAttempt, port: WorkspaceMutationPort
+                ) -> None:
+                    nonlocal pending
+                    bounded.inner = port
+                    pending = await invoke(started)
+
+                attempt = await self.facts.execute_workflow_adoption(
                     invocation_id,
                     expected_revision=attempt.revision,
                     owner_id=self.owner,
                     owner_fence=attempt.owner_fence,
                     updated_at=self.clock(),
+                    mutation=self.mutation,
+                    dispatch=dispatch,
                 )
-            assert attempt.reserved is not None
-            assert attempt.updated_at is not None
-            bounded.attempt = attempt
-            bounded.limit = attempt.reserved.tool_calls or 0
-            bounded.deadline = attempt.updated_at + timedelta(
-                milliseconds=attempt.reserved.wall_milliseconds or 0
-            )
-            if fresh and self.clock() >= bounded.deadline:
-                await self.facts.mark_workflow_adoption_attention(
-                    invocation_id, expected_revision=attempt.revision, updated_at=self.clock()
-                )
-                return WorkflowAdoptOutcome(attempt, "needs_attention")
-            prepared = await service.prepare(request)
-            bounded.plan = prepared.plan
-            bounded.adoptions = self.adoptions
-            bounded.initial_versions = {t.target.path: t.version for t in prepared.targets}
-            if len(prepared.plan.targets) > bounded.limit:
-                await self.facts.mark_workflow_adoption_attention(
-                    invocation_id, expected_revision=attempt.revision, updated_at=self.clock()
-                )
-                return WorkflowAdoptOutcome(attempt, "needs_attention")
-            try:
-                record = await service.adopt(request)
-            except ResultAdoptionError as error:
-                if error.kind != "busy":
-                    raise
-                return WorkflowAdoptOutcome(attempt, "busy")
-            if not record.state.terminal:
-                if bounded.uncertain_ceiling:
-                    await self.facts.mark_workflow_adoption_attention(
-                        invocation_id, expected_revision=attempt.revision, updated_at=self.clock()
-                    )
-                    return WorkflowAdoptOutcome(attempt, "needs_attention")
-                return WorkflowAdoptOutcome(attempt, "waiting_underlying")
-            return await self._settle(attempt)
+            else:
+                # Existing forward recovery stays bounded, but cannot reopen a
+                # completed live measurement scope or manufacture known usage.
+                bounded.inner = self.mutation
+                pending = await invoke(attempt)
+            return pending if pending is not None else await self._settle(attempt)
