@@ -40,6 +40,9 @@ from neuro_code.infrastructure.persistence.sqlite_session_ultracode import (
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_activity import (
     WorkflowActivityMixin,
 )
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption import (
+    WorkflowAdoptionMixin,
+)
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_interpreter import (
     WorkflowInterpreterMixin,
 )
@@ -72,6 +75,7 @@ class SqliteSessionStore(
     WorkflowsMixin,
     WorkflowInterpreterMixin,
     WorkflowActivityMixin,
+    WorkflowAdoptionMixin,
     WorkflowPublicationMixin,
     WorkflowProjectionMixin,
 ):

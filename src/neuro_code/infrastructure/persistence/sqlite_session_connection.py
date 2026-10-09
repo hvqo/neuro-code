@@ -16,6 +16,7 @@ class _SqliteSessionPersistenceContext:
 
     _database_path: Path
     _write_lock: asyncio.Lock
+    _workflow_adoption_meter_scopes: dict[str, object]
 
     if TYPE_CHECKING:
 
@@ -28,6 +29,7 @@ class SqliteSessionConnectionMixin(_SqliteSessionPersistenceContext):
     def __init__(self, database_path: Path) -> None:
         self._database_path = database_path
         self._write_lock = asyncio.Lock()
+        self._workflow_adoption_meter_scopes = {}
 
     @property
     def database_path(self) -> Path:

@@ -1570,3 +1570,43 @@ def _migrate_workflow_activity_schema(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE workflow_step_outputs_v40 RENAME TO workflow_step_outputs")
         _ensure_workflow_interpreter_schema(connection)
     _ensure_workflow_activity_schema(connection)
+
+
+def _ensure_workflow_adoption_execution_schema(connection: sqlite3.Connection) -> None:
+    """Measurement evidence only; the existing Workflow ledger still owns accounting."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_adoption_executions (
+            execution_id TEXT PRIMARY KEY,
+            invocation_id TEXT NOT NULL UNIQUE REFERENCES workflow_activity_attempts(invocation_id) ON DELETE RESTRICT,
+            payload_json TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_adoption_dispatch_events (
+            execution_id TEXT NOT NULL REFERENCES workflow_adoption_executions(execution_id) ON DELETE RESTRICT,
+            ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 1 AND 64),
+            phase TEXT NOT NULL CHECK (phase IN ('intent','returned','raised')),
+            payload_json TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL,
+            PRIMARY KEY (execution_id, ordinal, phase)
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_adoption_measurements (
+            execution_id TEXT PRIMARY KEY REFERENCES workflow_adoption_executions(execution_id) ON DELETE RESTRICT,
+            payload_json TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL
+        )
+    """)
+    for table in (
+        "workflow_adoption_executions",
+        "workflow_adoption_dispatch_events",
+        "workflow_adoption_measurements",
+    ):
+        for operation in ("UPDATE", "DELETE"):
+            connection.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_immutable_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, 'immutable ADOPT execution evidence'); END
+            """)

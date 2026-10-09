@@ -252,6 +252,16 @@ def _load_attempt(
             )
         ):
             raise WorkflowStateError("activity budget linkage differs", kind="integrity")
+    if (
+        attempt.result is not None
+        and declared.activity is ActivityKind.ADOPT
+        and "source" in dict(declared.inputs)
+    ):
+        from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_facts import (
+            _verify_terminal_adopt,
+        )
+
+        _verify_terminal_adopt(connection, attempt)
     return attempt
 
 
@@ -363,6 +373,61 @@ def _budget_change(
         ),
     )
     return proposed
+
+
+def _settle_terminal(
+    connection: sqlite3.Connection,
+    current: WorkflowActivityAttempt,
+    result: WorkflowActivityResult,
+) -> WorkflowActivityAttempt:
+    """Shared atomic settlement, after caller-specific authority checks."""
+    run = _run(connection, current.invocation.run_id)
+    assert current.reservation_id is not None
+    _budget_change(
+        connection,
+        run,
+        WorkflowChange(
+            WorkflowEventKind.CONSUMED,
+            reservation_id=current.reservation_id,
+            amounts=result.usage,
+        ),
+        result.terminal_at,
+        "activity-settle:" + result.invocation_id,
+    )
+    terminal = replace(
+        current,
+        state=result.state,
+        revision=current.revision + 1,
+        result=result,
+        updated_at=result.terminal_at,
+    )
+    _save_attempt(connection, terminal, expected_revision=current.revision)
+    connection.execute(
+        "INSERT INTO workflow_activity_results VALUES (?, ?, ?)",
+        (result.invocation_id, _json(asdict(result)), result.fingerprint),
+    )
+    return terminal
+
+
+def _start_activity(
+    connection: sqlite3.Connection, current: WorkflowActivityAttempt, updated_at: datetime
+) -> WorkflowActivityAttempt:
+    run = _run(connection, current.invocation.run_id)
+    if (
+        run.status is not WorkflowStatus.WAITING
+        or run.waiting_reason != "activity:" + current.invocation.invocation_id
+        or updated_at < run.updated_at
+        or updated_at < (current.updated_at or current.invocation.created_at)
+    ):
+        raise WorkflowStateError("activity cannot cross start boundary", kind="protocol")
+    started = replace(
+        current,
+        state=WorkflowActivityState.RUNNING,
+        revision=current.revision + 1,
+        updated_at=updated_at,
+    )
+    _save_attempt(connection, started, expected_revision=current.revision)
+    return started
 
 
 class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
@@ -678,24 +743,7 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                     raise WorkflowStateError(
                         "activity owner/fence is stale", kind="concurrent_modification"
                     )
-                run = _run(connection, current.invocation.run_id)
-                if (
-                    run.status is not WorkflowStatus.WAITING
-                    or run.waiting_reason != "activity:" + invocation_id
-                    or updated_at < run.updated_at
-                    or updated_at < (current.updated_at or current.invocation.created_at)
-                ):
-                    raise WorkflowStateError(
-                        "activity cannot cross start boundary", kind="protocol"
-                    )
-                started = replace(
-                    current,
-                    state=WorkflowActivityState.RUNNING,
-                    revision=current.revision + 1,
-                    updated_at=updated_at,
-                )
-                _save_attempt(connection, started, expected_revision=current.revision)
-                return started
+                return _start_activity(connection, current, updated_at)
 
         async with self._write_lock:
             return await run_blocking(lambda: _guard(start))
@@ -742,6 +790,10 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                 declared = _validate_position(definition, current.invocation.step)
                 if not isinstance(declared, Activity):
                     raise WorkflowStateError("result step is not Activity", kind="integrity")
+                if declared.activity is ActivityKind.ADOPT and "source" in dict(declared.inputs):
+                    raise WorkflowStateError(
+                        "bound ADOPT requires terminal-proof reconciliation", kind="protocol"
+                    )
                 if result.output_json is not None:
                     typed_json(
                         activity_output_schema(declared.activity), json.loads(result.output_json)
@@ -760,31 +812,7 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                     current.updated_at or current.invocation.created_at
                 ):
                     raise WorkflowStateError("activity terminal time precedes run", kind="protocol")
-                assert current.reservation_id is not None
-                _budget_change(
-                    connection,
-                    run,
-                    WorkflowChange(
-                        WorkflowEventKind.CONSUMED,
-                        reservation_id=current.reservation_id,
-                        amounts=result.usage,
-                    ),
-                    result.terminal_at,
-                    "activity-settle:" + result.invocation_id,
-                )
-                terminal = replace(
-                    current,
-                    state=result.state,
-                    revision=current.revision + 1,
-                    result=result,
-                    updated_at=result.terminal_at,
-                )
-                _save_attempt(connection, terminal, expected_revision=current.revision)
-                connection.execute(
-                    "INSERT INTO workflow_activity_results VALUES (?, ?, ?)",
-                    (result.invocation_id, _json(asdict(result)), result.fingerprint),
-                )
-                return terminal
+                return _settle_terminal(connection, current, result)
 
         async with self._write_lock:
             return await run_blocking(lambda: _guard(finish))

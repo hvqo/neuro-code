@@ -452,7 +452,7 @@ async def test_migration_37_to_38_and_rollback(tmp_path):
             is None
         )
     await store.initialize()
-    assert SCHEMA_VERSION == 40
+    assert SCHEMA_VERSION == 41
     assert await store.get_workflow_run(run.run_id) == run
     with closing(store._connect()) as connection:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
