@@ -35,7 +35,8 @@ async def main():
     command = ControlledCommand(Path(root))
     task = asyncio.create_task(adapter(store, Path(root), session, command=command).run_once(key))
     await command.entered.wait()
-    print('RUNNING', flush=True)
+    sys.stdout.buffer.write(b'RUNNING\\n')
+    sys.stdout.buffer.flush()
     await task
 asyncio.run(main())
 """
