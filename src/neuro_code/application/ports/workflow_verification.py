@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,9 @@ class ApprovedWorkflowVerification:
             raise ValueError("VERIFY command needs explicit trusted configuration")
 
 
+VerificationEntryGuard = Callable[[], Awaitable[bool]]
+
+
 class WorkflowVerificationCommand(Protocol):
     """A binding-owned foreground ToolExecutor path, not a shell implementation."""
 
@@ -46,7 +50,11 @@ class WorkflowVerificationCommand(Protocol):
     def workspace_root(self) -> Path: ...
 
     async def verify_command(
-        self, configuration: ApprovedWorkflowVerification, *, session_id: str
+        self,
+        configuration: ApprovedWorkflowVerification,
+        *,
+        session_id: str,
+        pre_entry_guard: VerificationEntryGuard,
     ) -> ToolExecutionResult: ...
 
 

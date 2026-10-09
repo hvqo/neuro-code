@@ -10,21 +10,23 @@
 
 `VerificationTracker` 观察 Runtime 事实，并非执行器或内容版本权威。Bootstrap 从用户显式配置的 `verification_command` 构造 `ApprovedWorkflowVerification`。既有命令分类器仅接受 pytest 与静态检查族。Workflow 输入、worker response、README 和模型 JSON 不能提供命令或权限授予。
 
-`WorkflowVerifyActivityAdapter` 使用真实 parent binding 的 `ToolExecutor`，复用当前工具集合、Capability、Permission、Workspace、Sandbox、hooks 与 undo 边界。Bash 负责前台进程、超时、有界脱敏输出与进程树取消；本次调用禁用后台自动提升。没有第二个 Shell、Agent Loop、scheduler 或自动发现测试。工具进入观察发生在权限／工作区 preflight 完成后、进入既有工具 port 之前；权限拒绝计零次调用。测试与静态检查可能写缓存和文件，命令分类不等于只读保证，也不绕过副作用策略。
+`WorkflowVerifyActivityAdapter` 使用真实 parent binding 的 `ToolExecutor`，复用当前工具集合、Capability、Permission、Workspace、Sandbox、hooks 与 undo 边界。Bash 负责前台进程、超时、有界脱敏输出与进程树取消；本次调用禁用后台自动提升。没有第二个 Shell、Agent Loop、scheduler 或自动发现测试。单次可信 pre-entry guard 在 Permission／approval、hooks 和 workspace preflight 全部完成后，紧邻既有工具 port 执行。它重新读取 exact invocation／execution、RUNNING Activity、Activity owner/fence、Run waiting 状态及冻结的 Workflow owner/fence、session/root 和首次 dispatch scope。取消或被 reclaim 后不进入 Bash／进程启动器；只有最终 guard 通过后才记录工具进入；权限拒绝计零次调用。测试与静态检查可能写缓存和文件，命令分类不等于只读保证，也不绕过副作用策略。
 
 ## Durable identity 与 schema 42
 
 Schema 41 只有 ADOPT 专用 mutation 计量，不能表达验证命令、退出事实和工作区版本。最小原子 41→42 migration 新增两张 insert-only 表：`workflow_verification_executions`（每 invocation 一份执行身份）、`workflow_verification_evidence`（每 execution 一份终态证据）。FK、唯一约束和不可变 trigger 保留既有 Activity／ledger；不会给旧 attempt 伪造 known usage。
 
-Execution 绑定 immutable invocation/request、Run/session/Step、owner/fence/reservation、精确可信配置、parent root 与有界工作区证据。已消费 ResultRef 输入绑定既有 typed output fingerprint 和 journal，包括适用的 ADOPT／projection 事实。只将业务输入与冻结来源比较，不接受 latest DAG 或 caller ID 作为权威。终态证据绑定 execution fingerprint、终态、exit code、有界脱敏 summary／digest、output 和 usage；Activity result fingerprint 及独立 local event 冻结证明。只重算命令、exit code、workspace 或 evidence row 的指纹不能替换原结果。
+Execution 绑定 immutable invocation/request、Run/session/Step、owner/fence/reservation、精确可信配置、parent root 与有界工作区证据。已消费 ResultRef 输入绑定既有 typed output fingerprint 和 journal，包括适用的 ADOPT／projection 事实。只将业务输入与冻结来源比较，不接受 latest DAG 或 caller ID 作为权威。终态证据绑定 execution fingerprint、终态、exit code、有界脱敏 summary／digest、output 和 usage；独立 Workflow Run journal 中的终态 budget-consumption event 固定 execution／invocation／request、批准配置、owner/fence、真实工具终态 observation、exit／outcome、前后 workspace evidence、evidence digest 和 Activity result fingerprint。复用既有 settlement generation／request identity，不增加第二次预算事件。读取和消费都校验这份历史锚点。即使成组改写 evidence、result、snapshot 和最后一个 Activity local event 并重算指纹，也不能在 Run journal 不变时把 FAIL 改为 PASS，或替换命令／workspace／source。这不承诺抵御能任意重写整个数据库的管理员。
+
+新 VERIFY publication 在不可变 Run publication journal 中固定 `verification_protocol=1`。Generic Activity finish 按 definition 声明的 Activity kind 拒绝新的 VERIFY 终态写入，不依赖 execution row 是否存在或 source_id 前缀。新 VERIFY terminal fact 必须具有完整专用证据和独立 settlement anchor。Interpreter 和 direct output 按声明的 VERIFY kind 要求 live freshness-consumption scope。禁止新增 `FAKE_ACTIVITY` output；已经持久化的 unversioned legacy publication／output 仅允许历史读取，不授予新的 dispatch 或消费许可。纯控制测试使用明确的注入 test port 或构造旧 SQL fixture，不保留生产 fake PASS writer。Schema 仍为 42。
 
 ## 首次执行与恢复
 
 Claim 在既有 run ledger 原子预留预算。首次 owner CAS 将 RUNNING 与 execution identity 一起提交，之后才调用工具。非阻塞 OS lock 按 resolved 本地 SQLite 路径＋invocation 建立，从 preflight 持有到终态结算。不同 Store／进程共享互斥边界（POSIX flock、Windows 单字节锁）；异常、取消和进程死亡关闭 descriptor，绝不 unlink lock file。busy recovery 不写任何状态；真实命令执行期间不持有 SQLite 写事务。
 
-历史 CLAIMED／RUNNING 不重新授予 dispatch。缺少终态证据则保守进入 INDETERMINATE：RUNNING tool/wall usage 保持 unknown；遗弃 CLAIMED 的执行用量为零，准备 wall time 未知。不以超时／PID 或文件现状推断调用次数。进程内 task-local 首次执行 scope 限制 known settlement；这是可信 composition 边界，不是对任意 Python 或恶意数据库管理员的 OS 隔离。命令／workspace port 不暴露为模型、MCP、Skill 参数。
+历史 CLAIMED／RUNNING 不重新授予 dispatch。缺少终态证据则保守进入 INDETERMINATE：RUNNING tool/wall usage 保持 unknown；遗弃 CLAIMED 的执行用量为零，准备 wall time 未知。不以超时／PID 或文件现状推断调用次数。进程内 task-local 首次执行 scope 限制 known settlement；这是可信 composition 边界，不是对任意 Python 或恶意数据库管理员的 OS 隔离。命令／workspace port 和 pre-entry guard 由可信 composition 组装，不暴露为模型、MCP、Skill 或 ToolCall JSON 参数。普通 ToolExecutor 调用不设置可选 guard，保留原策略和取消行为。
 
-Evidence、immutable Activity result、budget consumption、Run 安全状态和 journal 在一个 SQLite transaction 中提交。Rollback 保留 RUNNING，不产生半份证明；提交后 outer ACK 丢失则返回原终态事实，不重复执行。取消等待既有 Bash 清理进程后释放仲裁。unknown／overrun 进入 NEEDS_ATTENTION；late accounting 不重新打开终止 Workflow。
+Evidence、immutable Activity result、budget consumption、Run 安全状态和 journal 在一个 SQLite transaction 中提交。Rollback 保留 RUNNING，不产生半份证明；提交后 outer ACK 丢失则返回原终态事实，不重复执行。取消等待既有 Bash 清理进程后释放仲裁。最终 guard 关闭审批／hook／preflight 期间已经完成取消却仍启动的窗口；guard 之后的并发取消仍可能与外部进程进入竞争，由既有执行取消／清理处理。SQLite 本地读取与 OS 进程启动不是跨系统原子事务。unknown／overrun 进入 NEEDS_ATTENTION；late accounting 不重新打开终止 Workflow。
 
 ## 工作区证据与新鲜度
 
@@ -48,6 +50,6 @@ DW1 output 保持 `{status: string, workspace_generation: integer}`，真实成�
 
 ## 验证与限制
 
-Focused tests 区分临时 Git 仓库中的真实 Bash／pytest／ruff 与用于 crash／ACK／overrun 的注入边界。覆盖 SQLite rollback／reopen、独立进程仲裁／死亡、stale PASS、dirty content、已消费 ADOPT→VERIFY、FAIL routing、Permission／Sandbox 拒绝、migration 与 legacy regression。进程树行为复用既有平台 suite。不能宣称 Shell 副作用 exactly-once；不确定执行永不自动重跑。
+Focused tests 区分临时 Git 仓库中的真实 Bash／pytest／ruff 与用于 crash／ACK／overrun 的注入边界。覆盖 SQLite rollback／reopen、独立进程仲裁／死亡、stale PASS、dirty content、已消费 ADOPT→VERIFY、FAIL routing、Permission／Sandbox 拒绝、migration 与 legacy regression。新增攻击回归包括真实 pytest FAIL 后 backup／reopen SQLite 并成组 rehash、journal 锚点缺失／冲突，以及真实 Permission／ToolExecutor／Bash 和记录实际 launcher 的 approval／preflight／hook 零启动取消。实际 Bash 后代进程取消测试补充既有平台进程树 suite；注入 command／workspace port 只证明控制和事务 invariant，不冒充真实 Shell 授权。不能宣称 Shell 副作用 exactly-once；不确定执行永不自动重跑。
 
 Result Adoption core、Task DAG scheduler、正常 verification tracking 和 Swarm／UltraCode 不变。Interpreter 只发布／消费 Activity，不执行命令。REPAIR、VERIFY→REPAIR loop、completion policy、Planner 和 UI 接入留待后续。

@@ -7,6 +7,7 @@ import sqlite3
 from contextlib import closing
 from dataclasses import asdict, replace
 from datetime import datetime
+from typing import Any
 
 from neuro_code.application.ports.workflow_state import WorkflowStateError
 from neuro_code.domain.workflows.activity import (
@@ -131,7 +132,15 @@ def _load_attempt(
         "WHERE run_id = ? AND generation = ?",
         (run.run_id, row[6]),
     ).fetchone()
-    if publication != (WorkflowEventKind.ACTIVITY.value, expected_publish):
+    real_publish = canonical(dict(json.loads(expected_publish), verification_protocol=1))
+    legacy_verify = invocation.activity is ActivityKind.VERIFY and publication == (
+        WorkflowEventKind.ACTIVITY.value,
+        expected_publish,
+    )
+    if publication != (WorkflowEventKind.ACTIVITY.value, expected_publish) and not (
+        invocation.activity is ActivityKind.VERIFY
+        and publication == (WorkflowEventKind.ACTIVITY.value, real_publish)
+    ):
         raise WorkflowStateError("activity publication journal differs", kind="integrity")
     events = connection.execute(
         "SELECT revision, kind, payload_json, payload_fingerprint FROM workflow_activity_events "
@@ -217,12 +226,16 @@ def _load_attempt(
         )
 
         _verify_terminal_adopt(connection, attempt)
-    if attempt.result is not None and (
-        attempt.result.source_id.startswith("verify-exec-")
-        or connection.execute(
-            "SELECT 1 FROM workflow_verification_executions WHERE invocation_id=?",
-            (attempt.invocation.invocation_id,),
-        ).fetchone()
+    if (
+        attempt.result is not None
+        and invocation.activity is ActivityKind.VERIFY
+        and (
+            not legacy_verify
+            or connection.execute(
+                "SELECT 1 FROM workflow_verification_executions WHERE invocation_id=?",
+                (attempt.invocation.invocation_id,),
+            ).fetchone()
+        )
     ):
         from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_facts import (
             verify_terminal,
@@ -316,6 +329,7 @@ def _budget_change(
     change: WorkflowChange,
     updated_at: datetime,
     request_id: str,
+    verification: dict[str, Any] | None = None,
 ) -> WorkflowRun:
     if updated_at < run.updated_at:
         raise WorkflowStateError("activity time precedes run", kind="protocol")
@@ -336,6 +350,7 @@ def _budget_change(
                 "operation": "activity_budget",
                 "reservation_id": change.reservation_id,
                 "amounts": asdict(change.amounts),
+                **({"verification": verification} if verification is not None else {}),
             }
         ),
     )
@@ -346,6 +361,8 @@ def _settle_terminal(
     connection: sqlite3.Connection,
     current: WorkflowActivityAttempt,
     result: WorkflowActivityResult,
+    *,
+    verification: dict[str, Any] | None = None,
 ) -> WorkflowActivityAttempt:
     """Shared atomic settlement, after caller-specific authority checks."""
     run = _run(connection, current.invocation.run_id)
@@ -360,6 +377,7 @@ def _settle_terminal(
         ),
         result.terminal_at,
         "activity-settle:" + result.invocation_id,
+        verification,
     )
     terminal = replace(
         current,
@@ -587,6 +605,11 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                             "invocation_id": invocation.invocation_id,
                             "invocation_fingerprint": invocation.fingerprint,
                             "step_key": invocation.step.key,
+                            **(
+                                {"verification_protocol": 1}
+                                if invocation.activity is ActivityKind.VERIFY
+                                else {}
+                            ),
                         }
                     ),
                 )
@@ -761,10 +784,7 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                     raise WorkflowStateError(
                         "bound ADOPT requires terminal-proof reconciliation", kind="protocol"
                     )
-                if connection.execute(
-                    "SELECT 1 FROM workflow_verification_executions WHERE invocation_id=?",
-                    (result.invocation_id,),
-                ).fetchone():
+                if declared.activity is ActivityKind.VERIFY:
                     raise WorkflowStateError(
                         "real VERIFY requires controlled evidence settlement", kind="protocol"
                     )

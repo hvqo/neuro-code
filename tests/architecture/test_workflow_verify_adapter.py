@@ -197,7 +197,11 @@ class ControlledCommand:
         self.entered, self.release = asyncio.Event(), asyncio.Event()
         self.calls = 0
 
-    async def verify_command(self, configuration, *, session_id):
+    async def verify_command(self, configuration, *, session_id, pre_entry_guard):
+        if not await pre_entry_guard():
+            return ToolExecutionResult(
+                "call", "bash", "not authorized", is_error=True, not_started=True
+            )
         self.calls += 1
         self.entered.set()
         await self.release.wait()

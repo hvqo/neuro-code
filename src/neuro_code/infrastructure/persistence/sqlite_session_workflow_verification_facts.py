@@ -13,7 +13,7 @@ from neuro_code.application.ports.workflow_verification import (
     ApprovedWorkflowVerification,
     VerificationWorkspaceEvidence,
 )
-from neuro_code.domain.workflows.activity import WorkflowActivityAttempt
+from neuro_code.domain.workflows.activity import WorkflowActivityAttempt, WorkflowActivityResult
 from neuro_code.domain.workflows.definition import Activity, ActivityKind, Map, ResultRef, TaskBatch
 from neuro_code.domain.workflows.interpreter import (
     OutputKind,
@@ -227,6 +227,31 @@ def execution(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt) 
     return value
 
 
+def terminal_anchor(
+    attempt: WorkflowActivityAttempt,
+    started: dict[str, Any],
+    evidence: dict[str, Any],
+    result: WorkflowActivityResult,
+) -> dict[str, Any]:
+    """Pin the trusted observation outside the local result/snapshot group."""
+    return {
+        "execution_id": started["execution_id"],
+        "invocation_id": attempt.invocation.invocation_id,
+        "request_fingerprint": attempt.invocation.request_fingerprint,
+        "configuration_fingerprint": digest(started["configuration"]),
+        "owner_id": attempt.owner_id,
+        "owner_fence": attempt.owner_fence,
+        "execution_fingerprint": digest(started),
+        "observation": evidence["observation"],
+        "exit_code": evidence["exit_code"],
+        "outcome": evidence["outcome"],
+        "workspace_before": started["workspace_before"],
+        "workspace_after": evidence["workspace_after"],
+        "evidence_fingerprint": digest(evidence),
+        "result_fingerprint": result.fingerprint,
+    }
+
+
 def verify_terminal(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt) -> None:
     result = attempt.result
     assert result is not None
@@ -281,12 +306,37 @@ def verify_terminal(connection: sqlite3.Connection, attempt: WorkflowActivityAtt
             or value["workspace_after"] != started["workspace_before"]
             or code != (0 if output["status"] == "PASS" else 1)
             or value["usage"]["tool_calls"] != 1
+            or not isinstance(value["observation"], dict)
+            or value["observation"].get("tool_name") != "bash"
+            or value["observation"].get("not_started") is not False
+            or value["observation"].get("cancelled") is not False
+            or value["observation"].get("is_error") is not (code != 0)
         ):
             raise WorkflowStateError(
                 "VERIFY output is not exact fresh execution evidence", kind="integrity"
             )
-    # The immutable local Activity event independently freezes the result proof.
-    # Rehashing just the evidence/exit code cannot alter the bound result.
+    anchor = terminal_anchor(attempt, started, value, result)
+    journal = connection.execute(
+        "SELECT kind,payload_json,payload_fingerprint,created_at FROM workflow_transition_journal WHERE run_id=? AND request_id=?",
+        (attempt.invocation.run_id, "activity-settle:" + attempt.invocation.invocation_id),
+    ).fetchone()
+    expected = canonical(
+        {
+            "operation": "activity_budget",
+            "reservation_id": attempt.reservation_id,
+            "amounts": asdict(result.usage),
+            "verification": anchor,
+        }
+    )
+    if journal != (
+        WorkflowEventKind.CONSUMED.value,
+        expected,
+        digest(json.loads(expected)),
+        result.terminal_at.isoformat(),
+    ):
+        raise WorkflowStateError(
+            "VERIFY independent terminal journal proof differs", kind="integrity"
+        )
     if value["outcome"] == "unknown" and (
         result.usage.tool_calls != (None if attempt.revision == 3 else 0)
         or result.usage.wall_milliseconds is not None

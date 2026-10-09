@@ -24,7 +24,14 @@ from neuro_code.domain.workflows.activity import (
     WorkflowActivityInvocation,
     WorkflowActivityState,
 )
-from neuro_code.domain.workflows.definition import Activity, Branch, Map, Repeat, TaskBatch
+from neuro_code.domain.workflows.definition import (
+    Activity,
+    ActivityKind,
+    Branch,
+    Map,
+    Repeat,
+    TaskBatch,
+)
 from neuro_code.domain.workflows.interpreter import (
     OutputKind,
     WorkflowStepOutput,
@@ -408,7 +415,7 @@ class DurableWorkflowInterpreter:
                 result.fingerprint,
                 result.output_json,
             )
-            if result.source_id.startswith("verify-exec-"):
+            if invocation.activity is ActivityKind.VERIFY:
                 if self.verification is None:
                     raise WorkflowStateError(
                         "real VERIFY consumption needs workspace freshness",

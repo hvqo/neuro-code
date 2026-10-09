@@ -59,7 +59,10 @@ from neuro_code.application.ports.tools import (
     ToolOutputArtifactStore,
 )
 from neuro_code.application.ports.web_search import HostedWebSearchEvent
-from neuro_code.application.ports.workflow_verification import ApprovedWorkflowVerification
+from neuro_code.application.ports.workflow_verification import (
+    ApprovedWorkflowVerification,
+    VerificationEntryGuard,
+)
 from neuro_code.application.ports.workspace_changes import (
     WorkspaceChangeCheckpoint,
     WorkspaceChangeObserver,
@@ -536,7 +539,11 @@ class ToolExecutor:
         return self._tool_context.cwd
 
     async def verify_command(
-        self, configuration: ApprovedWorkflowVerification, *, session_id: str
+        self,
+        configuration: ApprovedWorkflowVerification,
+        *,
+        session_id: str,
+        pre_entry_guard: VerificationEntryGuard,
     ) -> ToolExecutionResult:
         """Foreground internal verification through the ordinary tool pipeline.
 
@@ -615,6 +622,7 @@ class ToolExecutor:
             emit,
             session_id,
             execution_entered_sink=enter,
+            pre_entry_guard=pre_entry_guard,
         )
         if terminal is None:
             raise ToolError("VERIFY has no terminal tool evidence")
@@ -638,6 +646,7 @@ class ToolExecutor:
         model_result_estimated_token_limit: int | None = None,
         intent: str | None = None,
         execution_entered_sink: Callable[[], None] | None = None,
+        pre_entry_guard: VerificationEntryGuard | None = None,
     ) -> ToolExecutionObservation | None:
         # Only strip the intent argument when Neuro Code itself injected that
         # synthetic field into this tool's provider-facing schema.  External and
@@ -1002,6 +1011,15 @@ class ToolExecutor:
                 ),
             )
             try:
+                # Trusted VERIFY-only guard, after every awaited approval/hook/
+                # workspace preflight. Ordinary runtime callers leave it unset.
+                if pre_entry_guard is not None and not await pre_entry_guard():
+                    result = ToolResult("VERIFY dispatch is no longer authorized", is_error=True)
+                    record_result(result)
+                    await emit(
+                        AgentEventKind.TOOL_FAILED, terminal_event_data(result, not_started=True)
+                    )
+                    return None
                 if execution_entered_sink is not None:
                     execution_entered_sink()
                 result = await tool.execute(

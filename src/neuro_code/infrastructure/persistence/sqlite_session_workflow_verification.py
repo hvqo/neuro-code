@@ -53,6 +53,7 @@ from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_
     execution,
     parent_root,
     source,
+    terminal_anchor,
 )
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_lock import (
     verification_execution_lock,
@@ -213,6 +214,8 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
                     "configuration": asdict(configuration) if configuration is not None else None,
                     "workspace_before": before,
                     "workspace_generation": run.generation,
+                    "workflow_owner_id": run.owner_id,
+                    "workflow_owner_fence": run.owner_fence,
                     "started_at": active.updated_at.isoformat()
                     if active.updated_at is not None
                     else updated_at.isoformat(),
@@ -244,9 +247,42 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
         # Cancellation observes the durable run while the existing Bash
         # adapter owns timeout and process-tree teardown. No daemon/timer
         # survives this one bounded execution scope.
+        scope = _executing.get()
+        guard_used = False
+
+        async def guard() -> bool:
+            nonlocal guard_used
+            if guard_used or _executing.get() != scope:
+                return False
+            guard_used = True
+
+            def check() -> bool:
+                with closing(self._connect()) as connection, connection:
+                    connection.execute("BEGIN")
+                    active = _bound(_load_attempt(connection, invocation_id), parent_session_id)
+                    started = execution(connection, active)
+                    run = _run(connection, active.invocation.run_id)
+                    return (
+                        active.state is State.RUNNING
+                        and (active.revision, active.owner_id, active.owner_fence)
+                        == (current.revision, current.owner_id, current.owner_fence)
+                        and started["execution_id"] == key
+                        and started["configuration"] == asdict(configuration)
+                        and started["parent_workspace_root"] == str(parent_workspace_root)
+                        and run.status is WorkflowStatus.WAITING
+                        and run.waiting_reason == "activity:" + invocation_id
+                        and (run.owner_id, run.owner_fence)
+                        == (started["workflow_owner_id"], started["workflow_owner_fence"])
+                        and run.ledger.committed.known
+                    )
+
+            return await run_blocking(lambda: _guard(check))
+
         async def invoke() -> ToolExecutionResult:
             return await asyncio.wait_for(
-                command.verify_command(configuration, session_id=parent_session_id),
+                command.verify_command(
+                    configuration, session_id=parent_session_id, pre_entry_guard=guard
+                ),
                 configuration.timeout_milliseconds / 1000 + 1,
             )
 
@@ -294,7 +330,7 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
         elif (
             changed_during_execution
             or before != after
-            or (code == 0 and result.is_error)
+            or (code in (0, 1) and result.is_error != (code != 0))
             or result.cancelled
             or code is None
             or code < 0
@@ -310,7 +346,21 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
             .decode("utf-8", errors="ignore")
         )
         return await self._finish_verification(
-            current, state, outcome, code, after, summary, usage, updated_at
+            current,
+            state,
+            outcome,
+            code,
+            after,
+            summary,
+            usage,
+            updated_at,
+            observation={
+                "call_id": result.call_id,
+                "tool_name": result.tool_name,
+                "is_error": result.is_error,
+                "not_started": result.not_started,
+                "cancelled": result.cancelled,
+            },
         )
 
     async def _finish_verification(
@@ -323,6 +373,8 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
         summary: str | None,
         usage: BudgetAmounts,
         now: datetime,
+        *,
+        observation: dict[str, Any] | None = None,
     ) -> WorkflowActivityAttempt:
         if usage.known and _executing.get() != (
             str(self._database_path.resolve()),
@@ -372,6 +424,7 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
                     "output_fingerprint": digest(summary),
                     "usage": asdict(usage),
                     "output_json": output,
+                    "observation": observation,
                 }
                 connection.execute(
                     "INSERT INTO workflow_verification_evidence VALUES (?,?,?)",
@@ -392,7 +445,12 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
                     finished_at,
                     output,
                 )
-                terminal = _settle_terminal(connection, current, result)
+                terminal = _settle_terminal(
+                    connection,
+                    current,
+                    result,
+                    verification=terminal_anchor(current, started, value, result),
+                )
                 run = _run(connection, current.invocation.run_id)
                 overrun = (
                     usage.wall_milliseconds is not None
