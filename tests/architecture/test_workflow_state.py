@@ -146,6 +146,8 @@ async def test_v35_upgrade_preserves_session_and_is_idempotent(tmp_path):
     session = await store.create_session("/old", "old-provider", "old-model")
     with closing(sqlite3.connect(store.database_path)) as connection, connection:
         for table in (
+            "workflow_verification_evidence",
+            "workflow_verification_executions",
             "workflow_activity_results",
             "workflow_activity_events",
             "workflow_adoption_executions",
@@ -187,6 +189,8 @@ async def test_v35_upgrade_preserves_session_and_is_idempotent(tmp_path):
             "workflow_run_inputs",
             "workflow_step_outputs",
             "workflow_activity_attempts",
+            "workflow_verification_evidence",
+            "workflow_verification_executions",
             "workflow_activity_results",
             "workflow_activity_events",
             "workflow_adoption_executions",
@@ -200,6 +204,8 @@ async def test_migration_failure_rolls_back_schema_and_version(tmp_path):
     await store.initialize()
     with closing(sqlite3.connect(store.database_path)) as connection, connection:
         for table in (
+            "workflow_verification_evidence",
+            "workflow_verification_executions",
             "workflow_activity_results",
             "workflow_activity_events",
             "workflow_adoption_executions",

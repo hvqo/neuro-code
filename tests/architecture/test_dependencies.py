@@ -280,6 +280,7 @@ _BOOTSTRAP_COMPOSITION_MIXIN_OWNERS = {
                 "create_workspace_undo_coordinator",
                 "create_git_inspection_service",
                 "create_result_adoption_service",
+                "create_workflow_verify_service",
                 "create_tool_output_artifact_service",
                 "bind_provider_controller",
                 "bind_session_selection_controller",
@@ -1515,6 +1516,7 @@ def test_canonical_ports_are_the_only_port_modules() -> None:
         "neuro_code.application.ports.workflow_publication",
         "neuro_code.application.ports.workflow_projection",
         "neuro_code.application.ports.workflow_interpreter",
+        "neuro_code.application.ports.workflow_verification",
         "neuro_code.application.ports.workflow_activity",
         "neuro_code.application.ports.workflow_adoption",
     }
@@ -1568,6 +1570,11 @@ def test_canonical_persistence_modules_are_the_only_persistence_implementations(
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_projection",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_interpreter",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_activity",
+        "neuro_code.infrastructure.persistence.sqlite_session_workflow_activity_codec",
+        "neuro_code.infrastructure.persistence.sqlite_session_workflow_verification",
+        "neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_facts",
+        "neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_lock",
+        "neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_scope",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_facts",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_meter",
@@ -1638,6 +1645,7 @@ def test_canonical_workspace_modules_are_the_only_workspace_implementations() ->
         "neuro_code.infrastructure.workspace.instructions",
         "neuro_code.infrastructure.workspace.paths",
         "neuro_code.infrastructure.workspace.projection",
+        "neuro_code.infrastructure.workspace.verification",
         "neuro_code.infrastructure.workspace.skills",
     }
     assert {

@@ -1268,6 +1268,7 @@ class CompositionBindingMixin(CompositionRootMixin):
                 resource_scope=resource_scope,
                 workspace_root=selected_config.cwd,
                 workspace_mutation=runtime.workspace_mutation,
+                verification_executor=runtime.verification_executor,
                 runtime_web_capabilities=web_search_inspection,
                 effective_agent_binding=profile_binding,
             )

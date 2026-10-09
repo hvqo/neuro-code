@@ -128,6 +128,29 @@ class WorkflowInterpreterMixin(_SqliteSessionPersistenceContext):
         identifier(owner_id)
         timestamp(updated_at)
 
+        real_verify = False
+        if output.kind is OutputKind.ACTIVITY:
+            from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_scope import (
+                owns_fresh_consumption,
+                revalidate_consumption,
+            )
+
+            def is_real_verify() -> bool:
+                with closing(self._connect()) as connection:
+                    return (
+                        connection.execute(
+                            "SELECT 1 FROM workflow_verification_executions WHERE invocation_id=?",
+                            (output.source_id,),
+                        ).fetchone()
+                        is not None
+                    )
+
+            real_verify = await run_blocking(is_real_verify)
+            if real_verify and not owns_fresh_consumption(self._database_path, output):
+                raise WorkflowStateError(
+                    "real VERIFY output needs current workspace evidence", kind="stale_verification"
+                )
+
         def write() -> WorkflowWriteResult:
             with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -223,6 +246,8 @@ class WorkflowInterpreterMixin(_SqliteSessionPersistenceContext):
                 return WorkflowWriteResult(proposed, proposed.generation)
 
         async with self._write_lock:
+            if real_verify:
+                await revalidate_consumption(self._database_path, output)
             return await run_blocking(lambda: _guard(write))
 
 

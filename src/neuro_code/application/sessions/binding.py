@@ -29,6 +29,7 @@ from neuro_code.application.ports.result_adoption import WorkspaceMutationPort
 from neuro_code.application.ports.runtime_capabilities import RuntimeWebCapabilityInspection
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
 from neuro_code.application.ports.tools import Tool
+from neuro_code.application.ports.workflow_verification import WorkflowVerificationCommand
 from neuro_code.application.runtime.agent import AgentRunResult, EventSink
 from neuro_code.application.sessions.recovery import TurnRecoveryInspection
 from neuro_code.application.workflows.subagent_capabilities import SubagentCapabilitySet
@@ -281,6 +282,7 @@ class ConversationBinding:
     )
     workspace_root: Path | None = field(default=None, kw_only=True)
     workspace_mutation: WorkspaceMutationPort | None = field(default=None, kw_only=True)
+    verification_executor: WorkflowVerificationCommand | None = field(default=None, kw_only=True)
     runtime_web_capabilities: RuntimeWebCapabilityInspection | None = field(
         default=None,
         kw_only=True,

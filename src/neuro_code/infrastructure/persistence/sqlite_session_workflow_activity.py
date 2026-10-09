@@ -7,7 +7,6 @@ import sqlite3
 from contextlib import closing
 from dataclasses import asdict, replace
 from datetime import datetime
-from typing import Any
 
 from neuro_code.application.ports.workflow_state import WorkflowStateError
 from neuro_code.domain.workflows.activity import (
@@ -30,7 +29,6 @@ from neuro_code.domain.workflows.interpreter import typed_json
 from neuro_code.domain.workflows.publication import canonical, digest
 from neuro_code.domain.workflows.state import (
     BudgetAmounts,
-    StepIdentity,
     WorkflowChange,
     WorkflowEventKind,
     WorkflowFailure,
@@ -44,6 +42,9 @@ from neuro_code.domain.workflows.state import (
 )
 from neuro_code.infrastructure.persistence.sqlite_session_connection import (
     _SqliteSessionPersistenceContext,
+)
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_activity_codec import (
+    decode_attempt,
 )
 from neuro_code.infrastructure.persistence.sqlite_session_workflows import (
     _append_event,
@@ -66,41 +67,6 @@ def _run(connection: sqlite3.Connection, run_id: str) -> WorkflowRun:
     return run
 
 
-def _invocation(data: dict[str, Any]) -> WorkflowActivityInvocation:
-    step = data["step"]
-    if not isinstance(step, dict):
-        raise ValueError("activity step is invalid")
-    return WorkflowActivityInvocation(
-        data["invocation_id"],
-        data["run_id"],
-        data["definition_fingerprint"],
-        data["parent_session_id"],
-        StepIdentity(**step),
-        ActivityKind(data["activity"]),
-        data["request_json"],
-        data["request_fingerprint"],
-        data["input_fingerprint"],
-        datetime.fromisoformat(data["created_at"]),
-    )
-
-
-def _result(data: dict[str, Any]) -> WorkflowActivityResult:
-    usage = data["usage"]
-    if not isinstance(usage, dict):
-        raise ValueError("activity usage is invalid")
-    return WorkflowActivityResult(
-        data["invocation_id"],
-        data["request_fingerprint"],
-        ActivityKind(data["activity"]),
-        WorkflowActivityState(data["state"]),
-        data["source_id"],
-        data["source_fingerprint"],
-        BudgetAmounts(**usage),
-        datetime.fromisoformat(data["terminal_at"]),
-        data["output_json"],
-    )
-
-
 def _load_attempt(
     connection: sqlite3.Connection, invocation_id: str
 ) -> WorkflowActivityAttempt | None:
@@ -115,19 +81,8 @@ def _load_attempt(
     data = json.loads(row[4])
     if not isinstance(data, dict) or _json(data) != row[4] or digest(data) != row[5]:
         raise WorkflowStateError("activity snapshot fingerprint mismatch", kind="integrity")
-    invocation = _invocation(data["invocation"])
-    reserved = data["reserved"]
-    attempt = WorkflowActivityAttempt(
-        invocation,
-        WorkflowActivityState(data["state"]),
-        data["revision"],
-        data["owner_id"],
-        data["owner_fence"],
-        data["reservation_id"],
-        BudgetAmounts(**reserved) if reserved is not None else None,
-        _result(data["result"]) if data["result"] is not None else None,
-        datetime.fromisoformat(data["updated_at"]),
-    )
+    attempt = decode_attempt(data)
+    invocation = attempt.invocation
     if (
         attempt.invocation.invocation_id != invocation_id
         or attempt.invocation.run_id != run.run_id
@@ -262,6 +217,18 @@ def _load_attempt(
         )
 
         _verify_terminal_adopt(connection, attempt)
+    if attempt.result is not None and (
+        attempt.result.source_id.startswith("verify-exec-")
+        or connection.execute(
+            "SELECT 1 FROM workflow_verification_executions WHERE invocation_id=?",
+            (attempt.invocation.invocation_id,),
+        ).fetchone()
+    ):
+        from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_facts import (
+            verify_terminal,
+        )
+
+        verify_terminal(connection, attempt)
     return attempt
 
 
@@ -793,6 +760,13 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                 if declared.activity is ActivityKind.ADOPT and "source" in dict(declared.inputs):
                     raise WorkflowStateError(
                         "bound ADOPT requires terminal-proof reconciliation", kind="protocol"
+                    )
+                if connection.execute(
+                    "SELECT 1 FROM workflow_verification_executions WHERE invocation_id=?",
+                    (result.invocation_id,),
+                ).fetchone():
+                    raise WorkflowStateError(
+                        "real VERIFY requires controlled evidence settlement", kind="protocol"
                     )
                 if result.output_json is not None:
                     typed_json(

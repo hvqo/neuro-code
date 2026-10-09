@@ -389,6 +389,11 @@ class AgentRuntime:
         return self._tool_executor
 
     @property
+    def verification_executor(self) -> ToolExecutor:
+        """Expose the same permission-bound executor to trusted composition."""
+        return self._tool_executor
+
+    @property
     def workspace_undo(self) -> TurnWorkspaceCheckpointCoordinator | None:
         """Return the normal-turn workspace undo coordinator, if enabled."""
 

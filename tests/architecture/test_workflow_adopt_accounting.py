@@ -312,7 +312,7 @@ async def test_v40_migration_preserves_activity_and_does_not_invent_measurement(
     await store.initialize()
     assert await store.get_workflow_activity(key) == before
     with closing(store._connect()) as c:
-        assert c.execute("SELECT version FROM schema_meta").fetchone()[0] == 41
+        assert c.execute("SELECT version FROM schema_meta").fetchone()[0] == 42
         assert c.execute("SELECT COUNT(*) FROM workflow_adoption_executions").fetchone()[0] == 0
 
 

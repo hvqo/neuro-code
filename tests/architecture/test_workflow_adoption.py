@@ -82,6 +82,7 @@ async def fixture(
     with_activity=False,
     activity_ceiling=None,
     activity_source=None,
+    following_steps=(),
     **kwargs,
 ):
     f = await _make_fixture(tmp_path, **kwargs)
@@ -109,6 +110,7 @@ async def fixture(
                 },
             }
         )
+    data["steps"].extend(following_steps)
     definition = compile_workflow(json.dumps(data))
     source_identity = StepIdentity("expand" if mapped else "implement")
     publication_id = (

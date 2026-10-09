@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
+from typing import Protocol
 
 from neuro_code.application.ports.task_dag import TaskDagStore
 from neuro_code.application.ports.workflow_activity import WorkflowActivityStore
@@ -45,12 +46,25 @@ from neuro_code.domain.workflows.state import (
     WorkflowRun,
     WorkflowStatus,
     WorkflowStepInstance,
+    WorkflowWriteResult,
     identifier,
     integer,
     timestamp,
 )
 
 CONTROL_FLOW_EXHAUSTED_REASON = "control_flow_exhausted: completion requirements pending"
+
+
+class VerificationOutputConsumer(Protocol):
+    async def consume(
+        self,
+        output: WorkflowStepOutput,
+        *,
+        expected_generation: int,
+        owner_id: str,
+        owner_fence: int,
+        updated_at: datetime,
+    ) -> WorkflowWriteResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +84,7 @@ class DurableWorkflowInterpreter:
         projections: WorkflowProjectionStore,
         dags: TaskDagStore,
         activities: WorkflowActivityStore,
+        verification: VerificationOutputConsumer | None = None,
     ) -> None:
         self.state = state
         self.store = facts
@@ -77,6 +92,7 @@ class DurableWorkflowInterpreter:
         self.projections = projections
         self.dags = dags
         self.activities = activities
+        self.verification = verification
 
     async def advance_once(
         self,
@@ -392,6 +408,23 @@ class DurableWorkflowInterpreter:
                 result.fingerprint,
                 result.output_json,
             )
+            if result.source_id.startswith("verify-exec-"):
+                if self.verification is None:
+                    raise WorkflowStateError(
+                        "real VERIFY consumption needs workspace freshness",
+                        kind="stale_verification",
+                    )
+                assert run.owner_id is not None
+                consumed = await self.verification.consume(
+                    output,
+                    expected_generation=run.generation,
+                    owner_id=run.owner_id,
+                    owner_fence=run.owner_fence,
+                    updated_at=now,
+                )
+                return WorkflowAdvanceResult(
+                    consumed.run, "consume_activity", not consumed.replayed
+                )
             return await self._output(run, output, "consume_activity", now)
         assert run.owner_id is not None
         consumed = await self.activities.consume_workflow_activity_failure(

@@ -23,7 +23,12 @@ from neuro_code.application.ports.configuration import AppConfig
 from neuro_code.application.ports.result_adoption import ResultAdoptionStore
 from neuro_code.application.ports.task_dag import TaskDagStore
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
+from neuro_code.application.ports.workflow_activity import WorkflowActivityStore
 from neuro_code.application.ports.workflow_projection import WorkflowProjectionStore
+from neuro_code.application.ports.workflow_verification import (
+    ApprovedWorkflowVerification,
+    WorkflowVerificationStore,
+)
 from neuro_code.application.ports.writable_subagent import WritableSubagentLeaseStore
 from neuro_code.application.providers.service import (
     ProviderChangeService,
@@ -56,6 +61,7 @@ from neuro_code.application.workflows.session_task_execution import (
     QueuedPlanExecutionController,
     QueuedPlanExecutionService,
 )
+from neuro_code.application.workflows.workflow_verify import WorkflowVerifyActivityAdapter
 from neuro_code.application.worktrees import WorktreeApplicationService
 from neuro_code.bootstrap.composition_contracts import CompositionRootMixin
 from neuro_code.infrastructure.git.inspection import LocalGitInspectionAdapter
@@ -68,6 +74,7 @@ from neuro_code.infrastructure.persistence.workspace_checkpoints import (
 )
 from neuro_code.infrastructure.workspace.checkpoints import LocalWorkspaceStateAdapter
 from neuro_code.infrastructure.workspace.projection import LocalParentWorkspaceProjectionReader
+from neuro_code.infrastructure.workspace.verification import LocalWorkflowVerificationWorkspace
 from neuro_code.shared.errors import ConfigurationError
 
 
@@ -216,6 +223,35 @@ class CompositionServicesMixin(CompositionRootMixin):
             parent_reader=parent_reader,
             mutation=parent_binding.workspace_mutation,
             parent_binding=parent_binding,
+        )
+
+    def create_workflow_verify_service(
+        self: CompositionRootMixin,
+        *,
+        parent_binding: ConversationBinding,
+    ) -> WorkflowVerifyActivityAdapter:
+        """Explicit configured command, no Workflow-JSON command authority."""
+        if (
+            parent_binding.verification_executor is None
+            or parent_binding.workspace_root is None
+            or parent_binding.runner.session_id is None
+        ):
+            raise ConfigurationError("VERIFY needs a real parent executor/session/workspace")
+        git = LocalGitWorktreeAdapter(hooks_directory=self.config.state_dir / "git-hooks")
+        state = LocalWorkspaceStateAdapter(git=git, workspace_git=git)
+        configured = self.settings.verification_command
+        return WorkflowVerifyActivityAdapter(
+            store=cast(WorkflowVerificationStore, self.store),
+            activities=cast(WorkflowActivityStore, self.store),
+            command=parent_binding.verification_executor,
+            workspace=LocalWorkflowVerificationWorkspace(
+                LocalParentWorkspaceProjectionReader(git=git, state=state)
+            ),
+            parent_session_id=parent_binding.runner.session_id,
+            parent_workspace_root=parent_binding.workspace_root,
+            configuration=ApprovedWorkflowVerification(configured)
+            if configured is not None
+            else None,
         )
 
     def create_tool_output_artifact_service(

@@ -52,6 +52,9 @@ from neuro_code.infrastructure.persistence.sqlite_session_workflow_projection im
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_publication import (
     WorkflowPublicationMixin,
 )
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification import (
+    WorkflowVerificationMixin,
+)
 from neuro_code.infrastructure.persistence.sqlite_session_workflows import WorkflowsMixin
 from neuro_code.infrastructure.persistence.sqlite_session_working_set import (
     WorkingSetMixin,
@@ -59,6 +62,7 @@ from neuro_code.infrastructure.persistence.sqlite_session_working_set import (
 
 
 class SqliteSessionStore(
+    WorkflowVerificationMixin,
     SqliteSessionConnectionMixin,
     CoreMixin,
     TurnsMixin,

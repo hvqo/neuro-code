@@ -1610,3 +1610,29 @@ def _ensure_workflow_adoption_execution_schema(connection: sqlite3.Connection) -
                 BEFORE {operation} ON {table}
                 BEGIN SELECT RAISE(ABORT, 'immutable ADOPT execution evidence'); END
             """)
+
+
+def _ensure_workflow_verification_schema(connection: sqlite3.Connection) -> None:
+    """Frozen VERIFY execution and terminal facts; no second accounting ledger."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_verification_executions (
+            execution_id TEXT PRIMARY KEY,
+            invocation_id TEXT NOT NULL UNIQUE REFERENCES workflow_activity_attempts(invocation_id) ON DELETE RESTRICT,
+            payload_json TEXT NOT NULL CHECK (length(payload_json) BETWEEN 1 AND 131072),
+            payload_fingerprint TEXT NOT NULL CHECK (length(payload_fingerprint) = 64)
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_verification_evidence (
+            execution_id TEXT PRIMARY KEY REFERENCES workflow_verification_executions(execution_id) ON DELETE RESTRICT,
+            payload_json TEXT NOT NULL CHECK (length(payload_json) BETWEEN 1 AND 131072),
+            payload_fingerprint TEXT NOT NULL CHECK (length(payload_fingerprint) = 64)
+        )
+    """)
+    for table in ("workflow_verification_executions", "workflow_verification_evidence"):
+        for operation in ("UPDATE", "DELETE"):
+            connection.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_immutable_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, 'immutable VERIFY execution evidence'); END
+            """)
