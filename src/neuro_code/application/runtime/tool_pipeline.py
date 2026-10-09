@@ -545,6 +545,20 @@ class ToolExecutor:
         """
         if not isinstance(configuration, ApprovedWorkflowVerification):
             raise TypeError("VERIFY needs trusted typed configuration")
+        if (
+            self._tool_context.sandbox_profile.enabled
+            and self._tool_context.local_process_sandbox is None
+        ):
+            # An explicit sandbox without a composition-owned launcher is a
+            # proven pre-dispatch block, not an uncertain shell execution.
+            return ToolExecutionResult(
+                "workflow-verify-" + uuid.uuid4().hex,
+                "bash",
+                "explicit VERIFY sandbox has no bound child process launcher",
+                True,
+                metadata={"reason": "missing_child_process_sandbox"},
+                not_started=True,
+            )
         executor = ToolExecutor(
             tools=self._tools,
             permissions=self._permissions,

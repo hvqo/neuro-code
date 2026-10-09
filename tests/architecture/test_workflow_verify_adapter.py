@@ -530,8 +530,9 @@ async def test_missing_explicit_sandbox_backend_never_pass(tmp_path):
             ),
         ).run_once(key)
     ).attempt
-    assert result.state is State.INDETERMINATE
+    assert result.state is State.BLOCKED
     assert result.result.output_json is None
+    assert result.result.usage.tool_calls == 0
 
 
 async def test_bounded_redacted_summary(tmp_path):

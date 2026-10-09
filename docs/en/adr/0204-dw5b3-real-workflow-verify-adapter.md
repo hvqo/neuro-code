@@ -40,7 +40,7 @@ This is bounded optimistic filesystem freshness, not atomic filesystem/SQLite is
 
 - Real exit 0 with complete unchanged source evidence: Activity COMPLETED, `status=PASS`.
 - Recognized pytest/static check exit 1 with complete unchanged evidence: Activity COMPLETED, `status=FAIL`; later Branch/Repeat can consume it.
-- Missing trusted configuration/unsupported source or permission denial before tool entry: BLOCKED, no PASS/FAIL.
+- Missing trusted configuration/unsupported source, missing explicitly required sandbox launcher or permission denial before tool entry: BLOCKED, no PASS/FAIL.
 - Exit without reliable code, signal, timeout, cancellation, workspace drift or crash: INDETERMINATE / NEEDS_ATTENTION.
 - Other nonzero exits (e.g. collection/configuration/executor errors): FAILED, not a fabricated test FAIL.
 

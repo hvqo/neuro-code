@@ -40,7 +40,7 @@ Evidence、immutable Activity result、budget consumption、Run 安全状态和 
 
 - 真实 exit 0＋完整且未变的 source evidence：Activity COMPLETED，`status=PASS`。
 - 可信 pytest／static-check exit 1＋完整且未变证据：Activity COMPLETED，`status=FAIL`，供后续 Branch／Repeat 消费。
-- 缺少可信配置、不支持 source 或工具进入前权限拒绝：BLOCKED，不生成 PASS／FAIL。
+- 缺少可信配置、不支持 source、缺少显式要求的沙箱启动器或工具进入前权限拒绝：BLOCKED，不生成 PASS／FAIL。
 - 无可靠 exit code、signal、timeout、cancel、工作区变化或 crash：INDETERMINATE／NEEDS_ATTENTION。
 - 其他非零 exit（如收集／配置／执行错误）：FAILED，不伪造测试 FAIL。
 
