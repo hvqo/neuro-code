@@ -160,14 +160,46 @@ and conservative-usage invariants. Nonterminal recovery still validates live
 sources and parent identity, then uses existing core owner liveness/lease/CAS.
 Another live core owner remains busy.
 
+## Active execution and recovery arbitration
+
+Adoption terminal is not evidence that its Activity execution scope has ended.
+A nonblocking OS exclusive lock, keyed by canonical local SQLite path and stable
+invocation identity, protects first RUNNING/execution-identity commit through
+prepare/adopt, port calls, terminal observation, atomic measurement/result/ledger/
+journal settlement and scope exit. POSIX uses `flock`; Windows uses a one-byte
+`msvcrt` lock. No SQLite write transaction is held across external execution.
+
+Public recovery acquires the same lock before a `BEGIN IMMEDIATE` transaction and
+re-reads all state/proof inside it. An active holder causes `concurrent_execution`;
+the Adapter returns bounded `busy`, with no mutation, accounting or Run change.
+Deadlines, PID estimates and leases never override this lock. Recovery marking a
+RUNNING invocation with no underlying fact also observes the lock. The first task
+may mark its own uncertain ceiling while holding it; this task-local bookkeeping
+is not a substitute for the OS arbitration and cannot be borrowed by a child task.
+
+Process death or explicit scope exit releases the OS lock. Recovery can then
+commit conservative unknown usage when no complete atomic result exists; it does
+not acquire a new execution scope or permission to redispatch. An orphan serialized
+measurement still fails closed. Immutable terminal Activity replay only reads and
+verifies durable facts and does not wait for execution liveness, rewrite usage or
+require preserved resources. Complete known settlement always wins before lock
+release; an outer ACK loss only replays that same known result.
+
+Lock files remain unlocked after release and are never unlinked during database
+use: removing/recreating an inode would split exclusivity. They contain no receipt,
+owner authority or usage and do not create a second ledger or permanent held lock.
+This is arbitration among cooperating local processes using the same database,
+not OS isolation of Python dependencies or a distributed filesystem protocol.
+Schema remains 41. No exactly-once transaction spans SQLite and the filesystem.
+
 ## Crash boundaries
 
 | Window | Recovery |
 |---|---|
-| RUNNING committed, no adoption fact | No redispatch based on RUNNING replay; NEEDS_ATTENTION with reservation retained |
+| RUNNING committed, no adoption fact | Active scope: busy; abandoned scope: no redispatch, NEEDS_ATTENTION with reservation retained |
 | Plan committed, before mutation | Same adoption ID/plan, live validation and existing core ownership recovery |
 | Intent persisted / mutation happened, ACK lost / incomplete scope | Unknown accounting; existing target CAS and desired-image observation prevent repeated writes to that desired image |
-| Adoption terminal, Activity result absent | Committed atomic Activity result: known replay; missing result: unknown. No live-resource requirement or mutation |
+| Adoption terminal, Activity result absent | Active execution lock: busy without settlement. After scope exit/process death: unknown atomic settlement; no live-resource requirement or mutation |
 | Activity result or Interpreter consumption ACK lost | Exact durable replay; no repeated settlement or adoption |
 | Third-party parent change | Existing three-way/conflict/indeterminate checks; never overwrite unrelated/new content |
 

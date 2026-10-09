@@ -173,122 +173,133 @@ class WorkflowAdoptActivityAdapter:
 
     async def run_once(self, invocation_id: str) -> WorkflowAdoptOutcome:
         async with self.lock:
-            attempt = await self.activities.get_workflow_activity(invocation_id)
-            if (
-                attempt is None
-                or attempt.invocation.activity is not ActivityKind.ADOPT
-                or attempt.invocation.parent_session_id != self.parent_session_id
-            ):
-                raise WorkflowStateError("exact parent ADOPT invocation required", kind="integrity")
-            request = await self.facts.get_workflow_adoption_request(invocation_id)
-            record = await self.adoptions.get_result_adoption(request.adoption_id)
-            if attempt.state.terminal or (record is not None and record.state.terminal):
-                return await self._settle(attempt)
-            if attempt.state is WorkflowActivityState.CLAIMED:
-                return WorkflowAdoptOutcome(attempt, "busy")  # Never borrow its owner token.
-            run = await self.state.get_workflow_run(attempt.invocation.run_id)
-            if (
-                run is None
-                or run.status is not WorkflowStatus.WAITING
-                or run.waiting_reason != "activity:" + invocation_id
-            ):
-                return WorkflowAdoptOutcome(attempt, "not_authorized")
-            fresh = attempt.state is WorkflowActivityState.READY
-            if not fresh and record is None:
+            try:
+                return await self._run_once(invocation_id)
+            except WorkflowStateError as error:
+                if error.kind != "concurrent_execution":
+                    raise
+                attempt = await self.activities.get_workflow_activity(invocation_id)
+                if attempt is None:
+                    raise
+                return WorkflowAdoptOutcome(attempt, "busy")
+
+    async def _run_once(self, invocation_id: str) -> WorkflowAdoptOutcome:
+        attempt = await self.activities.get_workflow_activity(invocation_id)
+        if (
+            attempt is None
+            or attempt.invocation.activity is not ActivityKind.ADOPT
+            or attempt.invocation.parent_session_id != self.parent_session_id
+        ):
+            raise WorkflowStateError("exact parent ADOPT invocation required", kind="integrity")
+        request = await self.facts.get_workflow_adoption_request(invocation_id)
+        record = await self.adoptions.get_result_adoption(request.adoption_id)
+        if attempt.state.terminal or (record is not None and record.state.terminal):
+            return await self._settle(attempt)
+        if attempt.state is WorkflowActivityState.CLAIMED:
+            return WorkflowAdoptOutcome(attempt, "busy")  # Never borrow its owner token.
+        run = await self.state.get_workflow_run(attempt.invocation.run_id)
+        if (
+            run is None
+            or run.status is not WorkflowStatus.WAITING
+            or run.waiting_reason != "activity:" + invocation_id
+        ):
+            return WorkflowAdoptOutcome(attempt, "not_authorized")
+        fresh = attempt.state is WorkflowActivityState.READY
+        if not fresh and record is None:
+            await self.facts.mark_workflow_adoption_attention(
+                invocation_id, expected_revision=attempt.revision, updated_at=self.clock()
+            )
+            return WorkflowAdoptOutcome(attempt, "needs_attention")
+        await self.source_adapter.resolve(request, parent_session_id=self.parent_session_id)
+        # Factory verifies existing parent capability/workspace authority before claim.
+        bounded = _BoundedAdoptionMutation(
+            self.mutation,
+            state=self.state,
+            attempt=attempt,
+            clock=self.clock,
+            max_operations=self.max_operations,
+            deadline=self.clock() + timedelta(milliseconds=self.max_wall),
+        )
+        if self._active is not None and self._active[0] == invocation_id:
+            _, bounded, service = self._active
+        else:
+            service = self.factory(bounded)
+            self._active = (invocation_id, bounded, service)
+        if service.parent_session_id != self.parent_session_id:
+            raise WorkflowStateError("ADOPT service parent differs", kind="integrity")
+        if fresh:
+            attempt = await self.activities.claim_workflow_activity(
+                invocation_id,
+                expected_revision=attempt.revision,
+                owner_id=self.owner,
+                reserved=BudgetAmounts(
+                    tool_calls=self.max_operations, wall_milliseconds=self.max_wall
+                ),
+                updated_at=self.clock(),
+            )
+
+        async def invoke(started: WorkflowActivityAttempt) -> WorkflowAdoptOutcome | None:
+            attempt = started
+            assert attempt.reserved is not None
+            assert attempt.updated_at is not None
+            bounded.attempt = attempt
+            bounded.limit = attempt.reserved.tool_calls or 0
+            bounded.deadline = attempt.updated_at + timedelta(
+                milliseconds=attempt.reserved.wall_milliseconds or 0
+            )
+            if fresh and self.clock() >= bounded.deadline:
                 await self.facts.mark_workflow_adoption_attention(
                     invocation_id, expected_revision=attempt.revision, updated_at=self.clock()
                 )
                 return WorkflowAdoptOutcome(attempt, "needs_attention")
-            await self.source_adapter.resolve(request, parent_session_id=self.parent_session_id)
-            # Factory verifies existing parent capability/workspace authority before claim.
-            bounded = _BoundedAdoptionMutation(
-                self.mutation,
-                state=self.state,
-                attempt=attempt,
-                clock=self.clock,
-                max_operations=self.max_operations,
-                deadline=self.clock() + timedelta(milliseconds=self.max_wall),
+            prepared = await service.prepare(request)
+            bounded.plan = prepared.plan
+            bounded.adoptions = self.adoptions
+            bounded.initial_versions = {t.target.path: t.version for t in prepared.targets}
+            if len(prepared.plan.targets) > bounded.limit:
+                await self.facts.mark_workflow_adoption_attention(
+                    invocation_id, expected_revision=attempt.revision, updated_at=self.clock()
+                )
+                return WorkflowAdoptOutcome(attempt, "needs_attention")
+            try:
+                record = await service.adopt(request)
+            except ResultAdoptionError as error:
+                if error.kind != "busy":
+                    raise
+                return WorkflowAdoptOutcome(attempt, "busy")
+            if not record.state.terminal:
+                if bounded.uncertain_ceiling:
+                    await self.facts.mark_workflow_adoption_attention(
+                        invocation_id,
+                        expected_revision=attempt.revision,
+                        updated_at=self.clock(),
+                    )
+                    return WorkflowAdoptOutcome(attempt, "needs_attention")
+                return WorkflowAdoptOutcome(attempt, "waiting_underlying")
+            return None
+
+        if fresh:
+            pending: WorkflowAdoptOutcome | None = None
+
+            async def dispatch(
+                started: WorkflowActivityAttempt, port: WorkspaceMutationPort
+            ) -> None:
+                nonlocal pending
+                bounded.inner = port
+                pending = await invoke(started)
+
+            attempt = await self.facts.execute_workflow_adoption(
+                invocation_id,
+                expected_revision=attempt.revision,
+                owner_id=self.owner,
+                owner_fence=attempt.owner_fence,
+                updated_at=self.clock(),
+                mutation=self.mutation,
+                dispatch=dispatch,
             )
-            if self._active is not None and self._active[0] == invocation_id:
-                _, bounded, service = self._active
-            else:
-                service = self.factory(bounded)
-                self._active = (invocation_id, bounded, service)
-            if service.parent_session_id != self.parent_session_id:
-                raise WorkflowStateError("ADOPT service parent differs", kind="integrity")
-            if fresh:
-                attempt = await self.activities.claim_workflow_activity(
-                    invocation_id,
-                    expected_revision=attempt.revision,
-                    owner_id=self.owner,
-                    reserved=BudgetAmounts(
-                        tool_calls=self.max_operations, wall_milliseconds=self.max_wall
-                    ),
-                    updated_at=self.clock(),
-                )
-
-            async def invoke(started: WorkflowActivityAttempt) -> WorkflowAdoptOutcome | None:
-                attempt = started
-                assert attempt.reserved is not None
-                assert attempt.updated_at is not None
-                bounded.attempt = attempt
-                bounded.limit = attempt.reserved.tool_calls or 0
-                bounded.deadline = attempt.updated_at + timedelta(
-                    milliseconds=attempt.reserved.wall_milliseconds or 0
-                )
-                if fresh and self.clock() >= bounded.deadline:
-                    await self.facts.mark_workflow_adoption_attention(
-                        invocation_id, expected_revision=attempt.revision, updated_at=self.clock()
-                    )
-                    return WorkflowAdoptOutcome(attempt, "needs_attention")
-                prepared = await service.prepare(request)
-                bounded.plan = prepared.plan
-                bounded.adoptions = self.adoptions
-                bounded.initial_versions = {t.target.path: t.version for t in prepared.targets}
-                if len(prepared.plan.targets) > bounded.limit:
-                    await self.facts.mark_workflow_adoption_attention(
-                        invocation_id, expected_revision=attempt.revision, updated_at=self.clock()
-                    )
-                    return WorkflowAdoptOutcome(attempt, "needs_attention")
-                try:
-                    record = await service.adopt(request)
-                except ResultAdoptionError as error:
-                    if error.kind != "busy":
-                        raise
-                    return WorkflowAdoptOutcome(attempt, "busy")
-                if not record.state.terminal:
-                    if bounded.uncertain_ceiling:
-                        await self.facts.mark_workflow_adoption_attention(
-                            invocation_id,
-                            expected_revision=attempt.revision,
-                            updated_at=self.clock(),
-                        )
-                        return WorkflowAdoptOutcome(attempt, "needs_attention")
-                    return WorkflowAdoptOutcome(attempt, "waiting_underlying")
-                return None
-
-            if fresh:
-                pending: WorkflowAdoptOutcome | None = None
-
-                async def dispatch(
-                    started: WorkflowActivityAttempt, port: WorkspaceMutationPort
-                ) -> None:
-                    nonlocal pending
-                    bounded.inner = port
-                    pending = await invoke(started)
-
-                attempt = await self.facts.execute_workflow_adoption(
-                    invocation_id,
-                    expected_revision=attempt.revision,
-                    owner_id=self.owner,
-                    owner_fence=attempt.owner_fence,
-                    updated_at=self.clock(),
-                    mutation=self.mutation,
-                    dispatch=dispatch,
-                )
-            else:
-                # Existing forward recovery stays bounded, but cannot reopen a
-                # completed live measurement scope or manufacture known usage.
-                bounded.inner = self.mutation
-                pending = await invoke(attempt)
-            return pending if pending is not None else await self._settle(attempt)
+        else:
+            # Existing forward recovery stays bounded, but cannot reopen a
+            # completed live measurement scope or manufacture known usage.
+            bounded.inner = self.mutation
+            pending = await invoke(attempt)
+        return pending if pending is not None else await self._settle(attempt)

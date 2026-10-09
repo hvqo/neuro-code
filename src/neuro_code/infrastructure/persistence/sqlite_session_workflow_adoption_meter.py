@@ -42,6 +42,9 @@ from neuro_code.infrastructure.persistence.sqlite_session_workflow_activity impo
     _start_activity,
 )
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_facts import _request
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_lock import (
+    adoption_execution_lock,
+)
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_measurements import (
     _fact,
     _mutation_fingerprint,
@@ -278,6 +281,30 @@ async def execute_adoption(
     No usage/receipt parameter exists. A historical RUNNING start is rejected.
     Composition supplies the real mutation dependency; this is not a new engine.
     """
+    with adoption_execution_lock(context._database_path, invocation_id, execution=True):
+        return await _execute_locked(
+            context,
+            invocation_id,
+            expected_revision=expected_revision,
+            owner_id=owner_id,
+            owner_fence=owner_fence,
+            updated_at=updated_at,
+            mutation=mutation,
+            dispatch=dispatch,
+        )
+
+
+async def _execute_locked(
+    context: _SqliteSessionPersistenceContext,
+    invocation_id: str,
+    *,
+    expected_revision: int,
+    owner_id: str,
+    owner_fence: int,
+    updated_at: datetime,
+    mutation: WorkspaceMutationPort,
+    dispatch: Callable[[WorkflowActivityAttempt, WorkspaceMutationPort], Awaitable[None]],
+) -> WorkflowActivityAttempt:
     execution_id = "adopt-exec-" + uuid.uuid4().hex
 
     def start(connection: sqlite3.Connection) -> WorkflowActivityAttempt:

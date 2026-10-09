@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from contextlib import closing
+from contextlib import closing, nullcontext
 from dataclasses import replace
 from datetime import datetime
 
@@ -32,6 +32,10 @@ from neuro_code.infrastructure.persistence.sqlite_session_workflow_activity impo
 )
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_facts import (
     _request,
+)
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_lock import (
+    adoption_execution_lock,
+    owns_execution_lock,
 )
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_meter import (
     execute_adoption,
@@ -71,8 +75,26 @@ class WorkflowAdoptionMixin(_SqliteSessionPersistenceContext):
         timestamp(updated_at)
 
         def reconcile() -> WorkflowActivityAttempt:
+            # Immutable terminal replay needs no execution-resource liveness.
+            # A read transaction validates the exact proof without settling again.
             with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN")
+                current = _load_attempt(connection, invocation_id)
+                if current is not None and current.state.terminal:
+                    return _reconcile_adoption(
+                        connection,
+                        invocation_id,
+                        parent_session_id=parent_session_id,
+                        parent_workspace_root=parent_workspace_root,
+                        updated_at=updated_at,
+                    )
+            with (
+                adoption_execution_lock(self._database_path, invocation_id),
+                closing(self._connect()) as connection,
+                connection,
+            ):
                 connection.execute("BEGIN IMMEDIATE")
+                # Re-read all facts under both OS arbitration and SQLite CAS.
                 return _reconcile_adoption(
                     connection,
                     invocation_id,
@@ -144,7 +166,8 @@ class WorkflowAdoptionMixin(_SqliteSessionPersistenceContext):
                     status=WorkflowStatus.NEEDS_ATTENTION,
                     waiting_reason=None,
                     failure=WorkflowFailure(
-                        "adopt_recovery_uncertain", "ADOPT needs exact underlying recovery evidence"
+                        "adopt_recovery_uncertain",
+                        "ADOPT needs exact underlying recovery evidence",
                     ),
                     updated_at=max(updated_at, run.updated_at),
                 )
@@ -155,9 +178,18 @@ class WorkflowAdoptionMixin(_SqliteSessionPersistenceContext):
                     "adopt-attention:" + invocation_id,
                     WorkflowEventKind.ACTIVITY,
                     canonical(
-                        {"operation": "adopt_recovery_uncertain", "invocation_id": invocation_id}
+                        {
+                            "operation": "adopt_recovery_uncertain",
+                            "invocation_id": invocation_id,
+                        }
                     ),
                 )
 
-        async with self._write_lock:
-            await run_blocking(lambda: _guard(mark))
+        guard = (
+            nullcontext()
+            if owns_execution_lock(self._database_path, invocation_id)
+            else adoption_execution_lock(self._database_path, invocation_id)
+        )
+        with guard:
+            async with self._write_lock:
+                await run_blocking(lambda: _guard(mark))

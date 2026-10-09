@@ -1571,6 +1571,7 @@ def test_canonical_persistence_modules_are_the_only_persistence_implementations(
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_facts",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_meter",
+        "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_lock",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_measurements",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_settlement",
         "neuro_code.infrastructure.persistence.sqlite_session_dag_results",

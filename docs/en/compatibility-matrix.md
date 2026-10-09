@@ -195,3 +195,10 @@ retains generated-task accounting ownership. Before RUNNING, terminal model/tool
 token usage must be exactly zero, while elapsed wall time is allowed. Writes and
 recovery reject invalid records; RUNNING unknown/overrun accounting remains valid.
 See [ADR 0202](adr/0202-dw5b1-durable-workflow-activity-protocol.md).
+
+## DW5b-2 active ADOPT execution arbitration
+
+Schema 41 is unchanged. A nonblocking OS invocation lock spans first RUNNING through
+atomic measurement settlement; other Stores/processes return busy without unknown
+settlement or Run changes. Process exit releases the lock for conservative recovery.
+Durable terminal replay remains read-only. See [ADR 0203](adr/0203-dw5b2-real-workflow-adopt-adapter.md).

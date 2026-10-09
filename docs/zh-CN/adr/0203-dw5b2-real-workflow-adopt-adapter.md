@@ -135,14 +135,40 @@ Terminal recovery read 同样执行 provenance 与保守 usage 校验。Nontermi
 继续严格检查 live source 和 parent identity，复用既有 core owner liveness/lease/CAS；
 另一活跃 core owner 仍返回 busy。
 
+## 活跃执行与恢复仲裁
+
+Adoption terminal 不能证明 Activity execution scope 已结束。以 canonical 本地
+SQLite 路径和稳定 invocation identity 为 key 的非阻塞 OS 排他锁，覆盖首次
+RUNNING/execution identity 提交、prepare/adopt、port 调用、terminal observation、
+measurement/result/ledger/journal 原子结算，直到 scope exit。POSIX 使用 `flock`，
+Windows 使用 `msvcrt` 单字节锁。外部执行期间不长期持有 SQLite 写事务。
+
+公共恢复先获取同一锁，再进入 `BEGIN IMMEDIATE` 并重新读取全部状态和 proof。
+锁仍被执行者持有时返回 `concurrent_execution`，Adapter 转为有界 `busy`，不修改
+文件、计费或 Run。Deadline、PID 猜测和 lease 都不能覆盖此锁。底层事实尚不存在的
+RUNNING 恢复标记也受锁保护。首次执行 task 可以在持锁期间标记自己的不确定 ceiling；
+此 task-local 记账不能替代 OS 仲裁，child task 不能借用它。
+
+进程死亡或明确退出 scope 后，OS 释放锁。若没有已原子提交的完整 result，恢复才能
+保守结算 unknown；不签发新的 execution scope 或再次 dispatch 权限。孤立的序列化
+measurement 仍 fail closed。Immutable terminal Activity replay 仅验证并读取 durable
+facts，不等待执行资源存活、不改写 usage、不要求 preserved resources。完整 known
+结算必须先于锁释放；外层 ACK 丢失只读取同一个 known result。
+
+锁文件释放后保持未锁定，数据库使用期间不 unlink；删除重建 inode 会破坏排他性。
+文件不保存 receipt、owner authority 或 usage，不是第二账本，也不是永久持有的锁。
+该机制用于共享同一本地数据库的协作进程，不是 Python dependency 的 OS 安全隔离，
+也不是分布式文件系统协议。Schema 保持 41，不承诺跨 SQLite 与文件系统的 exactly-once
+原子事务。
+
 ## Crash 边界
 
 | 窗口 | 恢复 |
 |---|---|
-| RUNNING 已提交，无 adoption fact | 不根据 RUNNING replay 重新 dispatch；保留预留并 NEEDS_ATTENTION |
+| RUNNING 已提交，无 adoption fact | Scope 活跃：busy；scope 已遗弃：不 redispatch，保留 reservation 并进入 NEEDS_ATTENTION |
 | Plan 已提交，mutation 未开始 | 同一 adoption ID/plan，live validation 与既有 core ownership recovery |
 | Intent 已保存／mutation 已发生但 ACK 丢失／scope 不完整 | Unknown accounting；既有 target CAS 与 desired-image observation 防止重复写 desired image |
-| Adoption terminal，Activity result 未提交 | 已有原子提交的 Activity result 按 known replay，否则 unknown；无 live-resource 依赖或 mutation |
+| Adoption terminal，Activity result 缺失 | 执行锁仍持有：busy，不结算；scope 退出或进程死亡后：unknown 原子结算，不要求 live resources、不 mutation |
 | Activity result 或 Interpreter consume ACK 丢失 | 精确 durable replay，不重复结算或 adoption |
 | 第三方修改 parent | 既有 three-way/conflict/indeterminate 检查，不覆盖新内容或无关脏文件 |
 

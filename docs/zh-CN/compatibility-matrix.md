@@ -188,3 +188,9 @@ ADOPT/VERIFY/REPAIR adapter 或权限变化。Activity reservation/result 必须
 `generated_tasks=0`，生成任务计费仍归 DW3。进入 RUNNING 前的 terminal model/tool/
 token usage 必须严格为零，允许记录 wall time。写入和恢复拒绝非法记录；RUNNING
 的 unknown/overrun accounting 仍有效。见 [ADR 0202](adr/0202-dw5b1-durable-workflow-activity-protocol.md)。
+
+## DW5b-2 活跃 ADOPT 执行仲裁
+
+Schema 41 保持不变。非阻塞 OS invocation 锁覆盖首次 RUNNING 到原子计量结算；
+其他 Store/进程返回 busy，不抢先结算 unknown 或修改 Run。进程退出后释放锁，
+允许保守恢复。Durable terminal replay 仍只读。见 [ADR 0203](adr/0203-dw5b2-real-workflow-adopt-adapter.md)。
