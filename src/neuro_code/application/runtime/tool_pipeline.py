@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, cast
 
 from neuro_code.application.checkpoints.turn_undo import (
     TurnWorkspaceCheckpointCoordinator,
@@ -59,6 +59,10 @@ from neuro_code.application.ports.tools import (
     ToolOutputArtifactStore,
 )
 from neuro_code.application.ports.web_search import HostedWebSearchEvent
+from neuro_code.application.ports.workflow_verification import (
+    ApprovedWorkflowVerification,
+    VerificationEntryGuard,
+)
 from neuro_code.application.ports.workspace_changes import (
     WorkspaceChangeCheckpoint,
     WorkspaceChangeObserver,
@@ -530,6 +534,100 @@ class ToolExecutor:
             raise ToolError(result.content)
         return WorkspaceMutationResult(request.path, request.operation)
 
+    @property
+    def workspace_root(self) -> Path:
+        return self._tool_context.cwd
+
+    async def verify_command(
+        self,
+        configuration: ApprovedWorkflowVerification,
+        *,
+        session_id: str,
+        pre_entry_guard: VerificationEntryGuard,
+    ) -> ToolExecutionResult:
+        """Foreground internal verification through the ordinary tool pipeline.
+
+        No model, background promotion or synthetic verification truth. Only the
+        actual tool-entry callback determines whether one tool call was made.
+        """
+        if not isinstance(configuration, ApprovedWorkflowVerification):
+            raise TypeError("VERIFY needs trusted typed configuration")
+        if (
+            self._tool_context.sandbox_profile.enabled
+            and self._tool_context.local_process_sandbox is None
+        ):
+            # An explicit sandbox without a composition-owned launcher is a
+            # proven pre-dispatch block, not an uncertain shell execution.
+            return ToolExecutionResult(
+                "workflow-verify-" + uuid.uuid4().hex,
+                "bash",
+                "explicit VERIFY sandbox has no bound child process launcher",
+                True,
+                metadata={"reason": "missing_child_process_sandbox"},
+                not_started=True,
+            )
+        executor = ToolExecutor(
+            tools=self._tools,
+            permissions=self._permissions,
+            approver=self._approver,
+            tool_context=replace(
+                self._tool_context,
+                background_tasks=None,
+                output_artifact_store=None,
+                output_byte_limit=configuration.output_byte_limit,
+            ),
+            session_store=self._session_store,
+            workspace_change_observer=self._workspace_change_observer,
+            context_builder=self._context_builder,
+            hooks=self._hooks,
+            workspace_undo=self._workspace_undo,
+        )
+        entered = False
+        terminal: ToolExecutionResult | None = None
+
+        def enter() -> None:
+            nonlocal entered
+            entered = True
+
+        async def emit(kind: AgentEventKind, data: dict[str, object]) -> AgentEvent:
+            nonlocal terminal
+            payload = data.get("execution_result")
+            if kind in {AgentEventKind.TOOL_COMPLETED, AgentEventKind.TOOL_FAILED} and isinstance(
+                payload, dict
+            ):
+                value = cast(dict[str, Any], payload)
+                terminal = ToolExecutionResult(
+                    value["id"],
+                    value["name"],
+                    value["content"],
+                    value["is_error"],
+                    value.get("metadata"),
+                    value.get("duration_seconds"),
+                    value.get("not_started", False),
+                    value.get("cancelled", False),
+                )
+            return AgentEvent.create(0, kind, data)
+
+        await executor.execute(
+            ToolCall(
+                "workflow-verify-" + uuid.uuid4().hex,
+                "bash",
+                {
+                    "command": configuration.command,
+                    "timeout_seconds": configuration.timeout_milliseconds / 1000,
+                },
+            ),
+            [],
+            [],
+            emit,
+            session_id,
+            execution_entered_sink=enter,
+            pre_entry_guard=pre_entry_guard,
+        )
+        if terminal is None:
+            raise ToolError("VERIFY has no terminal tool evidence")
+        return replace(terminal, not_started=not entered)
+
     async def execute(
         self,
         call: ToolCall,
@@ -547,6 +645,8 @@ class ToolExecutor:
         model_result_byte_limit: int | None = None,
         model_result_estimated_token_limit: int | None = None,
         intent: str | None = None,
+        execution_entered_sink: Callable[[], None] | None = None,
+        pre_entry_guard: VerificationEntryGuard | None = None,
     ) -> ToolExecutionObservation | None:
         # Only strip the intent argument when Neuro Code itself injected that
         # synthetic field into this tool's provider-facing schema.  External and
@@ -911,6 +1011,17 @@ class ToolExecutor:
                 ),
             )
             try:
+                # Trusted VERIFY-only guard, after every awaited approval/hook/
+                # workspace preflight. Ordinary runtime callers leave it unset.
+                if pre_entry_guard is not None and not await pre_entry_guard():
+                    result = ToolResult("VERIFY dispatch is no longer authorized", is_error=True)
+                    record_result(result)
+                    await emit(
+                        AgentEventKind.TOOL_FAILED, terminal_event_data(result, not_started=True)
+                    )
+                    return None
+                if execution_entered_sink is not None:
+                    execution_entered_sink()
                 result = await tool.execute(
                     call.arguments,
                     execution_context,

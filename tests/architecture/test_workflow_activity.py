@@ -45,7 +45,7 @@ from tests.architecture.test_workflow_projection import END
 
 async def ready(tmp_path, *, ceiling=None, inputs=None):
     data = source()
-    data["steps"] = [activity("verify", inputs=inputs)]
+    data["steps"] = [activity("verify", "parent.repair", inputs=inputs)]
     store = await setup(tmp_path, data, ceiling=ceiling)
     await tick(store)
     await tick(store)
@@ -100,7 +100,7 @@ def result(
         "a" * 64,
         usage,
         END,
-        canonical({"status": "recorded", "workspace_generation": 0})
+        canonical({"status": "recorded", "response": "protocol fixture"})
         if state is State.COMPLETED
         else None,
     )
@@ -149,7 +149,7 @@ async def test_publish_waiting_and_readonly_tick_no_side_effects(tmp_path):
 @pytest.mark.parametrize("point", ["_append_event", "_save_attempt"])
 async def test_publish_crash_rolls_back_all_facts(tmp_path, point):
     data = source()
-    data["steps"] = [activity("verify")]
+    data["steps"] = [activity("verify", "parent.repair")]
     store = await setup(tmp_path, data)
     await tick(store)
     before = await store.get_workflow_run("run")
@@ -161,7 +161,7 @@ async def test_publish_crash_rolls_back_all_facts(tmp_path, point):
 
 async def test_publish_ack_loss_reopen_and_exact_replay(tmp_path):
     data = source()
-    data["steps"] = [activity("verify")]
+    data["steps"] = [activity("verify", "parent.repair")]
     store = await setup(tmp_path, data)
     await tick(store)
     real = store.publish_workflow_activity
@@ -515,13 +515,9 @@ async def test_schema39_fake_output_preserved_without_rewrite(tmp_path):
         digest([key, step.input_fingerprint]),
         canonical({"status": "fake", "workspace_generation": 0}),
     )
-    await store.commit_workflow_step_output(
-        old,
-        expected_generation=run.generation,
-        owner_id=run.owner_id,
-        owner_fence=run.owner_fence,
-        updated_at=END,
-    )
+    from tests.architecture.workflow_verify_fixtures import insert_legacy_fake_output
+
+    insert_legacy_fake_output(store, run, old)
     with closing(sqlite3.connect(store.database_path)) as connection, connection:
         before = connection.execute("SELECT * FROM workflow_step_outputs").fetchall()
         connection.execute("ALTER TABLE workflow_step_outputs RENAME TO old_output")
@@ -537,7 +533,7 @@ async def test_schema39_fake_output_preserved_without_rewrite(tmp_path):
         connection.execute("DROP TABLE workflow_activity_attempts")
         connection.execute("UPDATE schema_meta SET version = 39")
     store = await reopen(store)
-    assert SCHEMA_VERSION == 41
+    assert SCHEMA_VERSION == 42
     assert await store.get_workflow_step_output("run", step.identity) == old
     with closing(sqlite3.connect(store.database_path)) as connection:
         assert connection.execute("SELECT * FROM workflow_step_outputs").fetchall() == before
@@ -678,7 +674,7 @@ async def test_unknown_result_survives_explicit_existing_ledger_reconciliation(t
 @pytest.mark.parametrize("wrong", ["generation", "owner", "fence"])
 async def test_stale_interpreter_publication_rejected(tmp_path, wrong):
     data = source()
-    data["steps"] = [activity("verify")]
+    data["steps"] = [activity("verify", "parent.repair")]
     store = await setup(tmp_path, data)
     await tick(store)
     run = await store.get_workflow_run("run")

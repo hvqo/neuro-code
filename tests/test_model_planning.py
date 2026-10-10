@@ -1101,7 +1101,7 @@ async def test_schema_24_to_29_preserves_existing_task_dag() -> None:
             connection.execute("UPDATE schema_meta SET version = 24 WHERE singleton = 1")
             connection.commit()
         await store.initialize()
-        assert SCHEMA_VERSION == 41
+        assert SCHEMA_VERSION == 42
         assert (
             await store.get_task_dag("preexisting")
         ).definition_fingerprint == dag.definition_fingerprint

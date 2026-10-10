@@ -30,7 +30,6 @@ from neuro_code.domain.workflows.interpreter import typed_json
 from neuro_code.domain.workflows.publication import canonical, digest
 from neuro_code.domain.workflows.state import (
     BudgetAmounts,
-    StepIdentity,
     WorkflowChange,
     WorkflowEventKind,
     WorkflowFailure,
@@ -44,6 +43,9 @@ from neuro_code.domain.workflows.state import (
 )
 from neuro_code.infrastructure.persistence.sqlite_session_connection import (
     _SqliteSessionPersistenceContext,
+)
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_activity_codec import (
+    decode_attempt,
 )
 from neuro_code.infrastructure.persistence.sqlite_session_workflows import (
     _append_event,
@@ -66,41 +68,6 @@ def _run(connection: sqlite3.Connection, run_id: str) -> WorkflowRun:
     return run
 
 
-def _invocation(data: dict[str, Any]) -> WorkflowActivityInvocation:
-    step = data["step"]
-    if not isinstance(step, dict):
-        raise ValueError("activity step is invalid")
-    return WorkflowActivityInvocation(
-        data["invocation_id"],
-        data["run_id"],
-        data["definition_fingerprint"],
-        data["parent_session_id"],
-        StepIdentity(**step),
-        ActivityKind(data["activity"]),
-        data["request_json"],
-        data["request_fingerprint"],
-        data["input_fingerprint"],
-        datetime.fromisoformat(data["created_at"]),
-    )
-
-
-def _result(data: dict[str, Any]) -> WorkflowActivityResult:
-    usage = data["usage"]
-    if not isinstance(usage, dict):
-        raise ValueError("activity usage is invalid")
-    return WorkflowActivityResult(
-        data["invocation_id"],
-        data["request_fingerprint"],
-        ActivityKind(data["activity"]),
-        WorkflowActivityState(data["state"]),
-        data["source_id"],
-        data["source_fingerprint"],
-        BudgetAmounts(**usage),
-        datetime.fromisoformat(data["terminal_at"]),
-        data["output_json"],
-    )
-
-
 def _load_attempt(
     connection: sqlite3.Connection, invocation_id: str
 ) -> WorkflowActivityAttempt | None:
@@ -115,19 +82,8 @@ def _load_attempt(
     data = json.loads(row[4])
     if not isinstance(data, dict) or _json(data) != row[4] or digest(data) != row[5]:
         raise WorkflowStateError("activity snapshot fingerprint mismatch", kind="integrity")
-    invocation = _invocation(data["invocation"])
-    reserved = data["reserved"]
-    attempt = WorkflowActivityAttempt(
-        invocation,
-        WorkflowActivityState(data["state"]),
-        data["revision"],
-        data["owner_id"],
-        data["owner_fence"],
-        data["reservation_id"],
-        BudgetAmounts(**reserved) if reserved is not None else None,
-        _result(data["result"]) if data["result"] is not None else None,
-        datetime.fromisoformat(data["updated_at"]),
-    )
+    attempt = decode_attempt(data)
+    invocation = attempt.invocation
     if (
         attempt.invocation.invocation_id != invocation_id
         or attempt.invocation.run_id != run.run_id
@@ -176,7 +132,15 @@ def _load_attempt(
         "WHERE run_id = ? AND generation = ?",
         (run.run_id, row[6]),
     ).fetchone()
-    if publication != (WorkflowEventKind.ACTIVITY.value, expected_publish):
+    real_publish = canonical(dict(json.loads(expected_publish), verification_protocol=1))
+    legacy_verify = invocation.activity is ActivityKind.VERIFY and publication == (
+        WorkflowEventKind.ACTIVITY.value,
+        expected_publish,
+    )
+    if publication != (WorkflowEventKind.ACTIVITY.value, expected_publish) and not (
+        invocation.activity is ActivityKind.VERIFY
+        and publication == (WorkflowEventKind.ACTIVITY.value, real_publish)
+    ):
         raise WorkflowStateError("activity publication journal differs", kind="integrity")
     events = connection.execute(
         "SELECT revision, kind, payload_json, payload_fingerprint FROM workflow_activity_events "
@@ -262,6 +226,22 @@ def _load_attempt(
         )
 
         _verify_terminal_adopt(connection, attempt)
+    if (
+        attempt.result is not None
+        and invocation.activity is ActivityKind.VERIFY
+        and (
+            not legacy_verify
+            or connection.execute(
+                "SELECT 1 FROM workflow_verification_executions WHERE invocation_id=?",
+                (attempt.invocation.invocation_id,),
+            ).fetchone()
+        )
+    ):
+        from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_facts import (
+            verify_terminal,
+        )
+
+        verify_terminal(connection, attempt)
     return attempt
 
 
@@ -349,6 +329,7 @@ def _budget_change(
     change: WorkflowChange,
     updated_at: datetime,
     request_id: str,
+    verification: dict[str, Any] | None = None,
 ) -> WorkflowRun:
     if updated_at < run.updated_at:
         raise WorkflowStateError("activity time precedes run", kind="protocol")
@@ -369,6 +350,7 @@ def _budget_change(
                 "operation": "activity_budget",
                 "reservation_id": change.reservation_id,
                 "amounts": asdict(change.amounts),
+                **({"verification": verification} if verification is not None else {}),
             }
         ),
     )
@@ -379,6 +361,8 @@ def _settle_terminal(
     connection: sqlite3.Connection,
     current: WorkflowActivityAttempt,
     result: WorkflowActivityResult,
+    *,
+    verification: dict[str, Any] | None = None,
 ) -> WorkflowActivityAttempt:
     """Shared atomic settlement, after caller-specific authority checks."""
     run = _run(connection, current.invocation.run_id)
@@ -393,6 +377,7 @@ def _settle_terminal(
         ),
         result.terminal_at,
         "activity-settle:" + result.invocation_id,
+        verification,
     )
     terminal = replace(
         current,
@@ -620,6 +605,11 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                             "invocation_id": invocation.invocation_id,
                             "invocation_fingerprint": invocation.fingerprint,
                             "step_key": invocation.step.key,
+                            **(
+                                {"verification_protocol": 1}
+                                if invocation.activity is ActivityKind.VERIFY
+                                else {}
+                            ),
                         }
                     ),
                 )
@@ -793,6 +783,10 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                 if declared.activity is ActivityKind.ADOPT and "source" in dict(declared.inputs):
                     raise WorkflowStateError(
                         "bound ADOPT requires terminal-proof reconciliation", kind="protocol"
+                    )
+                if declared.activity is ActivityKind.VERIFY:
+                    raise WorkflowStateError(
+                        "real VERIFY requires controlled evidence settlement", kind="protocol"
                     )
                 if result.output_json is not None:
                     typed_json(

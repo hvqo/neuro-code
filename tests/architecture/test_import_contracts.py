@@ -2427,6 +2427,7 @@ def test_canonical_runtime_public_types_keep_module_paths_and_metadata() -> None
         "resource_scope",
         "workspace_root",
         "workspace_mutation",
+        "verification_executor",
         "runtime_web_capabilities",
         "effective_agent_binding",
     )
@@ -2440,6 +2441,7 @@ def test_canonical_runtime_public_types_keep_module_paths_and_metadata() -> None
         "resource_scope",
         "workspace_root",
         "workspace_mutation",
+        "verification_executor",
         "runtime_web_capabilities",
         "effective_agent_binding",
     )

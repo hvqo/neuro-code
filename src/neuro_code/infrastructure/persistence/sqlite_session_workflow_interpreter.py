@@ -11,7 +11,7 @@ from datetime import datetime
 from neuro_code.application.ports.workflow_state import WorkflowStateError
 from neuro_code.domain.task_dag import TaskDagState
 from neuro_code.domain.workflows.activity import WorkflowActivityState
-from neuro_code.domain.workflows.definition import Activity, Map, TaskBatch
+from neuro_code.domain.workflows.definition import Activity, ActivityKind, Map, TaskBatch
 from neuro_code.domain.workflows.interpreter import (
     OutputKind,
     WorkflowStepOutput,
@@ -128,6 +128,34 @@ class WorkflowInterpreterMixin(_SqliteSessionPersistenceContext):
         identifier(owner_id)
         timestamp(updated_at)
 
+        if output.kind is OutputKind.FAKE_ACTIVITY:
+            raise WorkflowStateError(
+                "legacy fake Activity is historical read-only", kind="protocol"
+            )
+        real_verify = False
+        if output.kind is OutputKind.ACTIVITY:
+            from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_scope import (
+                owns_fresh_consumption,
+                revalidate_consumption,
+            )
+
+            def is_real_verify() -> bool:
+                with closing(self._connect()) as connection:
+                    run = _required_run(connection, output.run_id)
+                    definition = _load_definition(connection, run.definition_fingerprint)
+                    if definition is None:
+                        raise WorkflowStateError("definition missing", kind="integrity")
+                    declared = _validate_position(definition, output.step)
+                    return (
+                        isinstance(declared, Activity) and declared.activity is ActivityKind.VERIFY
+                    )
+
+            real_verify = await run_blocking(is_real_verify)
+            if real_verify and not owns_fresh_consumption(self._database_path, output):
+                raise WorkflowStateError(
+                    "real VERIFY output needs current workspace evidence", kind="stale_verification"
+                )
+
         def write() -> WorkflowWriteResult:
             with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -223,6 +251,8 @@ class WorkflowInterpreterMixin(_SqliteSessionPersistenceContext):
                 return WorkflowWriteResult(proposed, proposed.generation)
 
         async with self._write_lock:
+            if real_verify:
+                await revalidate_consumption(self._database_path, output)
             return await run_blocking(lambda: _guard(write))
 
 
@@ -244,7 +274,11 @@ def _input_value(connection: sqlite3.Connection, run: WorkflowRun, value: str) -
 
 
 def _validate_output(
-    connection: sqlite3.Connection, run: WorkflowRun, output: WorkflowStepOutput
+    connection: sqlite3.Connection,
+    run: WorkflowRun,
+    output: WorkflowStepOutput,
+    *,
+    historical: bool = False,
 ) -> None:
     definition = _load_definition(connection, run.definition_fingerprint)
     if definition is None:
@@ -269,6 +303,12 @@ def _validate_output(
             or attempt.result.output_json != output.output_json
         ):
             raise WorkflowStateError("durable activity result linkage mismatch", kind="integrity")
+        if declared.activity is ActivityKind.VERIFY and not historical:
+            from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_facts import (
+                verify_terminal,
+            )
+
+            verify_terminal(connection, attempt)
     elif output.kind is OutputKind.PROJECTION:
         publication = _load_publication(connection, expansion_id(run.run_id, output.step))
         if publication is None or publication.dag.state is not TaskDagState.COMPLETED:
@@ -351,5 +391,5 @@ def _load_output(
         or row[6] > run.generation
     ):
         raise WorkflowStateError("output snapshot/journal linkage mismatch", kind="integrity")
-    _validate_output(connection, run, result)
+    _validate_output(connection, run, result, historical=True)
     return result

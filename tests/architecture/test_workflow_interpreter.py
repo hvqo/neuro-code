@@ -42,6 +42,9 @@ def activity(step_id, kind="parent.verify", inputs=None):
 
 
 def engine(store, **kwargs):
+    from tests.architecture.workflow_verify_fixtures import FixtureVerificationConsumer
+
+    kwargs.setdefault("verification", FixtureVerificationConsumer(store))
     return DurableWorkflowInterpreter(
         state=store,
         facts=store,
@@ -56,7 +59,7 @@ def engine(store, **kwargs):
 async def setup(tmp_path, data=None, value=None, *, ceiling=None):
     store = SqliteSessionStore(tmp_path / "sessions.db")
     await store.initialize()
-    session = await store.create_session("/workspace", "provider", "model")
+    session = await store.create_session(str(tmp_path / "workspace"), "provider", "model")
     definition = compile_workflow(canonical(data or source()))
     value = value if value is not None else {"targets": [], "objective": "中文目标"}
     input_json = typed_json(definition.input_schema, value)
@@ -82,6 +85,16 @@ async def setup(tmp_path, data=None, value=None, *, ceiling=None):
     return store
 
 
+async def test_fixture_session_root_uses_native_path_spelling(tmp_path):
+    from pathlib import Path
+
+    store = await setup(tmp_path)
+    run = await store.get_workflow_run("run")
+    session = await store.get_session(run.parent_session_id)
+    assert session.cwd == str(tmp_path / "workspace")
+    assert str(Path(session.cwd)) == session.cwd
+
+
 async def tick(store, interpreter=None):
     run = await store.get_workflow_run("run")
     result = await (interpreter or engine(store)).advance_once(
@@ -95,11 +108,21 @@ async def tick(store, interpreter=None):
     return result
 
 
-async def external_activity_result(store):
+async def external_activity_result(store, *, verify_after_iteration=1):
     """Test-only owner; Interpreter never invokes this helper."""
     run = await store.get_workflow_run("run")
     step = next(s for s in run.steps if s.identity == run.position)
     key = invocation_id(run.run_id, step.identity, step.input_fingerprint)
+    current = await store.get_workflow_activity(key)
+    if current.invocation.activity.value == "parent.verify":
+        from tests.architecture.workflow_verify_fixtures import finish_fixture_verification
+
+        return await finish_fixture_verification(
+            store,
+            current,
+            passed=step.identity.iteration >= verify_after_iteration
+            or step.identity.iteration == 0,
+        )
     attempt = await store.claim_workflow_activity(
         key,
         expected_revision=0,
@@ -139,11 +162,11 @@ async def external_activity_result(store):
     )
 
 
-async def drive(store, *, limit=80, interpreter=None):
+async def drive(store, *, limit=80, interpreter=None, verify_after_iteration=1):
     for _ in range(limit):
         result = await tick(store, interpreter)
         if result.action == "activity_waiting":
-            await external_activity_result(store)
+            await external_activity_result(store, verify_after_iteration=verify_after_iteration)
             continue
         if not result.progressed:
             return result
@@ -192,7 +215,7 @@ async def test_sequence_external_activities_and_completion_is_only_waiting(tmp_p
         for name in ("adopt", "verify", "repair")
     ]
     assert all(o.kind is OutputKind.ACTIVITY for o in outputs)
-    assert all(json.loads(o.output_json)["status"] == "fake" for o in outputs)
+    assert [json.loads(o.output_json)["status"] for o in outputs] == ["fake", "PASS", "fake"]
     assert json.loads(outputs[0].output_json)["parent_workspace_changed"] is False
     assert result.run.ledger.committed.generated_tasks == 0
     assert await tick(store) == result
@@ -224,7 +247,7 @@ async def test_sequence_external_activities_and_completion_is_only_waiting(tmp_p
             {
                 "op": "eq",
                 "ref": {"kind": "result", "step_id": "verify", "field_path": ["status"]},
-                "value": "fake",
+                "value": "PASS",
             },
             "pass",
         ),
@@ -258,14 +281,14 @@ async def test_branch_persisted_selection_skips_other_path(tmp_path, condition, 
 @pytest.mark.parametrize("target", [1, 2, 3, 4])
 async def test_repeat_post_body_durable_iterations_and_limit(tmp_path, target):
     data = source("repeat")
-    data["steps"][0]["until"]["ref"]["field_path"] = ["workspace_generation"]
-    data["steps"][0]["until"]["value"] = target
+    data["steps"][0]["until"]["ref"]["field_path"] = ["status"]
+    data["steps"][0]["until"]["value"] = "PASS"
     store = await setup(tmp_path, data)
     for _ in range(30):
         result = await tick(store)
         store = await reopen(store)  # every fact can lose its acknowledgement
         if result.action == "activity_waiting":
-            await external_activity_result(store)
+            await external_activity_result(store, verify_after_iteration=target)
             continue
         if not result.progressed:
             break
@@ -289,8 +312,8 @@ async def test_repeat_post_body_durable_iterations_and_limit(tmp_path, target):
 @pytest.mark.parametrize("selector", [None, 1])
 async def test_repeat_result_resolves_exact_durable_body_output(tmp_path, selector):
     data = source("repeat")
-    data["steps"][0]["until"]["ref"]["field_path"] = ["workspace_generation"]
-    data["steps"][0]["until"]["value"] = 2
+    data["steps"][0]["until"]["ref"]["field_path"] = ["status"]
+    data["steps"][0]["until"]["value"] = "PASS"
     ref = {
         "kind": "result",
         "step_id": "repair_loop",
@@ -300,11 +323,14 @@ async def test_repeat_result_resolves_exact_durable_body_output(tmp_path, select
     }
     if selector:
         ref["iteration"] = selector
-    data["steps"].append(activity("consumer", inputs={"result": ref}))
+    data["steps"].append(activity("consumer", "parent.repair", inputs={"result": ref}))
     store = await setup(tmp_path, data)
-    await drive(store)
+    await drive(store, verify_after_iteration=2)
     output = await store.get_workflow_step_output("run", StepIdentity("consumer"))
-    expected = digest({"result": 2 if selector is None else 1})
+    body = await store.get_workflow_step_output(
+        "run", StepIdentity("verify", 2 if selector is None else 1)
+    )
+    expected = digest({"result": json.loads(body.output_json)["workspace_generation"]})
     assert output.input_fingerprint == expected
 
 
@@ -541,7 +567,7 @@ async def test_step_output_tamper_and_conflicting_replay_rejected(tmp_path):
     await tick(store)
     output = await store.get_workflow_step_output("run", StepIdentity("verify"))
     run = await store.get_workflow_run("run")
-    replay = await store.commit_workflow_step_output(
+    replay = await engine(store).verification.consume(
         output,
         expected_generation=run.generation,
         owner_id=run.owner_id,
@@ -550,7 +576,7 @@ async def test_step_output_tamper_and_conflicting_replay_rejected(tmp_path):
     )
     assert replay.replayed
     with pytest.raises(WorkflowStateError, match="conflict"):
-        await store.commit_workflow_step_output(
+        await engine(store).verification.consume(
             replace(
                 output, output_json=canonical({"status": "changed", "workspace_generation": 0})
             ),
@@ -574,7 +600,7 @@ async def test_schema_38_upgrade_retains_previous_run_and_snapshot(tmp_path):
         connection.execute("DROP TABLE workflow_run_inputs")
         connection.execute("UPDATE schema_meta SET version = 38")
     store = await reopen(store)
-    assert SCHEMA_VERSION == 41
+    assert SCHEMA_VERSION == 42
     assert await store.get_workflow_run("run") == before
     with pytest.raises(WorkflowStateError, match="missing"):
         await tick(store)  # no invented input for legacy runs
@@ -620,8 +646,8 @@ async def test_resultref_from_exact_projection_drives_branch(tmp_path):
 async def test_repeat_task_budget_retained_after_restart(tmp_path):
     data = source("repeat")
     data["steps"][0]["steps"].insert(0, source()["steps"][0])
-    data["steps"][0]["until"]["ref"]["field_path"] = ["workspace_generation"]
-    data["steps"][0]["until"]["value"] = 2
+    data["steps"][0]["until"]["ref"]["field_path"] = ["status"]
+    data["steps"][0]["until"]["value"] = "PASS"
     store = await setup(tmp_path, data)
     for iteration in (1, 2):
         result = await drive(store)
@@ -630,7 +656,7 @@ async def test_repeat_task_budget_retained_after_restart(tmp_path):
         assert (await tick(store)).action == "consume_projection"
         await tick(store)  # initialize verify
         await tick(store)  # publish verify
-        await external_activity_result(store)
+        await external_activity_result(store, verify_after_iteration=2)
         await tick(store)  # consume durable verify
         await tick(store)  # next iteration or repeat exit
         store = await reopen(store)
