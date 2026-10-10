@@ -26,7 +26,7 @@ Claim 在既有 run ledger 原子预留预算。首次 owner CAS 将 RUNNING 与
 
 历史 CLAIMED／RUNNING 不重新授予 dispatch。缺少终态证据则保守进入 INDETERMINATE：RUNNING tool/wall usage 保持 unknown；遗弃 CLAIMED 的执行用量为零，准备 wall time 未知。不以超时／PID 或文件现状推断调用次数。进程内 task-local 首次执行 scope 限制 known settlement；这是可信 composition 边界，不是对任意 Python 或恶意数据库管理员的 OS 隔离。命令／workspace port 和 pre-entry guard 由可信 composition 组装，不暴露为模型、MCP、Skill 或 ToolCall JSON 参数。普通 ToolExecutor 调用不设置可选 guard，保留原策略和取消行为。
 
-Evidence、immutable Activity result、budget consumption、Run 安全状态和 journal 在一个 SQLite transaction 中提交。Rollback 保留 RUNNING，不产生半份证明；提交后 outer ACK 丢失则返回原终态事实，不重复执行。取消等待既有 Bash 清理进程后释放仲裁。最终 guard 关闭审批／hook／preflight 期间已经完成取消却仍启动的窗口；guard 之后的并发取消仍可能与外部进程进入竞争，由既有执行取消／清理处理。SQLite 本地读取与 OS 进程启动不是跨系统原子事务。unknown／overrun 进入 NEEDS_ATTENTION；late accounting 不重新打开终止 Workflow。
+Evidence、immutable Activity result、budget consumption、Run 安全状态和 journal 在一个 SQLite transaction 中提交。Rollback 保留 RUNNING，不产生半份证明；提交后 outer ACK 丢失则返回原终态事实，不重复执行。取消等待既有 Bash 清理进程后释放仲裁。最终 guard 关闭审批／hook／preflight 期间已经完成取消却仍启动的窗口；guard 之后的并发取消仍可能与外部进程进入竞争，由既有执行取消／清理处理。SQLite 本地读取与 OS 进程启动不是跨系统原子事务。若取消 watcher 在最终 guard 等待期间、终态工具 observation 的 ACK 保存前打断任务，既有 RUNNING recovery 保守保留 unknown，即使测试 launcher 能证明零启动也不据此重派命令；已经完成的工具进入前拒绝 observation 则计零次。unknown／overrun 进入 NEEDS_ATTENTION；late accounting 不重新打开终止 Workflow。
 
 ## 工作区证据与新鲜度
 

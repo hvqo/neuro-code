@@ -59,7 +59,7 @@ def engine(store, **kwargs):
 async def setup(tmp_path, data=None, value=None, *, ceiling=None):
     store = SqliteSessionStore(tmp_path / "sessions.db")
     await store.initialize()
-    session = await store.create_session("/workspace", "provider", "model")
+    session = await store.create_session(str(tmp_path / "workspace"), "provider", "model")
     definition = compile_workflow(canonical(data or source()))
     value = value if value is not None else {"targets": [], "objective": "中文目标"}
     input_json = typed_json(definition.input_schema, value)
@@ -83,6 +83,16 @@ async def setup(tmp_path, data=None, value=None, *, ceiling=None):
         updated_at=NOW,
     )
     return store
+
+
+async def test_fixture_session_root_uses_native_path_spelling(tmp_path):
+    from pathlib import Path
+
+    store = await setup(tmp_path)
+    run = await store.get_workflow_run("run")
+    session = await store.get_session(run.parent_session_id)
+    assert session.cwd == str(tmp_path / "workspace")
+    assert str(Path(session.cwd)) == session.cwd
 
 
 async def tick(store, interpreter=None):

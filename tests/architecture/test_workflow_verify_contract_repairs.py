@@ -398,15 +398,78 @@ async def test_real_final_tool_guard_zero_spawn_after_late_cancel_or_reclaim(tmp
         bound._workspace_change_observer = Observer()
     else:
         bound._hooks = (Hook(),)
-    outcome = (await adapter(store, root, session, command=bound).run_once(key)).attempt
+    verifier = adapter(store, root, session, command=bound)
+    interrupted = False
+    try:
+        outcome = (await verifier.run_once(key)).attempt
+    except asyncio.CancelledError:
+        # The existing watcher may cancel a pending DB guard before its terminal
+        # ACK. No Bash entry; recovery must conservatively keep usage unknown.
+        assert point != "owner"
+        interrupted = True
+        outcome = (await verifier.run_once(key)).attempt
     assert spawns == []
-    assert outcome.state is State.BLOCKED
+    assert outcome.state is (State.INDETERMINATE if interrupted else State.BLOCKED)
     assert outcome.result.output_json is None
-    assert outcome.result.usage.tool_calls == 0
+    assert outcome.result.usage.tool_calls == (None if interrupted else 0)
     assert (await store.get_workflow_run("run")).status is (
         WorkflowStatus.NEEDS_ATTENTION if point == "owner" else WorkflowStatus.CANCELLED
     )
     assert await store.get_workflow_activity(key) == outcome
+
+
+async def test_cancel_watcher_before_guard_ack_zero_spawn_unknown_recovery(tmp_path):
+    store, root, session, key = await ready(tmp_path)
+    spawns = []
+    bash = BashTool()
+    underlying = bash._local_process_sandbox
+    reached_guard = asyncio.Event()
+    blocked_guard = asyncio.Event()
+
+    class RecordingLauncher:
+        async def spawn(self, request):
+            spawns.append(request)
+            return await underlying.spawn(request)
+
+    class Hook:
+        async def before_tool(self, *args, **kwargs):
+            await cancel_run(store)
+
+        async def after_tool(self, result):
+            pass
+
+    bound = executor(
+        root,
+        tools=ToolRegistry([bash]),
+        context=ToolContext(root, local_process_sandbox=RecordingLauncher()),
+    )
+    bound._hooks = (Hook(),)
+    verify = bound.verify_command
+
+    async def pending_ack(self, configuration, *, session_id, pre_entry_guard):
+        async def delayed_guard():
+            reached_guard.set()
+            await blocked_guard.wait()  # Force the real cancellation watcher to win.
+            return await pre_entry_guard()
+
+        return await verify(configuration, session_id=session_id, pre_entry_guard=delayed_guard)
+
+    verifier = adapter(store, root, session, command=bound)
+    with (
+        patch.object(type(bound), "verify_command", new=pending_ack),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await asyncio.wait_for(verifier.run_once(key), 10)
+    assert reached_guard.is_set()
+    assert spawns == []
+    assert (await store.get_workflow_activity(key)).state is State.RUNNING
+    recovered = (await verifier.run_once(key)).attempt
+    assert recovered.state is State.INDETERMINATE
+    assert recovered.result.usage.tool_calls is None
+    assert recovered.result.output_json is None
+    assert (await store.get_workflow_run("run")).status is WorkflowStatus.CANCELLED
+    assert (await verifier.run_once(key)).attempt == recovered
+    assert spawns == []
 
 
 async def test_already_cancelled_run_never_claims_or_spawns(tmp_path):
