@@ -136,6 +136,31 @@ databases, external editors and independently composed ordinary runtimes are not
 covered by this local repair lock. Existing parent runner serialization plus
 optimistic before/after checks define the supported boundary.
 
+## Exact durable Runtime turn proof
+
+Successful REPAIR settlement reads the exact session/turn `TURN_COMPLETED` event
+inside the same SQLite write transaction and verifies the matching
+`session_turn_attempts` source is `WORKFLOW_REPAIR`, its frozen input fingerprint,
+`committed` resolution and `TURN_COMPLETED` stage. In the atomic turn-finalization
+transaction, SessionStore persists execution status/reason/detail, `finalized`
+and `recoverable` metadata from the typed Runtime-provided
+`SessionExecutionRecord`. This is a per-turn durable summary of the existing
+Runtime terminal, not a second completion owner created by REPAIR.
+
+The normal `AgentRunResult.outcome=None` case is accepted only when this exact
+durable proof says `execution_status=completed` and all other accounting,
+permission and workspace conditions pass. A non-null returned outcome must match
+the persisted outcome. Missing, duplicate, ambiguous, uncommitted or conflicting
+proof never produces success output; it enters
+INDETERMINATE/NEEDS_ATTENTION without automatic redispatch.
+
+REPAIR evidence stores the exact proof and its fingerprint; atomic settlement also
+binds its digest into the independent Run journal. Terminal reads, recovery and
+Interpreter consumption revalidate the event and attempt by exact turn id and
+compare the evidence/journal anchor. They never substitute the session's latest
+execution record for a historical turn because that latest-per-session projection
+is overwritten by later turns. ACK loss replays the same immutable Activity result.
+
 ## Persistence and verification
 
 Schema 42→43 adds only `workflow_repair_executions`, `workflow_repair_events`, and

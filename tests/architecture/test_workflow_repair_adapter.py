@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import closing
 
 import pytest
 
@@ -184,9 +185,160 @@ async def test_real_runtime_completion_and_interpreter_consumption(tmp_path, cha
         item.role.value == "system" for item in binding.runner.items
     )  # No internal user/assistant history.
     assert json.loads(result.result.output_json)["status"] == "COMPLETED"
+    with closing(store._connect()) as connection:
+        started = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM workflow_repair_executions WHERE invocation_id=?",
+                (key,),
+            ).fetchone()[0]
+        )
+        proof = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM workflow_repair_evidence WHERE execution_id=?",
+                (started["execution_id"],),
+            ).fetchone()[0]
+        )["turn_terminal_proof"]
+        event = connection.execute(
+            "SELECT kind,data_json FROM events WHERE session_id=? AND sequence=?",
+            (session, proof["event_sequence"]),
+        ).fetchone()
+    assert event is not None
+    assert event[0] == "turn_completed"
+    assert json.loads(event[1])["execution_status"] == "completed"
+    assert proof["turn_id"] == started["turn_id"]
+    assert proof["source"] == "workflow_repair"
+    assert proof["input_fingerprint"] == started["turn_input_fingerprint"]
     assert (await tick(store)).action == "consume_activity"
     assert (await adapter.run_once(key)).attempt == result
     assert len(provider.calls) == (2 if change else 1)
+
+
+async def test_runtime_outcome_none_uses_exact_durable_blocked_turn(tmp_path):
+    from dataclasses import replace
+
+    from neuro_code.domain.execution import (
+        AgentExecutionOutcome,
+        AgentExecutionStatus,
+    )
+
+    store, _root, session, key = await ready(tmp_path)
+    adapter, provider, _ = build(store, _root, session)
+    original = store.finalize_turn
+
+    async def persist_blocked(*args, **kwargs):
+        args = list(args)
+        record = args[3]
+        args[3] = replace(
+            record,
+            outcome=AgentExecutionOutcome(
+                AgentExecutionStatus.BLOCKED,
+                None,
+                finalized=False,
+                recoverable=False,
+            ),
+        )
+        return await original(*args, **kwargs)
+
+    store.finalize_turn = persist_blocked
+    terminal = (await adapter.run_once(key)).attempt
+
+    assert terminal.state is State.BLOCKED
+    assert terminal.result.output_json is None
+    assert (
+        await store.load_execution_record(session)
+    ).outcome.status is AgentExecutionStatus.BLOCKED
+    assert (await tick(store)).action != "consume_activity"
+    assert len(provider.calls) == 2
+
+
+async def test_missing_runtime_finalization_never_settles_repair_completed(tmp_path):
+    store, _root, session, key = await ready(tmp_path)
+    adapter, provider, _ = build(store, _root, session)
+    original = store.finalize_turn
+
+    async def acknowledge_without_commit(*args, **kwargs):
+        if len(args) > 4 and str(args[4]).startswith("repair-turn-"):
+            return None
+        return await original(*args, **kwargs)
+
+    store.finalize_turn = acknowledge_without_commit
+    terminal = (await adapter.run_once(key)).attempt
+
+    assert terminal.state is State.INDETERMINATE
+    assert terminal.result.output_json is None
+    assert terminal.result.usage.model_calls == 2
+    assert terminal.result.usage.tool_calls == 1
+    assert (await store.get_workflow_run("run")).status is WorkflowStatus.NEEDS_ATTENTION
+    assert (await tick(store)).action != "consume_activity"
+    assert len(provider.calls) == 2
+    assert (await adapter.run_once(key)).attempt == terminal
+    assert len(provider.calls) == 2
+
+
+async def test_repair_proof_isolated_from_later_session_execution_record(tmp_path):
+    from datetime import UTC, datetime
+
+    from neuro_code.domain.conversation.events import AgentEvent, AgentEventKind
+    from neuro_code.domain.execution import (
+        AgentExecutionOutcome,
+        AgentExecutionStatus,
+        SessionExecutionRecord,
+        TurnInput,
+        TurnRecoveryAttempt,
+    )
+
+    store, root, session, key = await ready(tmp_path)
+    adapter, _provider, _binding = build(store, root, session, change=False)
+    terminal = (await adapter.run_once(key)).attempt
+    later_turn_id = "later-unrelated-turn"
+    now = datetime.now(UTC)
+    await store.start_turn_attempt(
+        TurnRecoveryAttempt.create(
+            turn_id=later_turn_id,
+            session_id=session,
+            input=TurnInput("A later unrelated turn"),
+            accepted_at=now,
+        )
+    )
+    with closing(store._connect()) as connection:
+        sequence = connection.execute(
+            "SELECT COALESCE(MAX(sequence),0)+1 FROM events WHERE session_id=?", (session,)
+        ).fetchone()[0]
+    outcome = AgentExecutionOutcome(
+        AgentExecutionStatus.COMPLETED, None, finalized=False, recoverable=False
+    )
+    await store.finalize_turn(
+        session,
+        AgentEvent.create(sequence, AgentEventKind.TURN_COMPLETED, {"turn_id": later_turn_id}),
+        await store.load_session_items(session),
+        SessionExecutionRecord(outcome, sequence, now),
+        later_turn_id,
+    )
+    latest = await store.load_execution_record(session)
+    assert latest is not None
+    with closing(store._connect()) as connection:
+        started = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM workflow_repair_executions WHERE invocation_id=?",
+                (key,),
+            ).fetchone()[0]
+        )
+        exact_sequence = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM workflow_repair_evidence WHERE execution_id=?",
+                (started["execution_id"],),
+            ).fetchone()[0]
+        )["turn_terminal_proof"]["event_sequence"]
+    assert latest.event_sequence > exact_sequence
+    replay = await store.reconcile_workflow_repair(
+        key,
+        parent_session_id=session,
+        parent_workspace_root=root,
+        updated_at=terminal.updated_at,
+    )
+    assert replay == terminal
+    assert latest.event_sequence > exact_sequence
+    assert await store.load_execution_record(session) == latest
 
 
 @pytest.mark.parametrize("passed", [True, False])

@@ -196,3 +196,13 @@ token usage 必须严格为零，允许记录 wall time。写入和恢复拒绝�
 Schema 41 保持不变。非阻塞 OS invocation 锁覆盖首次 RUNNING 到原子计量结算；
 其他 Store/进程返回 busy，不抢先结算 unknown 或修改 Run。进程退出后释放锁，
 允许保守恢复。Durable terminal replay 仍只读。见 [ADR 0203](adr/0203-dw5b2-real-workflow-adopt-adapter.md)。
+
+## DW5b-4 REPAIR exact Runtime terminal proof
+
+Schema 43 保持不变。SessionStore 在原子 turn finalization 中为 `WORKFLOW_REPAIR`
+回合的 `TURN_COMPLETED` event 写入由 typed Runtime execution record 导出的 outcome
+metadata。REPAIR 只允许基于精确 session/turn/source/input fingerprint、committed
+attempt 和唯一 completion event 结算成功；proof 与 Activity evidence、result、ledger、
+journal 原子绑定。`AgentRunResult.outcome=None` 仅在该回合的 durable proof 明确为
+COMPLETED 时接受；缺失或冲突 proof 保守进入 INDETERMINATE。重读按 exact turn event
+验证，不依赖会被后续回合替换的 session 最新 execution record。见 [ADR 0205](adr/0205-dw5b4-real-workflow-repair-adapter.md)。

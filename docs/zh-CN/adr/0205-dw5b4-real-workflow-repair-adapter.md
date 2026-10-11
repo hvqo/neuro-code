@@ -107,6 +107,27 @@ SQLite、Provider、文件系统不是一个事务。协议防止自动重复 di
 数据库、外部编辑器、独立组合的普通 runtime 不受本地 repair 锁覆盖。既有父 runner
 串行与 optimistic 前后检查构成支持边界。
 
+## Exact Runtime 回合终态证明
+
+REPAIR 成功结算必须在同一个 SQLite 写事务中读取精确 session/turn 的 `TURN_COMPLETED`
+事件，并校验对应 `session_turn_attempts` 的 `WORKFLOW_REPAIR` 来源、冻结 input
+fingerprint、`committed` resolution 和 `TURN_COMPLETED` stage。SessionStore 在写入
+该事件的原子 turn-finalization 事务中，从 Runtime 提供的 typed
+`SessionExecutionRecord` 写入 execution status/reason/detail、`finalized` 与
+`recoverable` 元数据；这只是现有 Runtime 终态的逐回合持久化摘要，不是 REPAIR 新建的
+第二个 completion owner。
+
+正常成功的 `AgentRunResult.outcome=None` 仅在该 exact durable proof 表明
+`execution_status=completed` 且其余计量、权限和工作区条件均满足时接受。非空返回
+outcome 必须与持久化 outcome 一致。缺失、重复、歧义、未提交或不一致的 proof 不产生
+成功 output，进入 INDETERMINATE/NEEDS_ATTENTION，且不自动重跑。
+
+REPAIR evidence 保存 exact proof 与其 fingerprint；原子 settlement 同时将其摘要绑定到
+独立 Run journal。终态读取、恢复和 Interpreter 消费重新按 exact turn id 验证事件和
+attempt，并比较 evidence/journal anchor。不得读取 session 最新 execution record 来代替
+历史 turn，因为该 latest-per-session 投影会被后续 turn 覆盖。ACK 丢失时仍只读 replay
+同一不可变 Activity result。
+
 ## 持久化与验证
 
 schema 42→43 仅增加 workflow_repair_executions、workflow_repair_events、

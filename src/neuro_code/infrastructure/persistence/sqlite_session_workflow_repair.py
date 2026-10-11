@@ -47,7 +47,9 @@ from neuro_code.infrastructure.persistence.sqlite_session_workflow_repair_facts 
     events,
     execution,
     fail_source,
+    runtime_outcome_matches,
     terminal_anchor,
+    turn_terminal_proof,
 )
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_facts import (
     parent_root,
@@ -555,12 +557,23 @@ class WorkflowRepairMixin(_SqliteSessionPersistenceContext):
                 )
                 if active.state is State.CLAIMED:
                     usage = BudgetAmounts(wall_milliseconds=None)
+                proof_issue: str | None = None
+                try:
+                    turn_proof = turn_terminal_proof(
+                        connection,
+                        started,
+                        require_current_execution_record=meter is not None,
+                    )
+                except WorkflowStateError:
+                    turn_proof = None
+                    proof_issue = "invalid"
+                if turn_proof is None and proof_issue is None:
+                    proof_issue = "missing"
                 runtime_status = (
-                    result.outcome.status.value
-                    if result and result.outcome
-                    else "completed"
-                    if result
-                    else "unknown"
+                    turn_proof["execution_status"] if turn_proof is not None else "unknown"
+                )
+                outcome_consistent = turn_proof is not None and runtime_outcome_matches(
+                    turn_proof, result.outcome if result is not None else None
                 )
                 errors = any(v["failed"] for v in returned)
                 denied = result is not None and any(
@@ -572,20 +585,22 @@ class WorkflowRepairMixin(_SqliteSessionPersistenceContext):
                     )
                     for e in result.events
                 )
-                state = (
-                    State.COMPLETED
-                    if result
-                    and runtime_status == "completed"
-                    and complete
-                    and not errors
-                    and not denied
-                    and failure is None
-                    else State.BLOCKED
-                    if denied or runtime_status == "blocked"
-                    else State.FAILED
-                    if complete and failure is not None
-                    else State.INDETERMINATE
-                )
+                if turn_proof is None or not outcome_consistent:
+                    state = State.INDETERMINATE
+                elif denied or runtime_status == "blocked":
+                    state = State.BLOCKED
+                elif runtime_status == "failed":
+                    state = State.FAILED if complete else State.INDETERMINATE
+                elif runtime_status == "completed":
+                    state = (
+                        State.COMPLETED
+                        if result and complete and not errors and not denied and failure is None
+                        else State.FAILED
+                        if complete and failure is not None
+                        else State.INDETERMINATE
+                    )
+                else:
+                    state = State.INDETERMINATE
                 if isinstance(failure, WorkflowStateError) and failure.kind in {
                     "stale_verification",
                     "cancelled",
@@ -642,6 +657,12 @@ class WorkflowRepairMixin(_SqliteSessionPersistenceContext):
                     "execution_fingerprint": digest(started),
                     "state": state.value,
                     "runtime_status": runtime_status,
+                    "turn_terminal_proof": turn_proof,
+                    "turn_terminal_proof_fingerprint": digest(turn_proof)
+                    if turn_proof is not None
+                    else None,
+                    "turn_terminal_proof_issue": proof_issue,
+                    "runtime_outcome_consistent": outcome_consistent,
                     "usage": asdict(usage),
                     "output_json": output,
                     "finished_at": finished.isoformat(),

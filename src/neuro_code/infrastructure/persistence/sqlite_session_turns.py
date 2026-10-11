@@ -1551,6 +1551,33 @@ def _persist_finalized_turn(
         )
     if turn_id is not None and event.data.get("turn_id") != turn_id:
         raise SessionError("completion event has a different turn identity")
+    event_payload = dict(event.data)
+    if turn_id is not None:
+        attempt = connection.execute(
+            "SELECT source FROM session_turn_attempts WHERE session_id=? AND turn_id=?",
+            (session_id, turn_id),
+        ).fetchone()
+        if attempt is not None and attempt[0] == TurnSource.WORKFLOW_REPAIR.value:
+            if record is None:
+                raise SessionError("workflow repair completion requires its execution record")
+            outcome = record.outcome
+            repair_terminal_metadata: dict[str, object] = {
+                "execution_status": outcome.status.value,
+                "execution_reason": (
+                    outcome.reason_code.value if outcome.reason_code is not None else None
+                ),
+                "finalized": outcome.finalized,
+                "recoverable": outcome.recoverable,
+                "execution_detail": (
+                    outcome.detail.to_event_data() if outcome.detail is not None else None
+                ),
+            }
+            if any(
+                key in event_payload and event_payload[key] != value
+                for key, value in repair_terminal_metadata.items()
+            ):
+                raise SessionError("workflow repair completion metadata conflicts with record")
+            event_payload.update(repair_terminal_metadata)
     _validate_committed_response_event(
         committed_response_event,
         before_sequence=event.sequence,
@@ -1568,7 +1595,7 @@ def _persist_finalized_turn(
     ).fetchone()
     if duplicate is not None:
         raise SessionError(f"completion event sequence {event.sequence} already exists")
-    payload = json.dumps(dict(event.data), ensure_ascii=False, separators=(",", ":"))
+    payload = json.dumps(event_payload, ensure_ascii=False, separators=(",", ":"))
     items_payload = _serialize_session_items(items)
     title = str(row[1]) or fallback_session_title(items)
     boundary_update, clear_pending_boundary = _context_generation_finalization_update(

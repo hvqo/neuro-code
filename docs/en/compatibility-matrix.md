@@ -204,3 +204,15 @@ Schema 41 is unchanged. A nonblocking OS invocation lock spans first RUNNING thr
 atomic measurement settlement; other Stores/processes return busy without unknown
 settlement or Run changes. Process exit releases the lock for conservative recovery.
 Durable terminal replay remains read-only. See [ADR 0203](adr/0203-dw5b2-real-workflow-adopt-adapter.md).
+
+## DW5b-4 REPAIR exact Runtime terminal proof
+
+Schema 43 is unchanged. During atomic turn finalization, SessionStore persists
+`TURN_COMPLETED` outcome metadata for `WORKFLOW_REPAIR` from the typed Runtime
+execution record. REPAIR may settle success only from the unique completion event
+bound to the exact session/turn/source/input fingerprint and committed attempt;
+the proof is atomically bound to Activity evidence, result, ledger and journal.
+`AgentRunResult.outcome=None` is accepted only when that turn's durable proof says
+COMPLETED; missing or conflicting proof conservatively becomes INDETERMINATE.
+Replay revalidates the exact turn event and does not depend on the session's latest
+execution record, which later turns can replace. See [ADR 0205](adr/0205-dw5b4-real-workflow-repair-adapter.md).

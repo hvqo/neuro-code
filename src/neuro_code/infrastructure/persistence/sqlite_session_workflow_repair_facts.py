@@ -8,6 +8,16 @@ from dataclasses import asdict
 from typing import Any
 
 from neuro_code.application.ports.workflow_state import WorkflowStateError
+from neuro_code.domain.conversation.events import AgentEventKind
+from neuro_code.domain.execution import (
+    AgentExecutionOutcome,
+    AgentExecutionStatus,
+    BudgetLimitDetail,
+    SupervisorReasonCode,
+    TurnRecoveryResolution,
+    TurnRecoveryStage,
+    TurnSource,
+)
 from neuro_code.domain.workflows.activity import WorkflowActivityAttempt
 from neuro_code.domain.workflows.definition import Activity, ActivityKind, ResultRef
 from neuro_code.domain.workflows.interpreter import (
@@ -212,7 +222,179 @@ def terminal_anchor(
         "result_fingerprint": result_fingerprint,
         "observations_fingerprint": evidence["observations_fingerprint"],
         "fail_source_fingerprint": digest(started["fail_source"]),
+        "turn_terminal_proof_fingerprint": evidence["turn_terminal_proof_fingerprint"],
     }
+
+
+def turn_terminal_proof(
+    connection: sqlite3.Connection,
+    started: dict[str, Any],
+    *,
+    require_current_execution_record: bool = False,
+) -> dict[str, Any] | None:
+    """Read the exact Runtime-owned completion fact for one REPAIR turn.
+
+    ``session_execution_records`` is a latest-per-session projection and is
+    deliberately not used here. The exact event and accepted turn attempt are
+    durable per-turn facts; their digest is later anchored by the Workflow
+    settlement journal.
+    """
+
+    turn_id = started["turn_id"]
+    session_id = started["session_id"]
+    attempt = connection.execute(
+        """
+        SELECT source,input_fingerprint,resolution,resolution_at,last_stage,last_stage_at,
+               fact_conflict
+        FROM session_turn_attempts WHERE session_id=? AND turn_id=?
+        """,
+        (session_id, turn_id),
+    ).fetchone()
+    if attempt is None:
+        return None
+    if (
+        attempt[0] != TurnSource.WORKFLOW_REPAIR.value
+        or attempt[1] != started["turn_input_fingerprint"]
+        or attempt[6] != 0
+    ):
+        raise WorkflowStateError("REPAIR exact turn attempt differs", kind="integrity")
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON key")
+            value[key] = item
+        return value
+
+    rows = connection.execute(
+        "SELECT sequence,created_at,data_json FROM events WHERE session_id=? AND kind=? ORDER BY sequence",
+        (session_id, AgentEventKind.TURN_COMPLETED.value),
+    ).fetchall()
+    matches: list[tuple[int, str, dict[str, Any]]] = []
+    try:
+        for sequence, created_at, raw in rows:
+            data = json.loads(raw, object_pairs_hook=unique_object)
+            if isinstance(data, dict) and data.get("turn_id") == turn_id:
+                matches.append((sequence, created_at, data))
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise WorkflowStateError(
+            "REPAIR completion event is malformed", kind="integrity"
+        ) from error
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise WorkflowStateError("REPAIR turn has ambiguous completion events", kind="integrity")
+
+    sequence, created_at, data = matches[0]
+    if (
+        attempt[2] != TurnRecoveryResolution.COMMITTED.value
+        or attempt[3] != created_at
+        or attempt[4] != TurnRecoveryStage.TURN_COMPLETED.value
+        or attempt[5] != created_at
+    ):
+        raise WorkflowStateError(
+            "REPAIR turn completion is not atomically committed", kind="integrity"
+        )
+    required = {
+        "execution_status",
+        "execution_reason",
+        "finalized",
+        "recoverable",
+        "execution_detail",
+    }
+    if data.get("turn_id") != turn_id or not required.issubset(data):
+        raise WorkflowStateError("REPAIR completion metadata is incomplete", kind="integrity")
+    detail_raw = data["execution_detail"]
+    try:
+        status = AgentExecutionStatus(data["execution_status"])
+        reason = (
+            SupervisorReasonCode(data["execution_reason"])
+            if data["execution_reason"] is not None
+            else None
+        )
+        if detail_raw is None:
+            detail = None
+        elif isinstance(detail_raw, dict) and set(detail_raw) == {
+            "tool_name",
+            "used",
+            "limit",
+        }:
+            detail = BudgetLimitDetail(
+                tool_name=detail_raw["tool_name"],
+                used=detail_raw["used"],
+                limit=detail_raw["limit"],
+            )
+        else:
+            raise ValueError("invalid execution detail")
+        outcome = AgentExecutionOutcome(
+            status,
+            reason,
+            data["finalized"],
+            data["recoverable"],
+            detail,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise WorkflowStateError(
+            "REPAIR completion outcome is invalid", kind="integrity"
+        ) from error
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence <= 0:
+        raise WorkflowStateError("REPAIR completion event sequence is invalid", kind="integrity")
+    proof = {
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "source": attempt[0],
+        "input_fingerprint": attempt[1],
+        "resolution": attempt[2],
+        "resolution_at": attempt[3],
+        "last_stage": attempt[4],
+        "last_stage_at": attempt[5],
+        "event_sequence": sequence,
+        "event_created_at": created_at,
+        "event_payload_fingerprint": digest(data),
+        "execution_status": outcome.status.value,
+        "execution_reason": outcome.reason_code.value if outcome.reason_code is not None else None,
+        "finalized": outcome.finalized,
+        "recoverable": outcome.recoverable,
+        "execution_detail": outcome.detail.to_event_data() if outcome.detail is not None else None,
+    }
+    if require_current_execution_record:
+        record = connection.execute(
+            """
+            SELECT event_sequence,status,reason_code,finalized,recoverable,completed_at
+            FROM session_execution_records WHERE session_id=?
+            """,
+            (session_id,),
+        ).fetchone()
+        expected_record = (
+            sequence,
+            outcome.status.value,
+            outcome.reason_code.value if outcome.reason_code is not None else None,
+            int(outcome.finalized),
+            int(outcome.recoverable),
+            created_at,
+        )
+        if record != expected_record:
+            raise WorkflowStateError(
+                "REPAIR exact Runtime execution record differs", kind="integrity"
+            )
+    return proof
+
+
+def runtime_outcome_matches(proof: dict[str, Any], outcome: AgentExecutionOutcome | None) -> bool:
+    """Treat an omitted public result outcome as valid only with durable proof."""
+
+    if outcome is None:
+        return True
+    return bool(
+        proof["execution_status"] == outcome.status.value
+        and proof["execution_reason"]
+        == (outcome.reason_code.value if outcome.reason_code is not None else None)
+        and proof["finalized"] == outcome.finalized
+        and proof["recoverable"] == outcome.recoverable
+        and proof["execution_detail"]
+        == (outcome.detail.to_event_data() if outcome.detail is not None else None)
+    )
 
 
 def repair_terminal(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt) -> None:
@@ -225,6 +407,28 @@ def repair_terminal(connection: sqlite3.Connection, attempt: WorkflowActivityAtt
             (started["execution_id"],),
         ).fetchone()
     )
+    terminal_proof = evidence.get("turn_terminal_proof")
+    if terminal_proof is None:
+        if (
+            result.state.value != "indeterminate"
+            or evidence.get("runtime_status") != "unknown"
+            or evidence.get("turn_terminal_proof_issue") not in {"missing", "invalid"}
+            or result.output_json is not None
+            or evidence.get("turn_terminal_proof_fingerprint") is not None
+        ):
+            raise WorkflowStateError(
+                "REPAIR missing terminal proof is not conservative", kind="integrity"
+            )
+    else:
+        current_proof = turn_terminal_proof(connection, started)
+        if (
+            current_proof is None
+            or current_proof != terminal_proof
+            or evidence.get("turn_terminal_proof_fingerprint") != digest(current_proof)
+            or evidence.get("turn_terminal_proof_issue") is not None
+            or evidence.get("runtime_status") != current_proof["execution_status"]
+        ):
+            raise WorkflowStateError("REPAIR exact Runtime turn proof differs", kind="integrity")
     if (
         evidence["execution_fingerprint"] != digest(started)
         or evidence["state"] != result.state.value
@@ -236,6 +440,8 @@ def repair_terminal(connection: sqlite3.Connection, attempt: WorkflowActivityAtt
         or result.source_id != started["execution_id"]
         or result.source_fingerprint != digest(evidence)
         or result.usage.generated_tasks != 0
+        or not isinstance(evidence.get("runtime_outcome_consistent"), bool)
+        or (not evidence["runtime_outcome_consistent"] and result.state.value != "indeterminate")
     ):
         raise WorkflowStateError("REPAIR terminal evidence differs", kind="integrity")
     expected = canonical(
@@ -256,13 +462,13 @@ def repair_terminal(connection: sqlite3.Connection, attempt: WorkflowActivityAtt
         value = json.loads(result.output_json)
         if (
             value["status"] != "COMPLETED"
+            or result.state.value != "completed"
             or evidence["runtime_status"] != "completed"
+            or terminal_proof is None
+            or terminal_proof["execution_status"] != "completed"
+            or not evidence["runtime_outcome_consistent"]
             or evidence["workspace_after"] is None
         ):
             raise WorkflowStateError("REPAIR output needs real completed turn", kind="integrity")
-        row = connection.execute(
-            "SELECT source,resolution,input_fingerprint FROM session_turn_attempts WHERE session_id=? AND turn_id=?",
-            (started["session_id"], started["turn_id"]),
-        ).fetchone()
-        if row != ("workflow_repair", "committed", started["turn_input_fingerprint"]):
-            raise WorkflowStateError("REPAIR durable turn terminal differs", kind="integrity")
+    elif result.state.value == "completed":
+        raise WorkflowStateError("REPAIR completed Activity has no output", kind="integrity")

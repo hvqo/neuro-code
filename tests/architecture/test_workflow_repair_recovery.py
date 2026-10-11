@@ -125,7 +125,8 @@ async def test_distinct_invocation_same_workspace_lock(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "field", ["usage", "runtime_status", "workspace_after", "execution_fingerprint"]
+    "field",
+    ["usage", "runtime_status", "workspace_after", "execution_fingerprint", "turn_proof"],
 )
 async def test_rehashed_local_terminal_group_cannot_replace_journal(tmp_path, field):
     store, root, session, key = await fixture(tmp_path)
@@ -146,6 +147,27 @@ async def test_rehashed_local_terminal_group_cannot_replace_journal(tmp_path, fi
             evidence[field]["workspace"]["content_fingerprint"] = "b" * 64
         elif field == "execution_fingerprint":
             evidence[field] = "b" * 64
+        elif field == "turn_proof":
+            started = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM workflow_repair_executions WHERE execution_id=?",
+                    (_execution_id,),
+                ).fetchone()[0]
+            )
+            proof = evidence["turn_terminal_proof"]
+            proof["finalized"] = True
+            event_row = connection.execute(
+                "SELECT data_json FROM events WHERE session_id=? AND sequence=?",
+                (started["session_id"], proof["event_sequence"]),
+            ).fetchone()
+            event_data = json.loads(event_row[0])
+            event_data["finalized"] = True
+            connection.execute(
+                "UPDATE events SET data_json=? WHERE session_id=? AND sequence=?",
+                (canonical(event_data), started["session_id"], proof["event_sequence"]),
+            )
+            proof["event_payload_fingerprint"] = digest(event_data)
+            evidence["turn_terminal_proof_fingerprint"] = digest(proof)
         else:
             evidence[field] = "failed"
         connection.execute(
