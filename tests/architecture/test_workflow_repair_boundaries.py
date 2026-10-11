@@ -146,3 +146,44 @@ async def test_cancelled_workflow_cannot_dispatch_subsequent_tool(tmp_path):
     assert result.state is not State.COMPLETED
     assert "assert False" in (root / "test_sample.py").read_text()
     assert (await store.get_workflow_run("run")).status is WorkflowStatus.CANCELLED
+
+
+async def test_owner_loss_cancels_once_and_awaits_slow_runtime_cleanup(tmp_path):
+    from datetime import UTC, datetime
+
+    store, root, session, key = await ready(tmp_path, injected_verify=True)
+    adapter, provider, _ = build(store, root, session, change=False)
+    entered, cleaned = asyncio.Event(), asyncio.Event()
+    original = provider.stream
+
+    async def stream(*args, **kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            # Longer than several 50ms ownership polls: a second cancellation
+            # would interrupt the real Runtime's delegated cleanup coroutine.
+            await asyncio.sleep(0.3)
+            cleaned.set()
+            raise
+        async for event in original(*args, **kwargs):
+            yield event
+
+    provider.stream = stream
+    task = asyncio.create_task(adapter.run_once(key))
+    await asyncio.wait_for(entered.wait(), 15)
+    run = await store.get_workflow_run("run")
+    await store.transition_workflow_run(
+        run.run_id,
+        WorkflowChange(WorkflowEventKind.TRANSITION, status=WorkflowStatus.CANCELLED),
+        expected_generation=run.generation,
+        owner_id=run.owner_id,
+        owner_fence=run.owner_fence,
+        request_id="cancel-cleanup",
+        updated_at=datetime.now(UTC),
+    )
+    with suppress(asyncio.CancelledError):
+        await task
+    assert cleaned.is_set()
+    assert (await adapter.run_once(key)).attempt.state is State.INDETERMINATE
+    assert (await store.get_workflow_run("run")).status is WorkflowStatus.CANCELLED

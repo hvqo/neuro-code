@@ -462,6 +462,9 @@ class WorkflowRepairMixin(_SqliteSessionPersistenceContext):
                         await asyncio.wait({task}, timeout=0.05)
                         if not await self._repair_authorized(current, started):
                             task.cancel()
+                            # Await existing Runtime cleanup after one cancellation;
+                            # repeated cancellation can interrupt resource release.
+                            break
                     returned = await task
                     if (
                         not isinstance(returned, RepairTurnResult)
