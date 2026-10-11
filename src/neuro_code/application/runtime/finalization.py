@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
+from neuro_code.application.ports.execution_observation import observed_model_stream
 from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
 from neuro_code.application.runtime.verification import (
     MAX_VERIFICATION_EVALUATIONS,
@@ -571,7 +572,8 @@ class AgentFinalizer:
                 trajectory_id=trajectory_id,
                 trajectory_enabled=trajectory_enabled,
             )
-            async for event in self._provider.stream(
+            async for event in observed_model_stream(
+                self._provider,
                 temporary_context,
                 (),
                 tool_policy=ModelToolPolicy.DISABLED,

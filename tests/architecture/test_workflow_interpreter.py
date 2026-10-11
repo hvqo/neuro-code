@@ -202,7 +202,7 @@ async def test_sequence_external_activities_and_completion_is_only_waiting(tmp_p
     data["steps"] = [
         activity("adopt", "parent.adopt"),
         activity("verify"),
-        activity("repair", "parent.repair"),
+        activity("repair", "parent.adopt"),
     ]
     store = await setup(tmp_path, data)
     result = await drive(store)
@@ -255,6 +255,8 @@ async def test_sequence_external_activities_and_completion_is_only_waiting(tmp_p
 )
 async def test_branch_persisted_selection_skips_other_path(tmp_path, condition, selected):
     data = source("branch")
+    # Control-only protocol fixture, not a fake real REPAIR result.
+    data["steps"][1]["paths"]["fail"][0]["activity"] = "parent.adopt"
     data["steps"][1]["condition"] = condition
     store = await setup(tmp_path, data)
     await tick(store)
@@ -323,7 +325,7 @@ async def test_repeat_result_resolves_exact_durable_body_output(tmp_path, select
     }
     if selector:
         ref["iteration"] = selector
-    data["steps"].append(activity("consumer", "parent.repair", inputs={"result": ref}))
+    data["steps"].append(activity("consumer", "parent.adopt", inputs={"result": ref}))
     store = await setup(tmp_path, data)
     await drive(store, verify_after_iteration=2)
     output = await store.get_workflow_step_output("run", StepIdentity("consumer"))
@@ -600,7 +602,7 @@ async def test_schema_38_upgrade_retains_previous_run_and_snapshot(tmp_path):
         connection.execute("DROP TABLE workflow_run_inputs")
         connection.execute("UPDATE schema_meta SET version = 38")
     store = await reopen(store)
-    assert SCHEMA_VERSION == 42
+    assert SCHEMA_VERSION == 43
     assert await store.get_workflow_run("run") == before
     with pytest.raises(WorkflowStateError, match="missing"):
         await tick(store)  # no invented input for legacy runs

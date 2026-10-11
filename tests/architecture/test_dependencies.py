@@ -281,6 +281,7 @@ _BOOTSTRAP_COMPOSITION_MIXIN_OWNERS = {
                 "create_git_inspection_service",
                 "create_result_adoption_service",
                 "create_workflow_verify_service",
+                "create_workflow_repair_service",
                 "create_tool_output_artifact_service",
                 "bind_provider_controller",
                 "bind_session_selection_controller",
@@ -1519,6 +1520,8 @@ def test_canonical_ports_are_the_only_port_modules() -> None:
         "neuro_code.application.ports.workflow_verification",
         "neuro_code.application.ports.workflow_activity",
         "neuro_code.application.ports.workflow_adoption",
+        "neuro_code.application.ports.workflow_repair",
+        "neuro_code.application.ports.execution_observation",
     }
     assert {
         module for module in modules if module.startswith("neuro_code.application.ports")
@@ -1576,6 +1579,8 @@ def test_canonical_persistence_modules_are_the_only_persistence_implementations(
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_lock",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_scope",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption",
+        "neuro_code.infrastructure.persistence.sqlite_session_workflow_repair",
+        "neuro_code.infrastructure.persistence.sqlite_session_workflow_repair_facts",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_facts",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_meter",
         "neuro_code.infrastructure.persistence.sqlite_session_workflow_adoption_lock",
@@ -1646,6 +1651,7 @@ def test_canonical_workspace_modules_are_the_only_workspace_implementations() ->
         "neuro_code.infrastructure.workspace.paths",
         "neuro_code.infrastructure.workspace.projection",
         "neuro_code.infrastructure.workspace.verification",
+        "neuro_code.infrastructure.workspace.repair",
         "neuro_code.infrastructure.workspace.skills",
     }
     assert {

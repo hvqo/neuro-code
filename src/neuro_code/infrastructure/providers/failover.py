@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
 
+from neuro_code.application.ports.execution_observation import observed_model_stream
 from neuro_code.application.ports.model import (
     ModelCapabilitySet,
     ModelProvider,
@@ -122,6 +123,8 @@ class FailoverModelProvider:
             return detail
         return f"{detail[: _AGGREGATE_DETAIL_LIMIT - 3]}..."
 
+    execution_observation_passthrough = True
+
     async def stream(
         self,
         context: ModelContext,
@@ -148,7 +151,9 @@ class FailoverModelProvider:
                         cache_epoch=context.cache_epoch + 1,
                         cache_boundary_reason=reason,
                     )
-                iterator = provider.stream(candidate_context, tools, tool_policy=tool_policy)
+                iterator = observed_model_stream(
+                    provider, candidate_context, tools, tool_policy=tool_policy
+                )
                 while True:
                     first_event = await anext(iterator)
                     if not isinstance(first_event, ModelRequestTrajectoryObserved):

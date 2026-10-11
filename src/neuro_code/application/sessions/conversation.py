@@ -484,6 +484,8 @@ class AgentConversation:
                     )
                 if resume_existing_attempt:
                     runtime_kwargs["resume_existing_attempt"] = True
+                if turn_source is TurnSource.WORKFLOW_REPAIR:
+                    runtime_kwargs["verification_command"] = None
                 if execution_budget_override is not None:
                     runtime_kwargs["execution_budget_override"] = execution_budget_override
                 result = await self._runtime.run(prompt, **runtime_kwargs)

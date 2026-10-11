@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
+from neuro_code.application.ports.execution_observation import observed_model_stream
 from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
 from neuro_code.application.runtime.request_diagnostics import (
     new_trajectory_id,
@@ -883,7 +884,8 @@ class ProviderContextSummaryGenerator:
         temporary_context = self._temporary_context(summary_input)
         text_parts: list[str] = []
         completion: ModelCompleted | None = None
-        async for event in self._provider.stream(
+        async for event in observed_model_stream(
+            self._provider,
             temporary_context,
             (),
             tool_policy=ModelToolPolicy.DISABLED,

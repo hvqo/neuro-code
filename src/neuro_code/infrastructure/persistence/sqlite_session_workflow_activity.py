@@ -133,13 +133,21 @@ def _load_attempt(
         (run.run_id, row[6]),
     ).fetchone()
     real_publish = canonical(dict(json.loads(expected_publish), verification_protocol=1))
+    repair_publish = canonical(dict(json.loads(expected_publish), repair_protocol=1))
     legacy_verify = invocation.activity is ActivityKind.VERIFY and publication == (
         WorkflowEventKind.ACTIVITY.value,
         expected_publish,
     )
-    if publication != (WorkflowEventKind.ACTIVITY.value, expected_publish) and not (
-        invocation.activity is ActivityKind.VERIFY
-        and publication == (WorkflowEventKind.ACTIVITY.value, real_publish)
+    if (
+        publication != (WorkflowEventKind.ACTIVITY.value, expected_publish)
+        and not (
+            invocation.activity is ActivityKind.VERIFY
+            and publication == (WorkflowEventKind.ACTIVITY.value, real_publish)
+        )
+        and not (
+            invocation.activity is ActivityKind.REPAIR
+            and publication == (WorkflowEventKind.ACTIVITY.value, repair_publish)
+        )
     ):
         raise WorkflowStateError("activity publication journal differs", kind="integrity")
     events = connection.execute(
@@ -242,6 +250,21 @@ def _load_attempt(
         )
 
         verify_terminal(connection, attempt)
+    if (
+        attempt.result is not None
+        and invocation.activity is ActivityKind.REPAIR
+        and (
+            publication == (WorkflowEventKind.ACTIVITY.value, repair_publish)
+            or connection.execute(
+                "SELECT 1 FROM workflow_repair_executions WHERE invocation_id=?", (invocation_id,)
+            ).fetchone()
+        )
+    ):
+        from neuro_code.infrastructure.persistence.sqlite_session_workflow_repair_facts import (
+            repair_terminal,
+        )
+
+        repair_terminal(connection, attempt)
     return attempt
 
 
@@ -330,6 +353,7 @@ def _budget_change(
     updated_at: datetime,
     request_id: str,
     verification: dict[str, Any] | None = None,
+    repair: dict[str, Any] | None = None,
 ) -> WorkflowRun:
     if updated_at < run.updated_at:
         raise WorkflowStateError("activity time precedes run", kind="protocol")
@@ -351,6 +375,7 @@ def _budget_change(
                 "reservation_id": change.reservation_id,
                 "amounts": asdict(change.amounts),
                 **({"verification": verification} if verification is not None else {}),
+                **({"repair": repair} if repair is not None else {}),
             }
         ),
     )
@@ -363,6 +388,7 @@ def _settle_terminal(
     result: WorkflowActivityResult,
     *,
     verification: dict[str, Any] | None = None,
+    repair: dict[str, Any] | None = None,
 ) -> WorkflowActivityAttempt:
     """Shared atomic settlement, after caller-specific authority checks."""
     run = _run(connection, current.invocation.run_id)
@@ -378,6 +404,7 @@ def _settle_terminal(
         result.terminal_at,
         "activity-settle:" + result.invocation_id,
         verification,
+        repair,
     )
     terminal = replace(
         current,
@@ -608,6 +635,8 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                             **(
                                 {"verification_protocol": 1}
                                 if invocation.activity is ActivityKind.VERIFY
+                                else {"repair_protocol": 1}
+                                if invocation.activity is ActivityKind.REPAIR
                                 else {}
                             ),
                         }
@@ -784,9 +813,10 @@ class WorkflowActivityMixin(_SqliteSessionPersistenceContext):
                     raise WorkflowStateError(
                         "bound ADOPT requires terminal-proof reconciliation", kind="protocol"
                     )
-                if declared.activity is ActivityKind.VERIFY:
+                if declared.activity in {ActivityKind.VERIFY, ActivityKind.REPAIR}:
                     raise WorkflowStateError(
-                        "real VERIFY requires controlled evidence settlement", kind="protocol"
+                        "real VERIFY/REPAIR requires controlled evidence settlement",
+                        kind="protocol",
                     )
                 if result.output_json is not None:
                     typed_json(

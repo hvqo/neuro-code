@@ -25,6 +25,7 @@ from neuro_code.application.ports.task_dag import TaskDagStore
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
 from neuro_code.application.ports.workflow_activity import WorkflowActivityStore
 from neuro_code.application.ports.workflow_projection import WorkflowProjectionStore
+from neuro_code.application.ports.workflow_repair import WorkflowRepairStore
 from neuro_code.application.ports.workflow_verification import (
     ApprovedWorkflowVerification,
     WorkflowVerificationStore,
@@ -61,6 +62,10 @@ from neuro_code.application.workflows.session_task_execution import (
     QueuedPlanExecutionController,
     QueuedPlanExecutionService,
 )
+from neuro_code.application.workflows.workflow_repair import (
+    BoundWorkflowRepairTurn,
+    WorkflowRepairActivityAdapter,
+)
 from neuro_code.application.workflows.workflow_verify import WorkflowVerifyActivityAdapter
 from neuro_code.application.worktrees import WorktreeApplicationService
 from neuro_code.bootstrap.composition_contracts import CompositionRootMixin
@@ -74,6 +79,7 @@ from neuro_code.infrastructure.persistence.workspace_checkpoints import (
 )
 from neuro_code.infrastructure.workspace.checkpoints import LocalWorkspaceStateAdapter
 from neuro_code.infrastructure.workspace.projection import LocalParentWorkspaceProjectionReader
+from neuro_code.infrastructure.workspace.repair import LocalWorkflowRepairWorkspace
 from neuro_code.infrastructure.workspace.verification import LocalWorkflowVerificationWorkspace
 from neuro_code.shared.errors import ConfigurationError
 
@@ -252,6 +258,23 @@ class CompositionServicesMixin(CompositionRootMixin):
             configuration=ApprovedWorkflowVerification(configured)
             if configured is not None
             else None,
+        )
+
+    def create_workflow_repair_service(
+        self: CompositionRootMixin,
+        *,
+        parent_binding: ConversationBinding,
+    ) -> WorkflowRepairActivityAdapter:
+        """One internal turn on the exact parent authority; no UI/model entry."""
+        git = LocalGitWorktreeAdapter(hooks_directory=self.config.state_dir / "git-hooks")
+        state = LocalWorkspaceStateAdapter(git=git, workspace_git=git)
+        return WorkflowRepairActivityAdapter(
+            store=cast(WorkflowRepairStore, self.store),
+            activities=cast(WorkflowActivityStore, self.store),
+            turn=BoundWorkflowRepairTurn(parent_binding),
+            workspace=LocalWorkflowRepairWorkspace(
+                LocalParentWorkspaceProjectionReader(git=git, state=state)
+            ),
         )
 
     def create_tool_output_artifact_service(

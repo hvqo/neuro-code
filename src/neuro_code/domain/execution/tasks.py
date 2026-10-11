@@ -35,6 +35,7 @@ class TurnSource(StrEnum):
     标识模型回合来自用户还是后台唤醒."""
 
     USER = "user"
+    WORKFLOW_REPAIR = "workflow_repair"
     BACKGROUND_TASK_AUTO_WAKE = "background_task_auto_wake"
 
 
