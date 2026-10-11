@@ -46,7 +46,9 @@ Workflow VERIFY remains a separate Activity.
 
 A further trusted tool allowlist permits existing workspace read/discovery/edit
 and foreground Bash tools, but excludes delegation, background, and extension
-entry points. This only narrows parent authority. Read-only Profiles, denied
+entry points. The scoped tool execution context removes the background manager, rejecting
+explicit background Bash and preventing automatic foreground promotion. The parent
+binding is not mutated. This only narrows parent authority. Read-only Profiles, denied
 permissions, and unavailable required sandboxes cannot gain write authority.
 
 ## First dispatch and arbitration

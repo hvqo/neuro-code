@@ -37,7 +37,8 @@ retry 不重建此内部输入。本回合禁用自动配置验证；后续显�
 独立 Activity。
 
 额外可信工具白名单只允许既有工作区读取/发现/编辑与前台 Bash，排除 delegation、
-background、extension 入口，只收窄父权限。只读 Profile、权限拒绝、必需 Sandbox
+background、extension 入口。作用域内的工具 execution context 移除 background manager，拒绝显式后台
+Bash 并禁止前台自动提升；父 binding 本身不修改，只收窄父权限。只读 Profile、权限拒绝、必需 Sandbox
 不可用时不得获得写权限。
 
 ## 首次执行与仲裁

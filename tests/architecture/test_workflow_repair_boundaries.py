@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from unittest.mock import AsyncMock
+
+import pytest
 
 from neuro_code.application.ports.tools import ToolContext
 from neuro_code.domain.conversation.events import ModelCompleted, ModelTextDelta, ModelToolCall
@@ -187,3 +190,42 @@ async def test_owner_loss_cancels_once_and_awaits_slow_runtime_cleanup(tmp_path)
     assert cleaned.is_set()
     assert (await adapter.run_once(key)).attempt.state is State.INDETERMINATE
     assert (await store.get_workflow_run("run")).status is WorkflowStatus.CANCELLED
+
+
+@pytest.mark.parametrize("explicit_background", [True, False])
+async def test_repair_bash_cannot_start_or_promote_background_task(tmp_path, explicit_background):
+    store, root, session, key = await ready(tmp_path, injected_verify=True)
+    manager = AsyncMock()
+    contexts = []
+
+    class InspectedBash(BashTool):
+        async def execute(self, arguments, context):
+            contexts.append(context)
+            return await super().execute(arguments, context)
+
+    adapter, _, _ = build(
+        store,
+        root,
+        session,
+        tools=ToolRegistry([InspectedBash(background_enabled=True)]),
+        context=ToolContext(root, background_tasks=manager),
+        scripts=[
+            (
+                ModelToolCall(
+                    ToolCall(
+                        "shell",
+                        "bash",
+                        {"command": "echo bounded-repair", "is_background": explicit_background},
+                    )
+                ),
+                done(),
+            ),
+            (ModelTextDelta("One foreground turn only; not verified."), done()),
+        ],
+    )
+    result = (await adapter.run_once(key)).attempt
+    assert contexts
+    assert contexts[0].background_tasks is None
+    manager.start_process.assert_not_called()
+    assert result.result.usage.tool_calls == 1
+    assert (result.state is State.COMPLETED) is not explicit_background

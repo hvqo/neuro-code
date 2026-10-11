@@ -989,8 +989,12 @@ class ToolExecutor:
             ) -> AgentEvent:
                 return await emit(kind, dict(data))
 
+            observer = current_observer()
             execution_context = replace(
                 self._tool_context,
+                background_tasks=None
+                if observer is not None
+                else self._tool_context.background_tasks,
                 filesystem_access_plan=filesystem_access_plan,
                 interaction_event_sink=interaction_event_sink,
                 web_search_event_sink=web_search_event_sink,
@@ -1011,7 +1015,6 @@ class ToolExecutor:
                     else None
                 ),
             )
-            observer = current_observer()
             repair_ordinal = None
             try:
                 # Trusted VERIFY-only guard, after every awaited approval/hook/
