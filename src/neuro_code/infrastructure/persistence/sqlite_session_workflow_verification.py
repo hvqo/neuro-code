@@ -49,6 +49,9 @@ from neuro_code.infrastructure.persistence.sqlite_session_workflow_activity impo
     _settle_terminal,
     _start_activity,
 )
+from neuro_code.infrastructure.persistence.sqlite_session_workflow_repair_facts import (
+    repair_terminal,
+)
 from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_facts import (
     execution,
     parent_root,
@@ -219,7 +222,9 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
                     "started_at": active.updated_at.isoformat()
                     if active.updated_at is not None
                     else updated_at.isoformat(),
-                    "source_bindings": source(connection, active),
+                    "source_bindings": source(
+                        connection, active, validate_repair_terminal=repair_terminal
+                    ),
                 }
                 connection.execute(
                     "INSERT INTO workflow_verification_executions VALUES (?,?,?,?)",
@@ -260,7 +265,9 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
                 with closing(self._connect()) as connection, connection:
                     connection.execute("BEGIN")
                     active = _bound(_load_attempt(connection, invocation_id), parent_session_id)
-                    started = execution(connection, active)
+                    started = execution(
+                        connection, active, validate_repair_terminal=repair_terminal
+                    )
                     run = _run(connection, active.invocation.run_id)
                     return (
                         active.state is State.RUNNING
@@ -402,7 +409,7 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
                     raise WorkflowStateError(
                         "VERIFY settlement owner differs", kind="concurrent_modification"
                     )
-                started = execution(connection, current)
+                started = execution(connection, current, validate_repair_terminal=repair_terminal)
                 run = _run(connection, current.invocation.run_id)
                 assert current.updated_at is not None
                 finished_at = max(datetime.now(UTC), now, run.updated_at, current.updated_at)
@@ -521,7 +528,9 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
                         "workspace_generation": _run(
                             connection, current.invocation.run_id
                         ).generation,
-                        "source_bindings": source(connection, current),
+                        "source_bindings": source(
+                            connection, current, validate_repair_terminal=repair_terminal
+                        ),
                     }
                     connection.execute(
                         "INSERT INTO workflow_verification_executions VALUES (?,?,?,?)",
@@ -532,7 +541,7 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
                             digest(value),
                         ),
                     )
-                return execution(connection, current)
+                return execution(connection, current, validate_repair_terminal=repair_terminal)
 
         started = await run_blocking(lambda: _guard(read))
         if started["parent_workspace_root"] != str(root):
@@ -580,7 +589,7 @@ class WorkflowVerificationMixin(_SqliteSessionPersistenceContext):
         def read() -> dict[str, Any]:
             with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN")
-                return execution(connection, current)
+                return execution(connection, current, validate_repair_terminal=repair_terminal)
 
         started = await run_blocking(lambda: _guard(read))
         if (

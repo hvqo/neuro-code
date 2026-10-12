@@ -24,8 +24,11 @@ from neuro_code.application.ports.result_adoption import ResultAdoptionStore
 from neuro_code.application.ports.task_dag import TaskDagStore
 from neuro_code.application.ports.terminal import InteractiveTerminalManager
 from neuro_code.application.ports.workflow_activity import WorkflowActivityStore
+from neuro_code.application.ports.workflow_interpreter import WorkflowInterpreterStore
 from neuro_code.application.ports.workflow_projection import WorkflowProjectionStore
+from neuro_code.application.ports.workflow_publication import WorkflowPublicationStore
 from neuro_code.application.ports.workflow_repair import WorkflowRepairStore
+from neuro_code.application.ports.workflow_state import WorkflowStateStore
 from neuro_code.application.ports.workflow_verification import (
     ApprovedWorkflowVerification,
     WorkflowVerificationStore,
@@ -62,6 +65,8 @@ from neuro_code.application.workflows.session_task_execution import (
     QueuedPlanExecutionController,
     QueuedPlanExecutionService,
 )
+from neuro_code.application.workflows.workflow_interpreter import DurableWorkflowInterpreter
+from neuro_code.application.workflows.workflow_loop import WorkflowLoopCoordinator
 from neuro_code.application.workflows.workflow_repair import (
     BoundWorkflowRepairTurn,
     WorkflowRepairActivityAdapter,
@@ -275,6 +280,40 @@ class CompositionServicesMixin(CompositionRootMixin):
             workspace=LocalWorkflowRepairWorkspace(
                 LocalParentWorkspaceProjectionReader(git=git, state=state)
             ),
+        )
+
+    def create_workflow_loop_coordinator(
+        self: CompositionRootMixin,
+        *,
+        parent_binding: ConversationBinding,
+    ) -> WorkflowLoopCoordinator:
+        """Explicitly compose one bounded internal VERIFY/REPAIR drive capability."""
+        if (
+            not isinstance(parent_binding, ConversationBinding)
+            or parent_binding.runner.session_id is None
+            or parent_binding.workspace_root is None
+        ):
+            raise ConfigurationError("Workflow loop needs a persisted parent session/workspace")
+        verification = self.create_workflow_verify_service(parent_binding=parent_binding)
+        repair = self.create_workflow_repair_service(parent_binding=parent_binding)
+        state = cast(WorkflowStateStore, self.store)
+        activities = cast(WorkflowActivityStore, self.store)
+        interpreter = DurableWorkflowInterpreter(
+            state=state,
+            facts=cast(WorkflowInterpreterStore, self.store),
+            publication=cast(WorkflowPublicationStore, self.store),
+            projections=cast(WorkflowProjectionStore, self.store),
+            dags=cast(TaskDagStore, self.store),
+            activities=activities,
+            verification=verification,
+        )
+        return WorkflowLoopCoordinator(
+            state=state,
+            facts=cast(WorkflowInterpreterStore, self.store),
+            activities=activities,
+            interpreter=interpreter,
+            verification=verification,
+            repair=repair,
         )
 
     def create_tool_output_artifact_service(

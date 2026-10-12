@@ -206,3 +206,13 @@ attempt 和唯一 completion event 结算成功；proof 与 Activity evidence、
 journal 原子绑定。`AgentRunResult.outcome=None` 仅在该回合的 durable proof 明确为
 COMPLETED 时接受；缺失或冲突 proof 保守进入 INDETERMINATE。重读按 exact turn event
 验证，不依赖会被后续回合替换的 session 最新 execution record。见 [ADR 0205](adr/0205-dw5b4-real-workflow-repair-adapter.md)。
+
+## DW5b-5 内部有界 VERIFY / REPAIR 闭环
+
+Schema 43 保持不变。显式内部 composition 只识别 DW1 静态展开 Branch 链，最多包含 3 个不同的
+真实 VERIFY step 和 2 个 REPAIR step；最后一次 FAIL 分支为空。每项副作用交给既有 DW5b-3/4
+adapter，每个控制动作交给 `DurableWorkflowInterpreter.advance_once()`。后续 VERIFY 可以把前序
+durable REPAIR 结果作为精确 provenance，再针对新的有界工作区 projection 执行新的已配置命令。
+Verified/exhausted 只是 application 结果；Workflow 仍为等待 completion requirements 的
+`WAITING` 状态。尚未实现 CLI/TUI/ACP 或自动 Ultracode 产品集成、completion judge、通用 Planner、
+scheduler 或完整 Workflow completion 路径。见 [ADR 0206](adr/0206-dw5b5-bounded-workflow-verification-loop.md)。

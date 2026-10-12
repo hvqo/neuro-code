@@ -304,11 +304,14 @@ def _validate_output(
         ):
             raise WorkflowStateError("durable activity result linkage mismatch", kind="integrity")
         if declared.activity is ActivityKind.VERIFY and not historical:
+            from neuro_code.infrastructure.persistence.sqlite_session_workflow_repair_facts import (
+                repair_terminal,
+            )
             from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_facts import (
                 verify_terminal,
             )
 
-            verify_terminal(connection, attempt)
+            verify_terminal(connection, attempt, validate_repair_terminal=repair_terminal)
         if declared.activity is ActivityKind.REPAIR and not historical:
             from neuro_code.infrastructure.persistence.sqlite_session_workflow_repair_facts import (
                 repair_terminal,

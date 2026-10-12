@@ -245,11 +245,14 @@ def _load_attempt(
             ).fetchone()
         )
     ):
+        from neuro_code.infrastructure.persistence.sqlite_session_workflow_repair_facts import (
+            repair_terminal,
+        )
         from neuro_code.infrastructure.persistence.sqlite_session_workflow_verification_facts import (
             verify_terminal,
         )
 
-        verify_terminal(connection, attempt)
+        verify_terminal(connection, attempt, validate_repair_terminal=repair_terminal)
     if (
         attempt.result is not None
         and invocation.activity is ActivityKind.REPAIR
