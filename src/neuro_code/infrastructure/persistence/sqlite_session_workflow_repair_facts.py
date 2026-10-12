@@ -129,7 +129,7 @@ def fail_source(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt
             or previous.invocation.activity is not ActivityKind.VERIFY
         ):
             raise WorkflowStateError("REPAIR exact VERIFY binding differs", kind="integrity")
-        verify_terminal(connection, previous)
+        verify_terminal(connection, previous, validate_repair_terminal=repair_terminal)
         value = json.loads(output.output_json)
         if value["status"] != "FAIL":
             raise WorkflowStateError("REPAIR requires exact FAIL, never PASS", kind="protocol")
@@ -140,7 +140,7 @@ def fail_source(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt
             selected = selected[field]
         if selected != json.loads(invocation.request_json)[name]:
             raise WorkflowStateError("REPAIR resolved FAIL input differs", kind="integrity")
-        started = verify_execution(connection, previous)
+        started = verify_execution(connection, previous, validate_repair_terminal=repair_terminal)
         evidence = fact(
             connection.execute(
                 "SELECT payload_json,payload_fingerprint FROM workflow_verification_evidence WHERE execution_id=?",

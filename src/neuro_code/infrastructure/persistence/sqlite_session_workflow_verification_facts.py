@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import datetime
 from typing import Any
@@ -42,6 +43,8 @@ from neuro_code.infrastructure.persistence.sqlite_session_workflows import (
     _validate_position,
 )
 
+RepairTerminalValidator = Callable[[sqlite3.Connection, WorkflowActivityAttempt], None]
+
 
 def fact(row: tuple[str, str] | None) -> dict[str, Any]:
     if row is None:
@@ -52,7 +55,12 @@ def fact(row: tuple[str, str] | None) -> dict[str, Any]:
     return value
 
 
-def source(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt) -> dict[str, str]:
+def source(
+    connection: sqlite3.Connection,
+    attempt: WorkflowActivityAttempt,
+    *,
+    validate_repair_terminal: RepairTerminalValidator | None = None,
+) -> dict[str, str]:
     invocation = attempt.invocation
     if invocation.activity is not ActivityKind.VERIFY:
         raise WorkflowStateError("exact VERIFY invocation required", kind="protocol")
@@ -162,7 +170,18 @@ def source(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt) -> 
             if previous.invocation.activity is ActivityKind.ADOPT:
                 _verify_terminal_adopt(connection, previous)
             elif previous.invocation.activity is ActivityKind.VERIFY:
-                verify_terminal(connection, previous)
+                verify_terminal(
+                    connection, previous, validate_repair_terminal=validate_repair_terminal
+                )
+            elif previous.invocation.activity is ActivityKind.REPAIR:
+                # A fresh VERIFY may consume the exact preceding REPAIR result
+                # as provenance. This proves the repair Activity's own durable
+                # terminal facts; it does not turn REPAIR into verification.
+                if validate_repair_terminal is None:
+                    raise WorkflowStateError(
+                        "VERIFY needs a REPAIR terminal validator", kind="integrity"
+                    )
+                validate_repair_terminal(connection, previous)
             else:
                 raise WorkflowStateError(
                     "VERIFY needs a real supported source Activity", kind="protocol"
@@ -187,7 +206,12 @@ def parent_root(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt
     return str(row[0])
 
 
-def execution(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt) -> dict[str, Any]:
+def execution(
+    connection: sqlite3.Connection,
+    attempt: WorkflowActivityAttempt,
+    *,
+    validate_repair_terminal: RepairTerminalValidator | None = None,
+) -> dict[str, Any]:
     value = fact(
         connection.execute(
             "SELECT payload_json,payload_fingerprint FROM workflow_verification_executions WHERE invocation_id=?",
@@ -210,7 +234,8 @@ def execution(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt) 
         or value["owner_fence"] != attempt.owner_fence
         or value["reservation_id"] != attempt.reservation_id
         or value["reserved"] != asdict(attempt.reserved)
-        or value["source_bindings"] != source(connection, attempt)
+        or value["source_bindings"]
+        != source(connection, attempt, validate_repair_terminal=validate_repair_terminal)
         or value["parent_session_id"] != attempt.invocation.parent_session_id
         or value["parent_workspace_root"] != parent_root(connection, attempt)
         or (before is not None and before["root"] != value["parent_workspace_root"])
@@ -252,10 +277,15 @@ def terminal_anchor(
     }
 
 
-def verify_terminal(connection: sqlite3.Connection, attempt: WorkflowActivityAttempt) -> None:
+def verify_terminal(
+    connection: sqlite3.Connection,
+    attempt: WorkflowActivityAttempt,
+    *,
+    validate_repair_terminal: RepairTerminalValidator | None = None,
+) -> None:
     result = attempt.result
     assert result is not None
-    started = execution(connection, attempt)
+    started = execution(connection, attempt, validate_repair_terminal=validate_repair_terminal)
     value = fact(
         connection.execute(
             "SELECT payload_json,payload_fingerprint FROM workflow_verification_evidence WHERE execution_id=?",

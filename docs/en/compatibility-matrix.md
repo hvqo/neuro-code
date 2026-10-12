@@ -216,3 +216,17 @@ the proof is atomically bound to Activity evidence, result, ledger and journal.
 COMPLETED; missing or conflicting proof conservatively becomes INDETERMINATE.
 Replay revalidates the exact turn event and does not depend on the session's latest
 execution record, which later turns can replace. See [ADR 0205](adr/0205-dw5b4-real-workflow-repair-adapter.md).
+
+## DW5b-5 internal bounded VERIFY / REPAIR loop
+
+Schema 43 is unchanged. An explicit internal composition recognizes only a
+statically unrolled DW1 Branch chain with at most three distinct real VERIFY
+steps and two REPAIR steps; the final FAIL path is empty. It delegates each
+side effect to the existing DW5b-3/4 adapters and each control action to
+`DurableWorkflowInterpreter.advance_once()`. A later VERIFY may bind the exact
+preceding durable REPAIR result as provenance, then runs a fresh configured
+command against a fresh bounded workspace projection. Verified/exhausted are
+application results only; the Workflow remains `WAITING` for completion
+requirements. No CLI/TUI/ACP or automatic Ultracode product integration,
+completion judge, generic planner, scheduler, or full Workflow completion path
+is implemented. See [ADR 0206](adr/0206-dw5b5-bounded-workflow-verification-loop.md).
