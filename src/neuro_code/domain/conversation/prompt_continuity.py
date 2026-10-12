@@ -16,6 +16,7 @@ class ModelRequestSource(StrEnum):
     WEB_SEARCH_SIDECAR = "web_search_sidecar"
     SUBAGENT = "subagent"
     WORKFLOW_CHILD = "workflow_child"
+    WORKFLOW_REPAIR = "workflow_repair"
     TITLE_AUXILIARY = "title_auxiliary"
     AUXILIARY = "auxiliary"
 

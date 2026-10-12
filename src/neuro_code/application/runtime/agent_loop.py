@@ -52,6 +52,7 @@ from neuro_code.application.ports.context_rollover import (
     ContextRolloverController,
     ReadContextRolloverRequest,
 )
+from neuro_code.application.ports.execution_observation import observed_model_stream
 from neuro_code.application.ports.model import ModelProvider
 from neuro_code.application.ports.storage import SessionStore
 from neuro_code.application.ports.tools import (
@@ -1961,7 +1962,7 @@ class AgentLoopRunner:
             )
             if defer_final_message_commit:
                 messages.append(final_message)
-                if persist_turn_context:
+                if persist_turn_context or turn_source is TurnSource.WORKFLOW_REPAIR:
                     context_items.append(final_message)
             return AgentRunResult(
                 session_id,
@@ -2035,12 +2036,15 @@ class AgentLoopRunner:
                     AgentEventKind.PLAN_EXECUTION_REQUESTED,
                     {"plan": self._context_builder.plan.to_dict()},
                 )
-            if turn_source is TurnSource.USER:
+            if turn_source in {TurnSource.USER, TurnSource.WORKFLOW_REPAIR}:
                 user_message = Message(Role.USER, prompt, content_parts=prompt_parts)
                 current_user_message = user_message
                 context_items.append(user_message)
                 messages.append(user_message)
-                await emit(AgentEventKind.USER_MESSAGE, {"content": user_message.model_content()})
+                if turn_source is TurnSource.USER:
+                    await emit(
+                        AgentEventKind.USER_MESSAGE, {"content": user_message.model_content()}
+                    )
             append_runtime_plan_notice()
 
             if (
@@ -2429,7 +2433,7 @@ class AgentLoopRunner:
                         output_kind=output_kind,
                     )
 
-                provider_stream = self._provider.stream(context, tool_definitions)
+                provider_stream = observed_model_stream(self._provider, context, tool_definitions)
                 provider_request_started_at = monotonic()
                 try:
                     step_result = await ModelStepProcessor(
@@ -2640,7 +2644,7 @@ class AgentLoopRunner:
                     reasoning_content="".join(step_reasoning) or None,
                 )
                 messages.append(assistant_message)
-                if persist_turn_context:
+                if persist_turn_context or turn_source is TurnSource.WORKFLOW_REPAIR:
                     context_items.append(assistant_message)
                 model_tool_result_limits = allocate_model_tool_result_limits(
                     context=context,

@@ -88,6 +88,7 @@ from neuro_code.infrastructure.persistence.sqlite_session_schema import (
     _ensure_workflow_interpreter_schema,
     _ensure_workflow_projection_schema,
     _ensure_workflow_publication_schema,
+    _ensure_workflow_repair_schema,
     _ensure_workflow_state_schema,
     _ensure_workflow_verification_schema,
     _ensure_writable_subagent_lease_schema,
@@ -377,6 +378,12 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                             "UPDATE schema_meta SET version = 42 WHERE singleton = 1"
                         )
                         version = (42,)
+                    if version is not None and version[0] == 42:
+                        _ensure_workflow_repair_schema(connection)
+                        connection.execute(
+                            "UPDATE schema_meta SET version = 43 WHERE singleton = 1"
+                        )
+                        version = (43,)
                     if version is None or version[0] != SCHEMA_VERSION:
                         raise SessionError(
                             "unsupported session schema version: "
@@ -415,6 +422,7 @@ class CoreMixin(_SqliteSessionPersistenceContext):
                     _ensure_workflow_activity_schema(connection)
                     _ensure_workflow_adoption_execution_schema(connection)
                     _ensure_workflow_verification_schema(connection)
+                    _ensure_workflow_repair_schema(connection)
                     _backfill_search_documents(connection, missing_only=True)
                     connection.commit()
                 except BaseException:

@@ -170,7 +170,7 @@ class TurnInput:
 
     @property
     def reconstructable(self) -> bool:
-        return not self.background
+        return self.source is TurnSource.USER
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -411,7 +411,7 @@ class TurnRecoveryAttempt:
             or self.tool_started_count > 0
             or self.side_effecting_tool_started
             or not self.input_reconstructable
-            or self.source is TurnSource.BACKGROUND_TASK_AUTO_WAKE
+            or self.source in {TurnSource.BACKGROUND_TASK_AUTO_WAKE, TurnSource.WORKFLOW_REPAIR}
         ):
             return TurnRecoveryStatus.INDETERMINATE
         return TurnRecoveryStatus.SAFELY_RETRYABLE

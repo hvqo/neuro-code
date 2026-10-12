@@ -1636,3 +1636,43 @@ def _ensure_workflow_verification_schema(connection: sqlite3.Connection) -> None
                 BEFORE {operation} ON {table}
                 BEGIN SELECT RAISE(ABORT, 'immutable VERIFY execution evidence'); END
             """)
+
+
+def _ensure_workflow_repair_schema(connection: sqlite3.Connection) -> None:
+    """Single-turn REPAIR evidence, reusing the existing Activity ledger."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_repair_executions (
+            execution_id TEXT PRIMARY KEY,
+            invocation_id TEXT NOT NULL UNIQUE REFERENCES workflow_activity_attempts(invocation_id) ON DELETE RESTRICT,
+            payload_json TEXT NOT NULL CHECK (length(payload_json) BETWEEN 1 AND 131072),
+            payload_fingerprint TEXT NOT NULL CHECK (length(payload_fingerprint) = 64)
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_repair_events (
+            execution_id TEXT NOT NULL REFERENCES workflow_repair_executions(execution_id) ON DELETE RESTRICT,
+            ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 1 AND 128),
+            phase TEXT NOT NULL CHECK (phase IN ('intent','returned')),
+            payload_json TEXT NOT NULL CHECK (length(payload_json) BETWEEN 1 AND 16384),
+            payload_fingerprint TEXT NOT NULL CHECK (length(payload_fingerprint) = 64),
+            PRIMARY KEY (execution_id,ordinal,phase)
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_repair_evidence (
+            execution_id TEXT PRIMARY KEY REFERENCES workflow_repair_executions(execution_id) ON DELETE RESTRICT,
+            payload_json TEXT NOT NULL CHECK (length(payload_json) BETWEEN 1 AND 131072),
+            payload_fingerprint TEXT NOT NULL CHECK (length(payload_fingerprint) = 64)
+        )
+    """)
+    for table in (
+        "workflow_repair_executions",
+        "workflow_repair_events",
+        "workflow_repair_evidence",
+    ):
+        for operation in ("UPDATE", "DELETE"):
+            connection.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS {table}_immutable_{operation.lower()}
+                BEFORE {operation} ON {table}
+                BEGIN SELECT RAISE(ABORT, 'immutable REPAIR evidence'); END
+            """)

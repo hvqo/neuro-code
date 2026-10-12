@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from time import monotonic
 
+from neuro_code.application.ports.execution_observation import observed_model_stream
 from neuro_code.application.ports.model import ModelCapabilitySet, ModelProvider, ModelToolPolicy
 from neuro_code.domain.conversation.context import ModelContext
 from neuro_code.domain.conversation.events import ModelEvent, ModelRequestTrajectoryObserved
@@ -135,6 +136,8 @@ class ResilientModelProvider:
         if self._consecutive_failures >= self._failure_threshold:
             self._opened_until = monotonic() + self._cooldown_seconds
 
+    execution_observation_passthrough = True
+
     async def stream(
         self,
         context: ModelContext,
@@ -154,7 +157,9 @@ class ResilientModelProvider:
             self._attempts += 1
             emitted = False
             try:
-                iterator = self._provider.stream(context, tools, tool_policy=tool_policy)
+                iterator = observed_model_stream(
+                    self._provider, context, tools, tool_policy=tool_policy
+                )
                 async for event in iterator:
                     if not isinstance(event, ModelRequestTrajectoryObserved):
                         emitted = True

@@ -2429,7 +2429,7 @@ async def test_spawned_replan_controllers_have_one_winner_and_one_provider_call(
 
 
 def test_schema_37_is_current_and_replan_tables_are_foreign_key_restricted() -> None:
-    assert SCHEMA_VERSION == 42
+    assert SCHEMA_VERSION == 43
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from neuro_code.application.ports.execution_observation import observed_model_stream
 from neuro_code.application.ports.model import ModelProvider, ModelToolPolicy
 from neuro_code.application.ports.project_memory import ProjectMemoryStore
 from neuro_code.application.ports.storage import SessionStore
@@ -518,7 +519,9 @@ class ProjectMemoryExtractionManager:
         byte_count = 0
         completion: ModelCompleted | None = None
         event_count = 0
-        async for event in provider.stream(context, (), tool_policy=ModelToolPolicy.DISABLED):
+        async for event in observed_model_stream(
+            provider, context, (), tool_policy=ModelToolPolicy.DISABLED
+        ):
             event_count += 1
             if event_count > MAX_EXTRACTION_EVENTS:
                 raise ProviderError("Project Memory extraction exceeded its event limit")

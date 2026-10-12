@@ -309,6 +309,12 @@ def _validate_output(
             )
 
             verify_terminal(connection, attempt)
+        if declared.activity is ActivityKind.REPAIR and not historical:
+            from neuro_code.infrastructure.persistence.sqlite_session_workflow_repair_facts import (
+                repair_terminal,
+            )
+
+            repair_terminal(connection, attempt)
     elif output.kind is OutputKind.PROJECTION:
         publication = _load_publication(connection, expansion_id(run.run_id, output.step))
         if publication is None or publication.dag.state is not TaskDagState.COMPLETED:

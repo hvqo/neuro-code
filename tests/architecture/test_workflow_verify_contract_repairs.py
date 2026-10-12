@@ -343,8 +343,12 @@ async def cancel_run(store):
     )
 
 
-@pytest.mark.parametrize("point", ["approval", "preflight", "hook", "owner"])
-async def test_real_final_tool_guard_zero_spawn_after_late_cancel_or_reclaim(tmp_path, point):
+@pytest.mark.parametrize(
+    "point", ["approval", "preflight", "preflight_pending_guard", "hook", "owner"]
+)
+async def test_real_final_tool_guard_zero_spawn_after_late_cancel_or_reclaim(
+    tmp_path, point, monkeypatch
+):
     store, root, session, key = await ready(tmp_path)
     bash = BashTool()
     underlying = bash._local_process_sandbox
@@ -387,15 +391,38 @@ async def test_real_final_tool_guard_zero_spawn_after_late_cancel_or_reclaim(tmp
     if point == "approval":
         bound._permissions = PermissionManager(mode=PermissionMode.DEFAULT, interactive=True)
         bound._approver = Approver()
-    elif point == "preflight":
+    elif point in ("preflight", "preflight_pending_guard"):
         loop = asyncio.get_running_loop()
 
         class Observer(EmptyWorkspaceChangeObserver):
+            captures = 0
+            cancel_requests = 0
+
             def capture(self, root):
-                asyncio.run_coroutine_threadsafe(cancel_run(store), loop).result(10)
+                self.captures += 1
+                # Cancellation cleanup also captures the workspace. Inject the
+                # single user cancellation only once, not a different payload
+                # under the same request_id during that later observation.
+                if self.cancel_requests == 0:
+                    self.cancel_requests += 1
+                    asyncio.run_coroutine_threadsafe(cancel_run(store), loop).result(10)
                 return super().capture(root)
 
-        bound._workspace_change_observer = Observer()
+        observer = Observer()
+        bound._workspace_change_observer = observer
+        if point == "preflight_pending_guard":
+            verify = bound.verify_command
+
+            async def pending_guard(self, configuration, *, session_id, pre_entry_guard):
+                async def wait_for_cancellation():
+                    await asyncio.Event().wait()  # Watcher must cancel this awaited guard.
+                    return await pre_entry_guard()
+
+                return await verify(
+                    configuration, session_id=session_id, pre_entry_guard=wait_for_cancellation
+                )
+
+            monkeypatch.setattr(type(bound), "verify_command", pending_guard)
     else:
         bound._hooks = (Hook(),)
     verifier = adapter(store, root, session, command=bound)
@@ -408,6 +435,10 @@ async def test_real_final_tool_guard_zero_spawn_after_late_cancel_or_reclaim(tmp
         assert point != "owner"
         interrupted = True
         outcome = (await verifier.run_once(key)).attempt
+    if point == "preflight_pending_guard":
+        assert interrupted
+        assert observer.captures >= 2
+        assert observer.cancel_requests == 1
     assert spawns == []
     assert outcome.state is (State.INDETERMINATE if interrupted else State.BLOCKED)
     assert outcome.result.output_json is None

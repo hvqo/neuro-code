@@ -43,6 +43,7 @@ from neuro_code.application.permissions.policy import (
 from neuro_code.application.permissions.scopes import PermissionScopeContext
 from neuro_code.application.ports.approval import PermissionApprover
 from neuro_code.application.ports.context_rollover import CONTEXT_ROLLOVER_TOOL_NAME
+from neuro_code.application.ports.execution_observation import current_observer
 from neuro_code.application.ports.result_adoption import (
     WorkspaceMutationRequest,
     WorkspaceMutationResult,
@@ -988,8 +989,12 @@ class ToolExecutor:
             ) -> AgentEvent:
                 return await emit(kind, dict(data))
 
+            observer = current_observer()
             execution_context = replace(
                 self._tool_context,
+                background_tasks=None
+                if observer is not None
+                else self._tool_context.background_tasks,
                 filesystem_access_plan=filesystem_access_plan,
                 interaction_event_sink=interaction_event_sink,
                 web_search_event_sink=web_search_event_sink,
@@ -1010,6 +1015,7 @@ class ToolExecutor:
                     else None
                 ),
             )
+            repair_ordinal = None
             try:
                 # Trusted VERIFY-only guard, after every awaited approval/hook/
                 # workspace preflight. Ordinary runtime callers leave it unset.
@@ -1020,6 +1026,8 @@ class ToolExecutor:
                         AgentEventKind.TOOL_FAILED, terminal_event_data(result, not_started=True)
                     )
                     return None
+                if observer is not None:
+                    repair_ordinal = await observer.enter("tool", call.id, call.name)
                 if execution_entered_sink is not None:
                     execution_entered_sink()
                 result = await tool.execute(
@@ -1028,6 +1036,8 @@ class ToolExecutor:
                 )
             except (ToolError, OSError, UnicodeError) as error:
                 result = ToolResult(f"{type(error).__name__}: {error}", is_error=True)
+            if observer is not None and repair_ordinal is not None:
+                await observer.returned(repair_ordinal, failed=result.is_error)
             safe_content = redact_sensitive_text(
                 result.content,
                 explicit_values=self._tool_context.redaction_values,

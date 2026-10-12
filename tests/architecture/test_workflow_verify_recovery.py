@@ -119,7 +119,7 @@ async def test_v41_upgrade_idempotent_no_invented_evidence(tmp_path):
     await reopened.initialize()
     assert await reopened.get_workflow_run("run") == original
     with closing(reopened._connect()) as connection:
-        assert connection.execute("SELECT version FROM schema_meta").fetchone() == (42,)
+        assert connection.execute("SELECT version FROM schema_meta").fetchone() == (43,)
         assert connection.execute(
             "SELECT COUNT(*) FROM workflow_verification_executions"
         ).fetchone() == (0,)
