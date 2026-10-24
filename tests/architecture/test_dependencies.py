@@ -282,6 +282,7 @@ _BOOTSTRAP_COMPOSITION_MIXIN_OWNERS = {
                 "create_result_adoption_service",
                 "create_workflow_verify_service",
                 "create_workflow_repair_service",
+                "create_workflow_loop_coordinator",
                 "create_tool_output_artifact_service",
                 "bind_provider_controller",
                 "bind_session_selection_controller",

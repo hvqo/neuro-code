@@ -55,6 +55,9 @@ if TYPE_CHECKING:
     from neuro_code.application.workflows.subagent_capabilities import SubagentCapabilitySet
     from neuro_code.application.workflows.task_dag import TaskDagApplicationService
     from neuro_code.application.workflows.task_dag_replan import TaskDagReplanApplicationService
+    from neuro_code.application.workflows.workflow_loop import WorkflowLoopCoordinator
+    from neuro_code.application.workflows.workflow_repair import WorkflowRepairActivityAdapter
+    from neuro_code.application.workflows.workflow_verify import WorkflowVerifyActivityAdapter
     from neuro_code.application.workflows.writable_subagent import (
         WritableSubagentApplicationService,
     )
@@ -153,6 +156,24 @@ class CompositionRootMixin:
             *,
             parent_binding: ConversationBinding,
         ) -> ResultAdoptionApplicationService: ...
+
+        def create_workflow_loop_coordinator(
+            self,
+            *,
+            parent_binding: ConversationBinding,
+        ) -> WorkflowLoopCoordinator: ...
+
+        def create_workflow_verify_service(
+            self,
+            *,
+            parent_binding: ConversationBinding,
+        ) -> WorkflowVerifyActivityAdapter: ...
+
+        def create_workflow_repair_service(
+            self,
+            *,
+            parent_binding: ConversationBinding,
+        ) -> WorkflowRepairActivityAdapter: ...
 
         def subagent_global_policy(self) -> SubagentCapabilitySet: ...
 
